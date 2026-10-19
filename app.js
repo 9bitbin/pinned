@@ -961,8 +961,16 @@ function onUp(e) {
   $("#scroller").classList.remove("panning");
   if (g.type === "ink") inkEnd();
   else if (g.type === "note") endNoteDrag(g);
-  else if (g.type === "pending" && g.noteId && e.type === "pointerup") openDetail(g.noteId);
+  else if (g.type === "pending" && g.noteId && e.type === "pointerup") { if (g.touch) swallowGhostClick(); openDetail(g.noteId); }
   if (g.touch) sendCursor(null);
+}
+
+// After a touch tap, phones fire a delayed "click" at the same spot. Once the note sheet is open,
+// that click would land on the dimmed background and close it again, so eat it.
+function swallowGhostClick() {
+  const eat = (ev) => { ev.stopPropagation(); ev.preventDefault(); document.removeEventListener("click", eat, true); };
+  document.addEventListener("click", eat, true);   // only the one ghost click
+  setTimeout(() => document.removeEventListener("click", eat, true), 450);
 }
 
 function startPinch() {
@@ -2269,7 +2277,7 @@ function notifSupport() {
 
 function renderNotifStatus() {
   const st = $("#notifStatus"), btn = $("#notifBtn"), hint = $("#notifHint");
-  hint.hidden = true; btn.hidden = false;
+  hint.hidden = true; btn.hidden = false; $("#notifReset").hidden = true;
   const sup = notifSupport();
   if (sup === "install") {
     st.textContent = "Add to Home Screen first";
@@ -2279,7 +2287,7 @@ function renderNotifStatus() {
   if (sup === "unsupported") { st.textContent = "Not supported in this browser"; btn.hidden = true; return; }
   if (!api.pushReady()) { st.textContent = "Not set up yet (see SETUP.md)"; btn.hidden = true; return; }
   const p = Notification.permission;
-  if (p === "granted") { st.textContent = "On"; btn.textContent = "Send test"; }
+  if (p === "granted") { st.textContent = "On"; btn.textContent = "Send test"; $("#notifReset").hidden = isDemo; }
   else if (p === "denied") {
     st.textContent = "Blocked";
     hint.textContent = isIOS ? "Turn them back on in iPhone Settings > Notifications > Pinned." : "Turn them back on in your phone's settings for this app (long-press the icon > App info > Notifications).";
@@ -2297,13 +2305,32 @@ async function onNotifBtn() {
     if (!r) toast("No answer from the server");
     else if (r.error) toast("Server error: " + r.error, 6000);
     else if (!r.devices) toast("This phone isn't registered yet. Turn notifications off and on in your phone settings, then try again.", 6000);
-    else if (r.sent) toast(`Test sent. It should pop up in a few seconds.`);
-    else toast("Push service refused it: " + (r.failures || []).join("; "), 8000);
+    else if (r.sent) toast(`Test sent to ${r.devices} device${r.devices > 1 ? "s" : ""}. It should pop up in a few seconds.${(r.failures || []).length ? " (" + r.failures.length + " failed)" : ""}`, 5000);
+    else {
+      const f = (r.failures || []).join("; ");
+      toast(/BadJwtToken|403/.test(f) ? "Apple refused the notification (403). Redeploy the notify function from the latest files, then tap Reset." : "Push service refused it: " + f, 9000);
+    }
     return;
   }
   const perm = await Notification.requestPermission();
   if (perm === "granted") { await refreshPushSubscription(true); toast("Notifications on. Tap Send test to check."); }
   renderNotifStatus();
+}
+
+// Throw away this phone's notification registration and make a fresh one (fixes stale iPhone registrations)
+async function resetPush() {
+  if (notifSupport() !== "ok" || Notification.permission !== "granted") return toast("Turn notifications on first");
+  const btn = $("#notifReset"); busy(btn, true, "Resetting…");
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const old = await reg.pushManager.getSubscription();
+    if (old) { await old.unsubscribe().catch(() => {}); }
+    await refreshPushSubscription(true);
+    const r = await api.notify(state.board.id, "note", { test: true });
+    if (r?.sent) toast("Reset done. A test notification is on its way ✅", 5000);
+    else toast("Reset done, but the test didn't send: " + (r?.error || (r?.failures || []).join("; ") || "no device registered"), 9000);
+  } catch (e) { toast("Couldn't reset: " + e.message, 6000); }
+  busy(btn, false);
 }
 
 async function refreshPushSubscription(force = false) {
@@ -2429,6 +2456,7 @@ function wireStatic() {
   $("#shareCode").onclick = shareCode;
   $("#waitShare").onclick = shareCode;
   $("#notifBtn").onclick = onNotifBtn;
+  $("#notifReset").onclick = resetPush;
   $("#saveName").onclick = async () => {
     const name = $("#settingsName").value.trim(); if (!name) return;
     try { await api.updateProfile({ name }); state.me.name = name; await refreshMembers(); toast("Saved"); } catch (e) { toast(e.message); }

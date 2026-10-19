@@ -609,3 +609,4 @@ button.who { border: 0; background: transparent; padding: 0; display: flex; alig
 #peopleList .st.active i { background: #30a46c; box-shadow: 0 0 0 3px rgba(48,164,108,.25); }
 #peopleList .st.online, #peopleList .st.active { color: #2f8f5b; }
 #board, #board * { touch-action: none; }
+.notif-btns { display: flex; gap: 6px; }

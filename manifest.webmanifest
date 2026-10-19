@@ -1,7 +1,7 @@
 {
   "name": "Pinned",
   "short_name": "Pinned",
-  "description": "A shared sticky-note board for two.",
+  "description": "A shared sticky-note board for you and your people.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
