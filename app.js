@@ -77,7 +77,7 @@ const toLocalInput = (d) => `${localDateKey(d)}T${pad2(d.getHours())}:${pad2(d.g
 // Both backends expose the same async interface.
 
 function createSupabaseApi() {
-  let sb, session, channel, extras, liveCh;
+  let sb, session, channel, extras, liveCh, inkCh;
   const bucket = () => sb.storage.from("board-media");
   const urlCache = new Map();
   const must = ({ data, error }) => { if (error) throw new Error(error.message); return data; };
@@ -166,10 +166,19 @@ function createSupabaseApi() {
     async createBoard() { return must(await sb.rpc("create_board")); },
     async joinBoard(code) { return must(await sb.rpc("join_board", { p_code: code })); },
     async members(boardId) {
-      const ids = must(await sb.from("board_members").select("user_id").eq("board_id", boardId)).map((r) => r.user_id);
-      if (!ids.length) return [];
-      return must(await sb.from("profiles").select("id,name,color").in("id", ids));
+      let res = await sb.from("board_members").select("user_id,last_seen,joined_at").eq("board_id", boardId);
+      if (res.error) res = await sb.from("board_members").select("user_id,joined_at").eq("board_id", boardId);
+      const rows = must(res) || [];
+      if (!rows.length) return [];
+      const profs = must(await sb.from("profiles").select("id,name,color").in("id", rows.map((r) => r.user_id)));
+      const byId = Object.fromEntries(rows.map((r) => [r.user_id, r]));
+      return profs.map((p) => ({ ...p, last_seen: byId[p.id]?.last_seen || null, joined_at: byId[p.id]?.joined_at }))
+        .sort((x, y) => (x.joined_at < y.joined_at ? -1 : 1));
     },
+    async touchSeen(boardId) { try { await sb.rpc("touch_seen", { b: boardId }); } catch { /* v4 */ } },
+    async listStrokes(boardId) { return must(await sb.from("strokes").select("*").eq("board_id", boardId).order("created_at")); },
+    async addStroke(s) { must(await sb.from("strokes").insert(s)); },
+    async deleteStroke(id) { must(await sb.from("strokes").delete().eq("id", id)); },
     async removeMember(boardId, userId) {
       must(await sb.from("board_members").delete().eq("board_id", boardId).eq("user_id", userId));
     },
@@ -247,10 +256,16 @@ function createSupabaseApi() {
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "pings", filter: f }, (p) => h.onPing(p.new))
         .on("postgres_changes", { event: "*", schema: "public", table: "answers", filter: f }, () => h.onAnswer())
         .subscribe();
+      // v4 table on its own channel too
+      if (inkCh) sb.removeChannel(inkCh);
+      inkCh = sb.channel("ink-" + boardId)
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "strokes", filter: f }, (p) => h.onStroke(p.new, false))
+        .on("postgres_changes", { event: "DELETE", schema: "public", table: "strokes" }, (p) => h.onStroke(p.old, true))
+        .subscribe();
     },
     live(boardId, me, h) {
       if (liveCh) sb.removeChannel(liveCh);
-      let presence = { name: me.name, doodling: false };
+      let presence = { name: me.name, color: me.color, visible: true, doodling: false };
       liveCh = sb.channel("live-" + boardId, { config: { broadcast: { self: false }, presence: { key: me.id } } });
       liveCh.on("broadcast", { event: "m" }, ({ payload }) => h.onMessage(payload));
       liveCh.on("presence", { event: "sync" }, () => {
@@ -291,7 +306,7 @@ function createSupabaseApi() {
 // Demo backend: localStorage + BroadcastChannel. Each browser tab is its own "person".
 function createDemoApi() {
   const KEY = "soy-demo-db";
-  const blank = () => ({ profiles: {}, boards: {}, members: [], notes: [], media: {}, reactions: [], replies: [], answers: [], pings: [] });
+  const blank = () => ({ profiles: {}, boards: {}, members: [], notes: [], media: {}, reactions: [], replies: [], answers: [], pings: [], strokes: [] });
   const db = () => ({ ...blank(), ...ls.get(KEY, {}) });
   const save = (d) => ls.set(KEY, d);
   const bc = "BroadcastChannel" in window ? new BroadcastChannel("soy-demo") : null;
@@ -312,6 +327,7 @@ function createDemoApi() {
     if (m.type === "reply") handlers.onReply(m.row);
     if (m.type === "ping") handlers.onPing(m.row);
     if (m.type === "answer") handlers.onAnswer();
+    if (m.type === "stroke") handlers.onStroke(m.row, m.del);
   };
   const code = () => Array.from({ length: 8 }, () => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 32)]).join("");
 
@@ -333,12 +349,19 @@ function createDemoApi() {
       const b = Object.values(d.boards).find((x) => x.code === clean);
       if (!b) throw new Error("No board with that code");
       if (!d.members.some((m) => m.board_id === b.id && m.user_id === meId())) {
-        if (d.members.filter((m) => m.board_id === b.id).length >= 2) throw new Error("That board already has two people");
-        d.members.push({ board_id: b.id, user_id: meId() }); save(d); emit({ type: "members" });
+        if (d.members.filter((m) => m.board_id === b.id).length >= 10) throw new Error("That board is full (10 people max)");
+        d.members.push({ board_id: b.id, user_id: meId(), joined_at: new Date().toISOString() }); save(d); emit({ type: "members" });
       }
       return b;
     },
-    async members(boardId) { const d = db(); return d.members.filter((m) => m.board_id === boardId).map((m) => d.profiles[m.user_id]).filter(Boolean); },
+    async members(boardId) {
+      const d = db();
+      return d.members.filter((m) => m.board_id === boardId).map((m) => d.profiles[m.user_id] && { ...d.profiles[m.user_id], last_seen: m.last_seen || null }).filter(Boolean);
+    },
+    async touchSeen(boardId) { const d = db(); const m = d.members.find((x) => x.board_id === boardId && x.user_id === meId()); if (m) { m.last_seen = new Date().toISOString(); save(d); } },
+    async listStrokes(boardId) { return db().strokes.filter((s) => s.board_id === boardId); },
+    async addStroke(s) { const d = db(); const row = { ...s, created_at: new Date().toISOString() }; d.strokes.push(row); save(d); emit({ type: "stroke", row, del: false }); },
+    async deleteStroke(id) { const d = db(); d.strokes = d.strokes.filter((s) => s.id !== id); save(d); emit({ type: "stroke", row: { id }, del: true }); },
     async removeMember(boardId, userId) { const d = db(); d.members = d.members.filter((m) => !(m.board_id === boardId && m.user_id === userId)); save(d); emit({ type: "members" }); },
     async leaveBoard(boardId) { return this.removeMember(boardId, meId()); },
     async deleteBoard(boardId) {
@@ -347,7 +370,7 @@ function createDemoApi() {
       if (!b || !(b.created_by === meId() || (mine.length === 1 && mine[0].user_id === meId()))) throw new Error("Only the person who made this board can delete it. You can leave it instead.");
       delete d.boards[boardId];
       for (const n of d.notes) if (n.board_id === boardId && n.media_path) delete d.media[n.media_path];
-      for (const k of ["members", "notes", "reactions", "replies", "answers", "pings"]) d[k] = d[k].filter((x) => x.board_id !== boardId);
+      for (const k of ["members", "notes", "reactions", "replies", "answers", "pings", "strokes"]) d[k] = d[k].filter((x) => x.board_id !== boardId);
       save(d); emit({ type: "members" });
     },
     async listNotes(boardId) { return db().notes.filter((n) => n.board_id === boardId && !hiddenFromMe(n)).sort((a, b) => a.z - b.z); },
@@ -392,7 +415,7 @@ function createDemoApi() {
     subscribe(boardId, h) { handlers = h; },
     live(boardId, me, h) {
       const ch = "BroadcastChannel" in window ? new BroadcastChannel("soy-live-" + boardId) : null;
-      const peers = {}; let presence = { name: me.name, doodling: false };
+      const peers = {}; let presence = { name: me.name, color: me.color, visible: true, doodling: false };
       const pub = () => h.onPresence({ ...peers, [me.id]: presence });
       const post = (m) => ch && ch.postMessage({ ...m, from: me.id });
       if (ch) ch.onmessage = (e) => {
@@ -425,6 +448,10 @@ const state = {
   replies: new Map(),    // note id -> [reply rows]
   pings: [],             // newest first
   presence: {},
+  strokes: new Map(),    // board ink: id -> row
+  view: { tx: 0, ty: 0, s: 1 },
+  views: {},             // what each person is looking at: id -> {cx, cy, s, at}
+  cursors: new Map(),    // id -> {x, y, at, touch}
   urls: {},              // media path -> url
   scale: 1,
   dragId: null,
@@ -468,7 +495,10 @@ function applyTheme(id) {
 }
 
 function memberById(id) { return state.members.find((m) => m.id === id); }
-function partner() { return state.members.find((m) => m.id !== state.me?.id); }
+function others() { return state.members.filter((m) => m.id !== state.me?.id); }
+function partner() { return others()[0]; }
+function ownerName() { return memberById(state.board?.created_by)?.name || "the board's owner"; }
+const listNames = (arr) => arr.length <= 2 ? arr.join(" and ") : `${arr.slice(0, -1).join(", ")} and ${arr[arr.length - 1]}`;
 function nameOf(id) { return id === state.me?.id ? "you" : (memberById(id)?.name || "someone"); }
 function timeAgo(iso) {
   const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
@@ -614,6 +644,7 @@ const boardHandlers = () => ({
   onReply: onReplyEvent,
   onPing: onPingEvent,
   onAnswer: () => refreshQuestionDot(),
+  onStroke: onStrokeEvent,
 });
 
 // Phones pause backgrounded web apps and drop their live connection.
@@ -633,11 +664,12 @@ function onResume(force = false) {
 async function openBoard(board) {
   state.board = board;
   show("#boardScreen");
-  layoutBoard();
   await refreshMembers();
   await resync();
+  initView();
   api.subscribe(board.id, boardHandlers());
   live = api.live(board.id, state.me, { onMessage: onLiveMessage, onPresence: onPresence });
+  api.touchSeen(board.id);
   refreshPushSubscription();
   refreshQuestionDot();
   clearBadge();
@@ -646,6 +678,8 @@ async function openBoard(board) {
   let n = 0;
   ticker = setInterval(() => {
     tickNotes();
+    expireCursors();
+    if (document.visibilityState === "visible" && ++n % 4 === 0) api.touchSeen(state.board.id);
     if (document.visibilityState === "visible") resync().catch(() => {});
   }, 30000);
 }
@@ -663,6 +697,12 @@ async function resync() {
 }
 
 async function loadExtras() {
+  try {
+    const strokes = await api.listStrokes(state.board.id);
+    const ids = new Set(strokes.map((s) => s.id));
+    for (const id of [...state.strokes.keys()]) if (!ids.has(id)) removeInk(id);
+    for (const s of strokes) addInk(s);
+  } catch { /* strokes arrive with the v4 upgrade */ }
   try {
     const [rs, reps, pings] = await Promise.all([api.listReactions(state.board.id), api.listReplies(state.board.id), api.listPings(state.board.id)]);
     state.reactions = groupBy(rs, "note_id");
@@ -710,31 +750,442 @@ function latestMood(userId) {
   return p && Date.now() - new Date(p.created_at).getTime() < 24 * 3600 * 1000 ? PING_EMOJI[p.kind] : null;
 }
 
+function isOnline(id) { const p = state.presence[id]; return !!p && p.visible !== false; }
+function isActive(id) { const c = state.cursors.get(id); return isOnline(id) && !!c && Date.now() - c.at < 15000; }
+
+function chipEl(m) {
+  const c = document.createElement("span");
+  c.className = "chip"; c.style.background = BRIGHT[m.color] || BRIGHT.c1; c.textContent = (m.name || "?").slice(0, 1).toUpperCase();
+  c.title = m.name;
+  const mood = latestMood(m.id);
+  if (mood) { const i = document.createElement("i"); i.className = "mood"; i.textContent = mood; c.appendChild(i); }
+  if (m.id !== state.me?.id && isOnline(m.id)) { const o = document.createElement("i"); o.className = "on"; c.appendChild(o); }
+  return c;
+}
+
 function renderChips() {
   const chips = $("#memberChips"); chips.innerHTML = "";
-  for (const m of state.members) {
-    const c = document.createElement("span");
-    c.className = "chip"; c.style.background = BRIGHT[m.color] || BRIGHT.c1; c.textContent = (m.name || "?").slice(0, 1).toUpperCase();
-    c.title = m.name;
-    const mood = latestMood(m.id);
-    if (mood) { const i = document.createElement("i"); i.className = "mood"; i.textContent = mood; c.appendChild(i); }
-    chips.appendChild(c);
+  // you first, then whoever is online, then everyone else
+  const list = [...state.members].sort((a, b) => (a.id === state.me?.id ? -1 : b.id === state.me?.id ? 1 : isOnline(b.id) - isOnline(a.id)));
+  const max = 4;
+  for (const m of list.slice(0, max)) chips.appendChild(chipEl(m));
+  if (list.length > max) { const more = document.createElement("span"); more.className = "chip more"; more.textContent = "+" + (list.length - max); chips.appendChild(more); }
+  if (!$("#people").hidden) renderPeople();
+}
+
+function openPeople() { renderPeople(); $("#people").hidden = false; $("#peopleBackdrop").hidden = false; refreshMembers().catch(() => {}); }
+function closePeople() { $("#people").hidden = true; $("#peopleBackdrop").hidden = true; }
+
+function renderPeople() {
+  const ul = $("#peopleList"); ul.innerHTML = "";
+  const list = [...state.members].sort((a, b) => (a.id === state.me?.id ? -1 : b.id === state.me?.id ? 1 : (isActive(b.id) - isActive(a.id)) || (isOnline(b.id) - isOnline(a.id))));
+  $("#peopleCount").textContent = `${state.members.length} of 10 · ${list.filter((m) => m.id !== state.me?.id && isOnline(m.id)).length} online`;
+  $("#peopleCode").textContent = fmtCode(state.board?.code);
+  for (const m of list) {
+    const li = document.createElement("li");
+    li.appendChild(chipEl(m));
+    const info = document.createElement("div"); info.className = "info";
+    const nm = document.createElement("div"); nm.className = "nm"; nm.textContent = m.name + (m.id === state.me?.id ? " (you)" : "");
+    if (m.id === state.board?.created_by) { const o = document.createElement("small"); o.textContent = "owner"; nm.appendChild(o); }
+    const st = document.createElement("div"); st.className = "st"; st.appendChild(document.createElement("i"));
+    let txt;
+    if (m.id === state.me?.id) { txt = "Online"; st.classList.add("online"); }
+    else if (isActive(m.id)) { txt = state.presence[m.id]?.doodling ? "Active now · drawing together" : "Active now"; st.classList.add("active"); }
+    else if (isOnline(m.id)) { txt = "Online"; st.classList.add("online"); }
+    else txt = m.last_seen ? `Last seen ${timeAgo(m.last_seen)}` : "Offline";
+    st.appendChild(document.createTextNode(txt));
+    info.append(nm, st); li.appendChild(info);
+    if (m.id !== state.me?.id) {
+      const b = document.createElement("button"); b.className = "btn small"; b.textContent = "Find";
+      b.disabled = !state.views[m.id];
+      b.title = state.views[m.id] ? `Jump to where ${m.name} is looking` : `${m.name} isn't on the board right now`;
+      b.onclick = () => { closePeople(); findPerson(m.id); };
+      li.appendChild(b);
+    }
+    ul.appendChild(li);
   }
 }
 
-function layoutBoard() {
-  const scroller = $("#scroller");
-  const w = scroller.clientWidth || window.innerWidth;
-  state.scale = Math.min(Math.max(w / BOARD_W, 0.6), 1.5);
-  let maxY = 0;
-  for (const n of state.notes.values()) maxY = Math.max(maxY, n.y + 260);
-  const h = Math.max(MIN_BOARD_H, maxY + 500);
-  const board = $("#board");
-  board.style.height = h + "px";
-  board.style.transform = `scale(${state.scale})`;
-  const sizer = $("#boardSizer");
-  sizer.style.width = BOARD_W * state.scale + "px";
-  sizer.style.height = h * state.scale + "px";
+// ================================================================ endless canvas
+// world coords: notes keep x/y forever. screen = world * s + t
+const MIN_S = 0.25, MAX_S = 3;
+let viewRaf = 0, viewSaveT = 0, viewSendT = 0;
+function vp() { return $("#scroller").getBoundingClientRect(); }
+function toWorld(cx, cy) { const r = vp(), v = state.view; return { x: (cx - r.left - v.tx) / v.s, y: (cy - r.top - v.ty) / v.s }; }
+
+function applyView() {
+  if (viewRaf) return;
+  viewRaf = requestAnimationFrame(() => {
+    viewRaf = 0;
+    const { tx, ty, s } = state.view;
+    $("#board").style.transform = `translate(${tx}px, ${ty}px) scale(${s})`;
+    const sc = $("#scroller");
+    sc.style.backgroundPosition = `${tx}px ${ty}px`;
+    for (const el of document.querySelectorAll("#cursors .cursor")) placeCursor(el);
+    const now = Date.now();
+    if (state.board && now - viewSaveT > 400) { viewSaveT = now; ls.set("pinned-view-" + state.board.id, state.view); }
+    if (now - viewSendT > 500) { viewSendT = now; sendView(); }
+  });
+}
+
+function sendView() {
+  if (!live || !state.me || document.visibilityState !== "visible") return;
+  const r = vp(), c = toWorld(r.left + r.width / 2, r.top + r.height / 2);
+  live.send({ t: "view", u: state.me.id, cx: Math.round(c.x), cy: Math.round(c.y), s: +state.view.s.toFixed(2) });
+}
+
+function setView(v, animate = false) {
+  const target = { tx: v.tx, ty: v.ty, s: Math.min(MAX_S, Math.max(MIN_S, v.s)) };
+  if (!animate) { state.view = target; return applyView(); }
+  const from = { ...state.view }, t0 = performance.now(), dur = 380;
+  const step = (t) => {
+    const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+    state.view = { tx: from.tx + (target.tx - from.tx) * e, ty: from.ty + (target.ty - from.ty) * e, s: from.s + (target.s - from.s) * e };
+    applyView();
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+function centerOn(wx, wy, s, animate = true) {
+  const r = vp();
+  setView({ s, tx: r.width / 2 - wx * s, ty: r.height / 2 - wy * s }, animate);
+}
+
+function zoomAt(cx, cy, factor) {
+  const v = state.view, r = vp();
+  const s = Math.min(MAX_S, Math.max(MIN_S, v.s * factor));
+  const wx = (cx - r.left - v.tx) / v.s, wy = (cy - r.top - v.ty) / v.s;
+  setView({ s, tx: cx - r.left - wx * s, ty: cy - r.top - wy * s });
+}
+
+function noteBox(n) {
+  const el = noteEl(n.id);
+  return { x: n.x, y: n.y, w: el ? el.offsetWidth : 150, h: el ? el.offsetHeight : 150 };
+}
+
+function goHome(animate = true) {
+  const r = vp();
+  const notes = [...state.notes.values()].sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, 6);
+  if (!notes.length) return centerOn(BOARD_W / 2, 320, Math.min(1.2, Math.max(0.6, r.width / BOARD_W)), animate);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const n of notes) { const b = noteBox(n); x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y); x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h); }
+  const pad = 40;
+  const s = Math.min(1.2, Math.max(MIN_S, Math.min(r.width / (x1 - x0 + pad * 2), (r.height - 140) / (y1 - y0 + pad * 2))));
+  centerOn((x0 + x1) / 2, (y0 + y1) / 2 + 30 / s, s, animate);
+}
+
+function initView() {
+  const saved = ls.get("pinned-view-" + state.board.id);
+  if (saved && isFinite(saved.s)) setView(saved);
+  else goHome(false);
+}
+
+function findPerson(id) {
+  const v = state.views[id];
+  const m = memberById(id);
+  if (!v) return toast(`${m?.name || "They"} isn't on the board right now`);
+  centerOn(v.cx, v.cy, v.s || 1);
+  toast(`Here's where ${m?.name || "they"} ${isOnline(id) ? "is" : "was"} looking 👀`);
+}
+
+function findSomeone() {
+  const list = others().filter((m) => state.views[m.id]);
+  if (!list.length) return toast(others().length ? "Nobody else is on the board right now" : "It's just you on this board so far");
+  // most recently active first
+  list.sort((a, b) => (state.views[b.id].at || 0) - (state.views[a.id].at || 0));
+  findPerson(list[0].id);
+}
+
+function layoutBoard() { applyView(); }
+
+// ---------------------------------------------------------------- gestures
+// One gesture system for the whole canvas:
+//   touch: drag empty space = pan · hold a note then drag = move it · tap a note = open · two fingers = pinch zoom
+//   mouse: drag empty space = pan · drag a note = move it · click = open · wheel = zoom
+//   draw mode: one finger/mouse draws · two fingers still pan and zoom
+const pointers = new Map();
+let gest = null, pinch = null;
+
+function wireCanvas() {
+  const sc = $("#scroller");
+  sc.addEventListener("pointerdown", onDown);
+  sc.addEventListener("pointermove", onMove);
+  sc.addEventListener("pointerup", onUp);
+  sc.addEventListener("pointercancel", onUp);
+  sc.addEventListener("lostpointercapture", (e) => { if (pointers.has(e.pointerId)) onUp(e); });
+  sc.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    if (e.shiftKey && !e.ctrlKey) { setView({ ...state.view, tx: state.view.tx - (e.deltaX || e.deltaY), ty: state.view.ty }); return; }
+    zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)));
+  }, { passive: false });
+  sc.addEventListener("contextmenu", (e) => e.preventDefault());
+  sc.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") sendCursor(null); });
+}
+
+function onDown(e) {
+  if (e.pointerType === "mouse" && e.button !== 0) return;
+  $("#scroller").setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pointers.size === 2) return startPinch();
+  if (pointers.size > 2) return;
+  const noteT = e.target.closest?.("#board .note");
+  gest = { id: e.pointerId, sx: e.clientX, sy: e.clientY, touch: e.pointerType !== "mouse", noteId: noteT?.dataset.id || null, type: "pending" };
+  if (inkMode) { gest.type = "ink"; inkStart(e); return; }
+  if (gest.noteId && gest.touch) gest.hold = setTimeout(() => { if (gest?.type === "pending") startNoteDrag(); }, 280);
+}
+
+function onMove(e) {
+  sendCursor(e);
+  if (!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch) return movePinch();
+  if (!gest || gest.id !== e.pointerId) return;
+  const dx = e.clientX - gest.sx, dy = e.clientY - gest.sy;
+  if (gest.type === "ink") return inkMove(e);
+  if (gest.type === "pending" && Math.hypot(dx, dy) > 7) {
+    clearTimeout(gest.hold);
+    if (gest.noteId && !gest.touch) startNoteDrag();
+    else { gest.type = "pan"; gest.tx = state.view.tx; gest.ty = state.view.ty; $("#scroller").classList.add("panning"); }
+  }
+  if (gest.type === "pan") setView({ s: state.view.s, tx: gest.tx + dx, ty: gest.ty + dy });
+  if (gest.type === "note") moveNoteDrag(dx, dy);
+}
+
+function onUp(e) {
+  pointers.delete(e.pointerId);
+  if (pinch) { if (pointers.size < 2) { pinch = null; gest = null; } return; }
+  if (!gest || gest.id !== e.pointerId) return;
+  clearTimeout(gest.hold);
+  const g = gest; gest = null;
+  $("#scroller").classList.remove("panning");
+  if (g.type === "ink") inkEnd();
+  else if (g.type === "note") endNoteDrag(g);
+  else if (g.type === "pending" && g.noteId && e.type === "pointerup") openDetail(g.noteId);
+  if (g.touch) sendCursor(null);
+}
+
+function startPinch() {
+  if (gest) {
+    clearTimeout(gest.hold);
+    if (gest.type === "ink") inkCancel();
+    if (gest.type === "note") endNoteDrag(gest);
+    gest = null;
+  }
+  const [a, b] = [...pointers.values()];
+  const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  pinch = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, s0: state.view.s, w: toWorld(mid.x, mid.y) };
+}
+
+function movePinch() {
+  const [a, b] = [...pointers.values()]; if (!a || !b) return;
+  const r = vp();
+  const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  const s = Math.min(MAX_S, Math.max(MIN_S, pinch.s0 * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d0));
+  setView({ s, tx: mid.x - r.left - pinch.w.x * s, ty: mid.y - r.top - pinch.w.y * s });
+}
+
+function startNoteDrag() {
+  const n = state.notes.get(gest.noteId); const el = noteEl(gest.noteId);
+  if (!n || !el) return;
+  if (n.pinned) {
+    toast("It's pinned. Tap it and choose Unpin to move it.");
+    gest.type = "pan"; gest.tx = state.view.tx; gest.ty = state.view.ty; gest.sx = pointers.get(gest.id)?.x ?? gest.sx; gest.sy = pointers.get(gest.id)?.y ?? gest.sy;
+    return;
+  }
+  gest.type = "note"; gest.ox = n.x; gest.oy = n.y;
+  state.dragId = n.id;
+  el.classList.add("dragging");
+  el.style.zIndex = "2147483000";
+  el.style.transform = `rotate(${n.rot || 0}deg) scale(1.06)`;
+  if (navigator.vibrate) navigator.vibrate(12);
+}
+
+function moveNoteDrag(dx, dy) {
+  const n = state.notes.get(gest.noteId), el = noteEl(gest.noteId); if (!n || !el) return;
+  n.x = Math.round(gest.ox + dx / state.view.s); n.y = Math.round(gest.oy + dy / state.view.s);
+  el.style.left = n.x + "px"; el.style.top = n.y + "px";
+}
+
+async function endNoteDrag(g) {
+  const n = state.notes.get(g.noteId), el = noteEl(g.noteId);
+  if (!n || !el) return;
+  el.classList.remove("dragging");
+  n.z = Date.now();
+  placeNote(el, n);
+  try { await api.updateNote(n.id, { x: n.x, y: n.y, z: n.z }); } catch { toast("Couldn't save the move"); }
+  setTimeout(() => { if (state.dragId === n.id) state.dragId = null; }, 600);
+}
+
+// ---------------------------------------------------------------- live cursors
+let curSendT = 0, curHidden = true;
+function sendCursor(e) {
+  if (!live || !state.me) return;
+  if (!e) { if (!curHidden) { curHidden = true; live.send({ t: "cur", u: state.me.id, hide: true }); } return; }
+  const now = Date.now();
+  if (now - curSendT < 100) return;
+  if (e.pointerType !== "mouse" && !pointers.has(e.pointerId)) return;
+  curSendT = now; curHidden = false;
+  const w = toWorld(e.clientX, e.clientY);
+  live.send({ t: "cur", u: state.me.id, x: Math.round(w.x), y: Math.round(w.y), touch: e.pointerType !== "mouse" });
+}
+
+function placeCursor(el) {
+  const c = state.cursors.get(el.dataset.u); if (!c) return;
+  el.style.transform = `translate(${c.x}px, ${c.y}px) scale(${1 / state.view.s})`;
+}
+
+function onCursor(m) {
+  if (!m.u || m.u === state.me?.id) return;
+  const box = $("#cursors");
+  let el = box.querySelector(`.cursor[data-u="${CSS.escape(m.u)}"]`);
+  if (m.hide) { el?.remove(); const c = state.cursors.get(m.u); if (c) c.hidden = true; return; }
+  const mem = memberById(m.u); if (!mem) return;
+  const prev = state.cursors.get(m.u);
+  state.cursors.set(m.u, { x: m.x, y: m.y, at: Date.now(), touch: m.touch });
+  if (!el) {
+    el = document.createElement("div"); el.className = "cursor"; el.dataset.u = m.u;
+    const col = BRIGHT[mem.color] || BRIGHT.c1;
+    el.style.setProperty("--c", col);
+    el.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24"><path d="M3 2l7.5 19 2.6-7.9L21 10.5z" fill="${col}" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg><span></span>`;
+    el.querySelector("span").textContent = mem.name;
+    el.querySelector("span").style.background = col;
+    box.appendChild(el);
+  }
+  el.classList.toggle("touch", !!m.touch);
+  placeCursor(el);
+  if (!prev || Date.now() - prev.at > 15000) renderChips();
+}
+
+function expireCursors() {
+  for (const [u, c] of state.cursors) {
+    if (Date.now() - c.at > 6000) document.querySelector(`#cursors .cursor[data-u="${CSS.escape(u)}"]`)?.remove();
+  }
+  if (!$("#people").hidden) renderPeople();
+}
+
+// ---------------------------------------------------------------- drawing on the board (vector ink)
+let inkMode = false, inkCur = null, inkSendT = 0, inkSent = 0;
+const inkTool = {
+  color: PENS[0], size: SIZES[1], erasing: false,
+  tools() { return { color: this.color, size: this.size, erasing: this.erasing }; },
+  setColor(c) { this.color = c; this.erasing = false; }, setSize(s) { this.size = s; }, toggleEraser() { this.erasing = !this.erasing; },
+};
+const SVGNS = "http://www.w3.org/2000/svg";
+
+function inkD(p) {
+  if (!p.length) return "";
+  if (p.length === 1) return `M${p[0][0]} ${p[0][1]}l0.01 0`;
+  let d = `M${p[0][0]} ${p[0][1]}`;
+  for (let i = 1; i < p.length - 1; i++) {
+    const mx = ((p[i][0] + p[i + 1][0]) / 2).toFixed(1), my = ((p[i][1] + p[i + 1][1]) / 2).toFixed(1);
+    d += `Q${p[i][0]} ${p[i][1]} ${mx} ${my}`;
+  }
+  const l = p[p.length - 1];
+  return d + `L${l[0]} ${l[1]}`;
+}
+
+function inkPathEl(id) { return document.querySelector(`#ink path[data-id="${CSS.escape(id)}"]`); }
+
+function drawInk(row, live_ = false) {
+  let el = inkPathEl(row.id);
+  if (!el) { el = document.createElementNS(SVGNS, "path"); el.dataset.id = row.id; $("#ink").appendChild(el); }
+  el.setAttribute("d", inkD(row.points));
+  el.setAttribute("stroke", row.color);
+  el.setAttribute("stroke-width", row.width);
+  el.classList.toggle("live", live_);
+}
+
+function addInk(row) { state.strokes.set(row.id, row); drawInk(row); }
+function removeInk(id) { state.strokes.delete(id); inkPathEl(id)?.remove(); }
+
+function onStrokeEvent(row, deleted) {
+  if (deleted) return removeInk(row.id);
+  addInk(row);
+}
+
+function setInkMode(on) {
+  inkMode = on;
+  document.body.classList.toggle("drawmode", on);
+  $("#drawBar").hidden = !on;
+  $("#toolDraw").setAttribute("aria-pressed", String(on));
+  $("#scroller").classList.toggle("drawing", on);
+  if (on && !state.v2 && !isDemo) toast("Drawing on the board needs the latest database update (upgrade-v4.sql)", 4000);
+}
+
+function inkStart(e) {
+  if (inkTool.erasing) { inkCur = { erase: true }; inkEraseAt(e); return; }
+  const w = toWorld(e.clientX, e.clientY);
+  inkCur = { id: uid(), board_id: state.board.id, author_id: state.me.id, color: inkTool.color, width: +(inkTool.size * 2 / state.view.s).toFixed(2), points: [[+w.x.toFixed(1), +w.y.toFixed(1)]] };
+  inkSent = 0;
+  drawInk(inkCur, true);
+}
+
+function inkMove(e) {
+  if (!inkCur) return;
+  if (inkCur.erase) return inkEraseAt(e);
+  const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+  const minGap = 1.5 / state.view.s;
+  for (const ev of evs) {
+    const w = toWorld(ev.clientX, ev.clientY), l = inkCur.points[inkCur.points.length - 1];
+    if (Math.hypot(w.x - l[0], w.y - l[1]) >= minGap && inkCur.points.length < 3000) inkCur.points.push([+w.x.toFixed(1), +w.y.toFixed(1)]);
+  }
+  drawInk(inkCur, true);
+  const now = Date.now();
+  if (now - inkSendT > 60) {
+    inkSendT = now;
+    live?.send({ t: "ink", id: inkCur.id, u: state.me.id, color: inkCur.color, width: inkCur.width, from: inkSent, pts: inkCur.points.slice(inkSent) });
+    inkSent = inkCur.points.length;
+  }
+}
+
+async function inkEnd() {
+  const s = inkCur; inkCur = null;
+  if (!s || s.erase) return;
+  drawInk(s, false);
+  state.strokes.set(s.id, s);
+  try { await api.addStroke(s); }
+  catch (err) {
+    console.warn(err); removeInk(s.id);
+    live?.send({ t: "inkx", id: s.id });
+    /relation|schema cache|does not exist/i.test(err.message || "") ? toast("Drawing on the board needs upgrade-v4.sql in Supabase", 4000) : toast("Couldn't save that line");
+  }
+}
+
+function inkCancel() { if (inkCur && !inkCur.erase) { inkPathEl(inkCur.id)?.remove(); live?.send({ t: "inkx", id: inkCur.id }); } inkCur = null; }
+
+let eraseWarned = false;
+function inkEraseAt(e) {
+  const w = toWorld(e.clientX, e.clientY), r = 14 / state.view.s;
+  for (const [id, s] of state.strokes) {
+    const hit = s.points.some(([x, y]) => Math.abs(x - w.x) < r + s.width / 2 && Math.abs(y - w.y) < r + s.width / 2 && Math.hypot(x - w.x, y - w.y) < r + s.width / 2);
+    if (!hit) continue;
+    if (s.author_id !== state.me.id) { if (!eraseWarned) { eraseWarned = true; toast("You can only erase your own lines"); setTimeout(() => (eraseWarned = false), 4000); } continue; }
+    removeInk(id);
+    api.deleteStroke(id).catch(() => { addInk(s); toast("Couldn't erase that"); });
+  }
+}
+
+function inkUndo() {
+  const mine = [...state.strokes.values()].filter((s) => s.author_id === state.me.id);
+  const last = mine[mine.length - 1];
+  if (!last) return toast("Nothing of yours to undo");
+  removeInk(last.id);
+  api.deleteStroke(last.id).catch(() => { addInk(last); toast("Couldn't undo"); });
+}
+
+function onRemoteInk(m) {
+  if (m.u === state.me?.id) return;
+  let s = state.strokes.get(m.id);
+  if (s && !s._live) return;           // already saved
+  if (!s) {
+    if (m.from !== 0) return;          // missed the start: the saved line will arrive shortly
+    s = { id: m.id, author_id: m.u, color: m.color, width: m.width, points: [], _live: true };
+    state.strokes.set(m.id, s);
+  }
+  if (m.from !== s.points.length) return;
+  s.points.push(...m.pts);
+  drawInk(s, true);
 }
 
 function noteEl(id) { return document.querySelector(`#board .note[data-id="${CSS.escape(id)}"]`); }
@@ -852,7 +1303,6 @@ async function upsertNote(n, fromRealtime = false) {
     el = document.createElement("div");
     el.dataset.id = n.id;
     buildNoteContent(n, el);
-    attachDrag(el);
     $("#board").appendChild(el);
   } else if (!prev || prev.body !== n.body || prev.color !== n.color || prev.media_path !== n.media_path || JSON.stringify(prev.meta) !== JSON.stringify(n.meta)) {
     buildNoteContent(n, el);
@@ -865,7 +1315,6 @@ async function upsertNote(n, fromRealtime = false) {
     if (isDemo && document.hidden) localNotify(`New note from ${memberById(n.author_id)?.name || "your person"}`);
   }
   if (detailId === n.id) renderDetailMeta(n);
-  layoutBoard();
   updateEmpty();
 }
 
@@ -901,110 +1350,6 @@ function tickNotes() {
     if (n.kind === "countdown") buildNoteContent(n, el);
     else if (n.show_at) decorate(el, n);
   }
-}
-
-// ---------------------------------------------------------------- dragging
-// Mouse: drag right away. Touch: press and hold briefly, then drag (so swiping still scrolls the board).
-function attachDrag(el) {
-  let start = null, origin = null, dragging = false, holdTimer = null, startScroll = null, touchId = null;
-  const scroller = $("#scroller");
-
-  const begin = (x, y) => {
-    const n = state.notes.get(el.dataset.id); if (!n) return false;
-    start = { x, y }; origin = { x: n.x, y: n.y }; startScroll = { top: scroller.scrollTop, left: scroller.scrollLeft };
-    return true;
-  };
-  const lift = () => {
-    const n = state.notes.get(el.dataset.id);
-    if (n?.pinned) { start = null; toast("It's pinned. Tap it and choose Unpin to move it."); return; }
-    dragging = true; state.dragId = el.dataset.id;
-    el.classList.add("dragging");
-    el.style.zIndex = "2147483000";
-    el.style.transform = `rotate(${n.rot || 0}deg) scale(1.06)`;
-    if (navigator.vibrate) navigator.vibrate(12);
-  };
-  let last = null, raf = null;
-  const move = (x, y) => {
-    last = { x, y };
-    const n = state.notes.get(el.dataset.id);
-    const s = state.scale;
-    const dx = (x - start.x + (scroller.scrollLeft - startScroll.left)) / s;
-    const dy = (y - start.y + (scroller.scrollTop - startScroll.top)) / s;
-    const w = el.offsetWidth, boardH = parseFloat($("#board").style.height);
-    n.x = Math.min(Math.max(origin.x + dx, -10), BOARD_W - w + 10);
-    n.y = Math.min(Math.max(origin.y + dy, 0), boardH - 120);
-    el.style.left = n.x + "px"; el.style.top = n.y + "px";
-    // auto-scroll near the edges
-    const r = scroller.getBoundingClientRect();
-    if (!raf && (y < r.top + 60 || y > r.bottom - 60)) {
-      const step = () => {
-        if (!dragging || !last) { raf = null; return; }
-        const dir = last.y < r.top + 60 ? -1 : last.y > r.bottom - 60 ? 1 : 0;
-        if (!dir) { raf = null; return; }
-        scroller.scrollTop += dir * 10;
-        if (dir > 0) layoutGrow(n.y + 400);
-        move(last.x, last.y);
-        raf = requestAnimationFrame(step);
-      };
-      raf = requestAnimationFrame(step);
-    }
-  };
-  const finish = async (tap) => {
-    clearTimeout(holdTimer); holdTimer = null;
-    if (raf) { cancelAnimationFrame(raf); raf = null; }
-    const id = el.dataset.id;
-    if (dragging) {
-      dragging = false; el.classList.remove("dragging");
-      const n = state.notes.get(id);
-      n.z = Date.now();
-      placeNote(el, n);
-      layoutBoard();
-      try { await api.updateNote(id, { x: n.x, y: n.y, z: n.z }); } catch (e) { toast("Couldn't save the move"); }
-      setTimeout(() => { if (state.dragId === id) state.dragId = null; }, 600);
-    } else if (tap) {
-      openDetail(id);
-    }
-    start = null;
-  };
-
-  // mouse / pen
-  el.addEventListener("pointerdown", (e) => {
-    if (e.pointerType === "touch" || e.button !== 0) return;
-    if (!begin(e.clientX, e.clientY)) return;
-    el.setPointerCapture(e.pointerId);
-  });
-  el.addEventListener("pointermove", (e) => {
-    if (e.pointerType === "touch" || !start) return;
-    if (!dragging && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 5) lift();
-    if (dragging) move(e.clientX, e.clientY);
-  });
-  el.addEventListener("pointerup", (e) => { if (e.pointerType !== "touch" && start) finish(true); });
-  el.addEventListener("pointercancel", (e) => { if (e.pointerType !== "touch" && start) finish(false); });
-
-  // touch
-  el.addEventListener("touchstart", (e) => {
-    if (e.touches.length > 1) return;
-    const t = e.changedTouches[0]; touchId = t.identifier;
-    if (!begin(t.clientX, t.clientY)) return;
-    holdTimer = setTimeout(() => { holdTimer = null; if (start) lift(); }, 260);
-  }, { passive: true });
-  el.addEventListener("touchmove", (e) => {
-    const t = [...e.changedTouches].find((x) => x.identifier === touchId); if (!t || !start) return;
-    if (dragging) { e.preventDefault(); move(t.clientX, t.clientY); return; }
-    if (Math.hypot(t.clientX - start.x, t.clientY - start.y) > 8) { clearTimeout(holdTimer); holdTimer = null; start = null; } // it's a scroll
-  }, { passive: false });
-  el.addEventListener("touchend", (e) => {
-    if (![...e.changedTouches].some((x) => x.identifier === touchId)) return;
-    if (dragging) { e.preventDefault(); finish(false); }
-    else if (start) { e.preventDefault(); finish(true); }
-  }, { passive: false });
-  el.addEventListener("touchcancel", () => { if (start || dragging) finish(false); });
-  el.addEventListener("contextmenu", (e) => e.preventDefault());
-}
-
-function layoutGrow(needY) {
-  const board = $("#board"); const h = parseFloat(board.style.height);
-  if (needY > h - 200) { board.style.height = h + 400 + "px"; $("#boardSizer").style.height = (h + 400) * state.scale + "px"; }
 }
 
 // ---------------------------------------------------------------- sheets
@@ -1240,29 +1585,27 @@ function cdMeta() {
 
 // Find an open spot in the visible part of the board, leaning toward the middle.
 function viewportSpot(w, h) {
-  const sc = $("#scroller"), s = state.scale;
-  const top = sc.scrollTop / s + 10, bottom = (sc.scrollTop + sc.clientHeight) / s - h - 10;
-  const cx = BOARD_W / 2, cy = (sc.scrollTop + sc.clientHeight / 2) / s;
-  const rects = [...state.notes.values()].map((n) => {
-    const el = noteEl(n.id);
-    return { x: n.x, y: n.y, w: el ? el.offsetWidth : 150, h: el ? el.offsetHeight : 150 };
-  });
+  const r = vp(), s = state.view.s;
+  const tl = toWorld(r.left, r.top + 60), br = toWorld(r.right, r.bottom - 90);
+  const c = toWorld(r.left + r.width / 2, r.top + r.height / 2);
+  const rects = [...state.notes.values()].map(noteBox);
+  const step = Math.max(16, 20 / s);
   let best = null;
-  for (let y = Math.max(8, top); y <= Math.max(top, bottom); y += 20) {
-    for (let x = 6; x <= BOARD_W - w - 6; x += 20) {
+  for (let y = tl.y; y <= Math.max(tl.y, br.y - h); y += step) {
+    for (let x = tl.x; x <= Math.max(tl.x, br.x - w); x += step) {
       let overlap = 0;
-      for (const r of rects) {
-        const ox = Math.max(0, Math.min(x + w, r.x + r.w) - Math.max(x, r.x));
-        const oy = Math.max(0, Math.min(y + h, r.y + r.h) - Math.max(y, r.y));
+      for (const q of rects) {
+        const ox = Math.max(0, Math.min(x + w, q.x + q.w) - Math.max(x, q.x));
+        const oy = Math.max(0, Math.min(y + h, q.y + q.h) - Math.max(y, q.y));
         overlap += ox * oy;
       }
-      const dist = Math.hypot(x + w / 2 - cx, y + h / 2 - cy);
-      const score = overlap * 4 + dist;
+      const score = overlap * 4 + Math.hypot(x + w / 2 - c.x, y + h / 2 - c.y);
       if (!best || score < best.score) best = { x, y, score };
     }
   }
+  best = best || { x: c.x - w / 2, y: c.y - h / 2 };
   const jitter = () => Math.round((Math.random() - 0.5) * 16);
-  return { x: Math.min(Math.max(best.x + jitter(), 0), BOARD_W - w), y: Math.max(8, Math.round(best.y + jitter())) };
+  return { x: Math.round(best.x + jitter()), y: Math.round(best.y + jitter()) };
 }
 
 const AUDIO_EXT = { "audio/mp4": "m4a", "audio/x-m4a": "m4a", "audio/webm": "webm", "audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/aac": "aac" };
@@ -1561,6 +1904,10 @@ async function stickTogether() {
 function onLiveMessage(m) {
   if (!m || !m.t) return;
   if (m.t === "answered") return refreshQuestionDot();
+  if (m.t === "cur") return onCursor(m);
+  if (m.t === "view") { if (m.u !== state.me?.id) state.views[m.u] = { cx: m.cx, cy: m.cy, s: m.s, at: Date.now() }; return; }
+  if (m.t === "ink") return onRemoteInk(m);
+  if (m.t === "inkx") { const s = state.strokes.get(m.id); if (s?._live) removeInk(m.id); return; }
   const p = ensureTogetherPad();
   if (m.t === "hello") { const strokes = p.getStrokes(); if (strokes.length) live?.send({ t: "state", strokes: strokes.map(packStroke) }); }
   else if (m.t === "state") { if (!p.getStrokes().length && Array.isArray(m.strokes)) p.setStrokes(m.strokes); }
@@ -1573,20 +1920,21 @@ function onLiveMessage(m) {
 function onPresence(map) {
   const prev = state.presence;
   state.presence = map || {};
-  const pt = partner();
-  const wasDoodling = pt && prev[pt.id]?.doodling;
-  const isDoodling = pt && state.presence[pt.id]?.doodling;
-  if (isDoodling && !wasDoodling && !together.open) toast(`${pt.name} is drawing. Tap 🎨 Together to join.`, 4000);
+  for (const m of others()) {
+    const was = prev[m.id]?.doodling, now = state.presence[m.id]?.doodling;
+    if (now && !was && !together.open) toast(`${m.name} is drawing together. Tap 🎨 Together to join.`, 4000);
+    if (!isOnline(m.id)) { document.querySelector(`#cursors .cursor[data-u="${CSS.escape(m.id)}"]`)?.remove(); }
+  }
   renderPresence();
+  renderChips();
 }
 
 function renderPresence() {
-  const pt = partner();
-  const on = !!(pt && state.presence[pt.id]?.doodling);
-  $("#doodleDot").hidden = !on || together.open;
+  const drawing = others().filter((m) => state.presence[m.id]?.doodling).map((m) => m.name);
+  $("#doodleDot").hidden = !drawing.length || together.open;
   const w = $("#togetherWho");
-  w.textContent = on ? `${pt.name} is here ✏️` : pt ? `${pt.name} isn't here yet` : "Just you for now";
-  w.classList.toggle("on", on);
+  w.textContent = drawing.length ? `${listNames(drawing)} ${drawing.length > 1 ? "are" : "is"} here ✏️` : others().length ? "Nobody else here yet" : "Just you for now";
+  w.classList.toggle("on", !!drawing.length);
 }
 
 // ---------------------------------------------------------------- check-ins
@@ -1609,9 +1957,9 @@ function openPing() {
 }
 
 function renderPingLast() {
-  const pt = partner();
-  const last = pt && state.pings.find((p) => p.user_id === pt.id);
-  $("#pingLast").textContent = last ? `${pt.name} ${PING_TEXT[last.kind] || ""} · ${timeAgo(last.created_at)}` : pt ? `Let ${pt.name} know you're thinking of them.` : "";
+  const last = state.pings.find((p) => p.user_id !== state.me.id);
+  const who = last && memberById(last.user_id);
+  $("#pingLast").textContent = last && who ? `${who.name} ${PING_TEXT[last.kind] || ""} · ${timeAgo(last.created_at)}` : others().length ? "Let everyone know how you're doing." : "";
 }
 
 async function sendPing(key) {
@@ -1620,8 +1968,8 @@ async function sendPing(key) {
     if (!state.pings.some((p) => p.id === row.id)) state.pings.unshift(row);
     rain(PING_EMOJI[key], 10);
     renderChips(); openPing();
-    const pt = partner();
-    toast(key.startsWith("mood_") ? "Mood shared" : `Sent to ${pt?.name || "your person"} ${PING_EMOJI[key]}`);
+    const os = others();
+    toast(key.startsWith("mood_") ? "Mood shared" : `Sent to ${os.length === 1 ? os[0].name : "everyone"} ${PING_EMOJI[key]}`);
     api.notify(state.board.id, "ping", { ping: key });
   } catch (e) { console.warn(e); state.v2 ? toast("Couldn't send that") : needsUpgrade(); }
 }
@@ -1657,12 +2005,13 @@ async function renderQuestion() {
   let rows = [], status = [];
   try { [rows, status] = await Promise.all([api.listAnswers(state.board.id, since), api.answerStatus(state.board.id, key)]); }
   catch (e) { console.warn(e); $("#qAnswers").innerHTML = ""; $("#qAnswerBox").hidden = true; return needsUpgrade(); }
-  const me = state.me.id, pt = partner();
+  const me = state.me.id;
   const mine = rows.find((r) => r.user_id === me && r.qdate === key);
-  const theirs = rows.find((r) => r.user_id !== me && r.qdate === key);
-  const partnerAnswered = !!pt && status.includes(pt.id);
+  const answeredOthers = others().filter((m) => status.includes(m.id));
   $("#qAnswerBox").hidden = !!mine;
-  $("#qHint").textContent = partnerAnswered && !mine ? `${pt.name} already answered! Share yours to see theirs 👀` : "You'll see their answer once you've both answered.";
+  $("#qHint").textContent = answeredOthers.length && !mine
+    ? `${listNames(answeredOthers.map((m) => m.name))} already answered! Share yours to see theirs 👀`
+    : "You'll see everyone's answers once you've answered.";
   const box = $("#qAnswers"); box.innerHTML = "";
   const card = (who, text, waiting) => {
     const d = document.createElement("div"); d.className = "q-ans" + (waiting ? " waiting" : "");
@@ -1671,10 +2020,14 @@ async function renderQuestion() {
   };
   if (mine) {
     card("You", mine.body);
-    if (theirs) card(pt?.name || "Them", theirs.body);
-    else card(pt?.name || "Them", `Waiting for ${pt?.name || "them"} to answer…`, true);
+    for (const m of others()) {
+      const r = rows.find((x) => x.user_id === m.id && x.qdate === key);
+      if (r) card(m.name, r.body);
+    }
+    const waiting = others().filter((m) => !rows.some((x) => x.user_id === m.id && x.qdate === key)).map((m) => m.name);
+    if (waiting.length) card(waiting.length > 3 ? `${waiting.length} people` : listNames(waiting), "Haven't answered yet…", true);
   }
-  // earlier days you both answered
+  // earlier days you answered together
   const past = $("#qPast"); past.innerHTML = "";
   const byDay = groupBy(rows.filter((r) => r.qdate !== key), "qdate");
   let shown = 0;
@@ -1684,12 +2037,12 @@ async function renderQuestion() {
     const p = document.createElement("p"); p.textContent = questionFor(day); it.appendChild(p);
     for (const r of list) {
       const d = document.createElement("div"); const b = document.createElement("b");
-      b.textContent = (r.user_id === me ? "You" : pt?.name || "Them") + ": "; d.appendChild(b); d.appendChild(document.createTextNode(r.body)); it.appendChild(d);
+      b.textContent = (r.user_id === me ? "You" : memberById(r.user_id)?.name || "Someone") + ": "; d.appendChild(b); d.appendChild(document.createTextNode(r.body)); it.appendChild(d);
     }
     past.appendChild(it); shown++;
   }
   $("#qPastTitle").hidden = !shown;
-  $("#qDot").hidden = !(partnerAnswered && !mine);
+  $("#qDot").hidden = !(answeredOthers.length && !mine);
 }
 
 async function sendAnswer() {
@@ -1710,10 +2063,14 @@ async function refreshQuestionDot() {
   if (!state.board) return;
   try {
     const status = await api.answerStatus(state.board.id, localDateKey());
-    const pt = partner();
-    $("#qDot").hidden = !(pt && status.includes(pt.id) && !status.includes(state.me.id));
+    $("#qDot").hidden = !(others().some((m) => status.includes(m.id)) && !status.includes(state.me.id));
     if (!$("#question").hidden) renderQuestion();
   } catch { $("#qDot").hidden = true; }
+}
+
+function clearBoardDom() {
+  document.querySelectorAll("#board .note").forEach((e) => e.remove());
+  $("#ink").innerHTML = ""; $("#cursors").innerHTML = "";
 }
 
 // ---------------------------------------------------------------- switch / leave / delete board
@@ -1722,7 +2079,9 @@ function resetBoardState() {
   clearInterval(ticker);
   state.board = null; state.members = [];
   state.notes.clear(); state.reactions = new Map(); state.replies = new Map(); state.pings = []; state.presence = {};
-  $("#board").innerHTML = ""; $("#memberChips").innerHTML = "";
+  clearBoardDom(); $("#memberChips").innerHTML = "";
+  state.strokes = new Map(); state.cursors = new Map(); state.views = {};
+  setInkMode(false); closePeople();
   together.pad?.reset(); together.open = false;
   for (const s of ["detail", "composer", "settings", "ping", "question", "together"]) { $("#" + s).hidden = true; $("#" + s + "Backdrop").hidden = true; }
   $("#qDot").hidden = true; $("#doodleDot").hidden = true;
@@ -1737,18 +2096,16 @@ function renderBoardActions() {
   $("#switchRow").hidden = true; $("#switchCode").value = "";
   const can = canDeleteBoard();
   $("#deleteBoardBtn").hidden = !can;
-  const pt = partner();
   const hint = $("#boardHint");
   hint.hidden = can;
-  if (!can) hint.textContent = `Only ${pt?.name || "the person who made it"} can delete this board. You can leave it instead.`;
+  if (!can) hint.textContent = `Only ${ownerName()} (the owner) can delete this board. You can leave it instead.`;
 }
 
 async function switchBoard() {
   const code = $("#switchCode").value.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (code.length < 8) return toast("Codes are 8 characters");
   if (code === state.board?.code) return toast("You're already on that board");
-  const pt = partner();
-  if (!confirm(`Move to the other board? You'll leave this one${pt ? ` (${pt.name} keeps it)` : ""}.`)) return;
+  if (!confirm(`Move to the other board? You'll leave this one${others().length ? " (everyone else keeps it)" : ""}.`)) return;
   const btn = $("#switchGo"); busy(btn, true, "…");
   const old = state.board;
   leaving = true;
@@ -1763,8 +2120,8 @@ async function switchBoard() {
 }
 
 async function leaveBoard() {
-  const pt = partner();
-  const msg = pt ? `Leave this board? ${pt.name} keeps it and everything on it. You'd need the code to come back.`
+  const os = others();
+  const msg = os.length ? `Leave this board? ${os.length === 1 ? os[0].name : "Everyone else"} keeps it and everything on it. You'd need the code to come back.`
     : "Leave this board? Nobody else is on it, so you may want to delete it instead.";
   if (!confirm(msg)) return;
   leaving = true;
@@ -1779,8 +2136,8 @@ async function leaveBoard() {
 }
 
 async function deleteBoard() {
-  const pt = partner();
-  if (!confirm(`Delete this board for ${pt ? `both you and ${pt.name}` : "good"}? Every note, photo, voice note and answer on it will be erased. This can't be undone.`)) return;
+  const os = others();
+  if (!confirm(`Delete this board for ${os.length ? `everyone (${os.length + 1} people)` : "good"}? Every note, photo, voice note and answer on it will be erased. This can't be undone.`)) return;
   if (!confirm("Last check: delete everything and start over?")) return;
   const btn = $("#deleteBoardBtn"); busy(btn, true, "Deleting…");
   leaving = true;
@@ -2054,7 +2411,7 @@ function wireStatic() {
   $("#tStick").onclick = stickTogether;
   $("#tInvite").onclick = async () => {
     const r = await api.notify(state.board.id, "doodle");
-    toast(r?.error ? "Couldn't send the invite" : `Invite sent to ${partner()?.name || "your person"} 💌`);
+    toast(r?.error ? "Couldn't send the invite" : `Invite sent to ${others().length === 1 ? others()[0].name : "everyone"} 💌`);
   };
 
   // settings
@@ -2078,10 +2435,21 @@ function wireStatic() {
   };
 
   window.addEventListener("resize", () => { if (state.board) layoutBoard(); });
+  wireCanvas();
+  $("#toolHome").onclick = () => goHome();
+  $("#toolFind").onclick = () => (others().filter((m) => state.views[m.id]).length > 1 ? openPeople() : findSomeone());
+  $("#toolDraw").onclick = () => setInkMode(!inkMode);
+  $("#bDone").onclick = () => setInkMode(false);
+  buildTools({ pens: $("#bPens"), sizes: $("#bSizes"), eraser: $("#bEraser"), undo: $("#bUndo"), clear: $("#bClear") }, inkTool, { onUndo: inkUndo, onClear: () => {} });
+  $("#memberChips").onclick = openPeople;
+  $("#peopleClose").onclick = closePeople;
+  $("#peopleBackdrop").onclick = closePeople;
+  $("#peopleInvite").onclick = shareCode;
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && pollTimer) { const p = ls.get(PENDING); if (p) startPolling(p.nonce); }
     if (document.visibilityState === "visible") onResume(true);
-    if (document.visibilityState === "hidden") { hiddenAt = Date.now(); markSeen(); }
+    if (document.visibilityState === "hidden") { hiddenAt = Date.now(); markSeen(); live?.track({ visible: false }); sendCursor(null); if (state.board) api.touchSeen(state.board.id); }
+    else live?.track({ visible: true });
   });
   // iPhone home-screen apps don't always fire visibilitychange when reopened; these catch the rest
   window.addEventListener("pageshow", () => onResume());
