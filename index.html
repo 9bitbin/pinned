@@ -109,6 +109,11 @@
         <div class="empty-note">Tap <b>+</b> to stick your first note</div>
       </div>
     </main>
+    <nav class="dock" aria-label="Extras">
+      <button id="dockPing" aria-label="Check in"><span class="ic">💭</span><span class="lb">Check in</span><i class="dot" hidden></i></button>
+      <button id="dockQuestion" aria-label="Today's question"><span class="ic">❓</span><span class="lb">Today</span><i class="dot" id="qDot" hidden></i></button>
+      <button id="dockDoodle" aria-label="Draw together"><span class="ic">🎨</span><span class="lb">Together</span><i class="dot live" id="doodleDot" hidden></i></button>
+    </nav>
     <button class="fab" id="fab" aria-label="Add a note">+</button>
   </section>
 
@@ -121,6 +126,8 @@
       <button data-tab="emoji">Emoji</button>
       <button data-tab="image">Photo</button>
       <button data-tab="drawing">Draw</button>
+      <button data-tab="voice">Voice</button>
+      <button data-tab="countdown">Countdown</button>
     </nav>
 
     <div class="pane" data-pane="text">
@@ -165,6 +172,44 @@
       </div>
     </div>
 
+    <div class="pane" data-pane="voice" hidden>
+      <div class="rec-wrap">
+        <button class="rec" id="recBtn" type="button" aria-label="Record"><span></span></button>
+        <div class="rec-time" id="recTime">0:00</div>
+        <p class="muted" id="recHint">Tap to record. Up to 60 seconds.</p>
+        <div class="rec-preview" id="recPreview" hidden>
+          <button class="btn small" id="recPlay" type="button">▶ Play</button>
+          <button class="btn small" id="recRedo" type="button">Re-record</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="pane" data-pane="countdown" hidden>
+      <div class="preview-note cd-preview" id="cdPreview">
+        <div class="cd-big" id="cdPrevBig">12</div>
+        <div class="cd-unit" id="cdPrevUnit">days until</div>
+        <div class="cd-title" id="cdPrevTitle">our trip ✈️</div>
+      </div>
+      <input id="cdTitle" class="caption-input" maxlength="60" placeholder="What are you counting down to?">
+      <div class="cd-row">
+        <label><span>Date</span><input type="date" id="cdDate"></label>
+        <label><span>Time (optional)</span><input type="time" id="cdTime"></label>
+      </div>
+      <div class="swatches small" id="cdSwatches"></div>
+    </div>
+
+    <div class="sched" id="schedBox">
+      <button class="chiptoggle" id="schedToggle" type="button" aria-pressed="false">⏰ Send later</button>
+      <div class="sched-row" id="schedRow" hidden>
+        <input type="datetime-local" id="schedAt">
+        <div class="quick">
+          <button type="button" data-q="morning">Tomorrow 7 AM</button>
+          <button type="button" data-q="tonight">Tonight 9 PM</button>
+          <button type="button" data-q="hour">In 1 hour</button>
+        </div>
+      </div>
+    </div>
+
     <div class="sheet-actions">
       <button class="btn" id="composerCancel">Cancel</button>
       <button class="btn primary" id="composerSend">Stick it</button>
@@ -177,9 +222,16 @@
     <div class="grab"></div>
     <div class="detail-body" id="detailBody"></div>
     <p class="detail-meta" id="detailMeta"></p>
-    <div class="sheet-actions">
+    <div class="react-row" id="reactRow"></div>
+    <div class="replies" id="replyList"></div>
+    <div class="reply-box">
+      <input id="replyInput" maxlength="300" placeholder="Write a reply…" autocomplete="off">
+      <button class="btn small primary" id="replySend">Send</button>
+    </div>
+    <div class="sheet-actions wrap">
       <button class="btn danger" id="detailRemove">Remove</button>
-      <button class="btn" id="detailFront">Bring to front</button>
+      <button class="btn" id="detailPin">📌 Pin</button>
+      <button class="btn" id="detailFront">To front</button>
       <button class="btn primary" id="detailClose">Close</button>
     </div>
   </section>
@@ -199,6 +251,9 @@
       <button class="btn small" id="notifBtn">Turn on</button>
     </div>
     <p class="hint" id="notifHint" hidden></p>
+    <div class="mutes" id="muteList">
+      <p class="muted small-note">New notes always notify you. Choose the rest:</p>
+    </div>
 
     <h3>Pairing code</h3>
     <div class="setting-row">
@@ -229,6 +284,62 @@
     </div>
   </section>
 
+  <!-- Check-in -->
+  <div class="sheet-backdrop" id="pingBackdrop" hidden></div>
+  <section class="sheet" id="ping" hidden aria-label="Check in">
+    <div class="grab"></div>
+    <h2>Check in</h2>
+    <p class="muted" id="pingLast"></p>
+    <h3>Send a feeling</h3>
+    <div class="ping-grid" id="pingFeelings"></div>
+    <h3>My mood right now</h3>
+    <div class="ping-grid" id="pingMoods"></div>
+    <div class="sheet-actions"><button class="btn primary" id="pingClose">Done</button></div>
+  </section>
+
+  <!-- Daily question -->
+  <div class="sheet-backdrop" id="questionBackdrop" hidden></div>
+  <section class="sheet tall" id="question" hidden aria-label="Today's question">
+    <div class="grab"></div>
+    <p class="q-date" id="qDate"></p>
+    <h2 class="q-text" id="qText"></h2>
+    <div id="qAnswerBox">
+      <textarea id="qInput" maxlength="500" placeholder="Your answer…"></textarea>
+      <button class="btn primary" id="qSend">Share my answer</button>
+      <p class="muted small-note" id="qHint">You'll see their answer once you've both answered.</p>
+    </div>
+    <div class="q-answers" id="qAnswers"></div>
+    <h3 id="qPastTitle" hidden>Earlier</h3>
+    <div class="q-past" id="qPast"></div>
+    <div class="sheet-actions"><button class="btn" id="qClose">Close</button></div>
+  </section>
+
+  <!-- Draw together -->
+  <div class="sheet-backdrop" id="togetherBackdrop" hidden></div>
+  <section class="sheet tall" id="together" hidden aria-label="Draw together">
+    <div class="grab"></div>
+    <div class="together-head">
+      <h2>Draw together</h2>
+      <span class="presence" id="togetherWho">Just you for now</span>
+    </div>
+    <div class="pad-wrap" id="tPadWrap"><canvas id="tPad" width="600" height="600"></canvas></div>
+    <div class="pad-tools">
+      <div class="pens" id="tPens"></div>
+      <div class="pad-row">
+        <div class="sizes" id="tSizes"></div>
+        <button class="tool" id="tEraser" aria-pressed="false" title="Eraser"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20H8l-5-5 10-10 8 8-6 6"/><path d="M6 11l7 7"/></svg></button>
+        <button class="tool" id="tUndo" title="Undo my last line"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg></button>
+        <button class="tool" id="tClear" title="Clear for both"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg></button>
+      </div>
+    </div>
+    <div class="sheet-actions wrap">
+      <button class="btn" id="tInvite">Invite 💌</button>
+      <button class="btn" id="tClose">Close</button>
+      <button class="btn primary" id="tStick">Stick it</button>
+    </div>
+  </section>
+
+  <div class="fx" id="fx" aria-hidden="true"></div>
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
   <script type="module" src="app.js"></script>

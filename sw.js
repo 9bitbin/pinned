@@ -1,5 +1,5 @@
 // Stuck on You service worker: offline shell + push notifications
-const CACHE = "soy-v3";
+const CACHE = "soy-v4";
 const SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./config.js", "./manifest.webmanifest", "./icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {
@@ -37,7 +37,7 @@ self.addEventListener("push", (e) => {
     body: data.body || "New note",
     icon: "icons/icon-192.png",
     badge: "icons/icon-192.png",
-    tag: "soy-note",
+    tag: data.tag || "soy-note",
     renotify: true,
     data: { url: data.url || "./" },
   };
