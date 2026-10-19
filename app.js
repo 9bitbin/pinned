@@ -27,8 +27,8 @@ const PING_TEXT = {
   mood_tired: "is feeling tired 😴", mood_stressed: "is feeling stressed 😣", mood_sad: "is feeling down 😢",
 };
 const PING_EMOJI = Object.fromEntries([...FEELINGS, ...MOODS].map(([k, e]) => [k, e]));
-const MUTE_TYPES = [["reaction", "Reactions"], ["reply", "Replies"], ["ping", "Check-ins"],
-  ["answer", "Daily question answers"], ["doodle", "Draw-together invites"]];
+const MUTE_TYPES = [["message", "Messages"], ["reaction", "Reactions"], ["reply", "Replies"], ["ping", "Check-ins"],
+  ["answer", "Daily question answers"], ["doodle", "Draw-together invites"], ["bgrequest", "Background requests (owner)"], ["bgreply", "Background replies"]];
 const QUESTIONS = [
   "What's a small thing I do that makes your day better?", "If we could teleport anywhere for one day, where would we go?",
   "What song reminds you of us?", "What's your favorite memory of us so far?", "What's something you've never told me but want to?",
@@ -77,7 +77,7 @@ const toLocalInput = (d) => `${localDateKey(d)}T${pad2(d.getHours())}:${pad2(d.g
 // Both backends expose the same async interface.
 
 function createSupabaseApi() {
-  let sb, session, channel, extras, liveCh, inkCh;
+  let sb, session, channel, extras, liveCh, inkCh, chatCh;
   const bucket = () => sb.storage.from("board-media");
   const urlCache = new Map();
   const must = ({ data, error }) => { if (error) throw new Error(error.message); return data; };
@@ -160,8 +160,29 @@ function createSupabaseApi() {
       must(await sb.from("profiles").update(patch).eq("id", myId()));
     },
     async myBoard() {
-      const rows = must(await sb.from("board_members").select("board_id, boards(id, code, created_by)").eq("user_id", myId()).order("joined_at", { ascending: false }).limit(1));
-      return rows[0] ? rows[0].boards : null;
+      let res = await sb.from("board_members").select("board_id, bg, boards(id, code, created_by, bg_mode, bg)").eq("user_id", myId()).order("joined_at", { ascending: false }).limit(1);
+      if (res.error) res = await sb.from("board_members").select("board_id, boards(id, code, created_by)").eq("user_id", myId()).order("joined_at", { ascending: false }).limit(1);
+      const rows = must(res);
+      return rows[0] ? { ...rows[0].boards, my_bg: rows[0].bg || null } : null;
+    },
+    async getBoard(boardId) {
+      const res = await sb.from("boards").select("id, code, created_by, bg_mode, bg").eq("id", boardId).single();
+      return res.error ? null : res.data;
+    },
+    async setBoardBg(boardId, mode, bg, setBg) { must(await sb.rpc("set_board_bg", { b: boardId, p_mode: mode, p_bg: bg, p_set_bg: setBg })); },
+    async setMyBg(boardId, bg) { must(await sb.rpc("set_my_bg", { b: boardId, p_bg: bg })); },
+    async requestBg(boardId, path, kind) { return must(await sb.from("bg_requests").insert({ board_id: boardId, user_id: myId(), media_path: path, kind }).select().single()); },
+    async listBgRequests(boardId) { return must(await sb.from("bg_requests").select("*").eq("board_id", boardId).order("created_at", { ascending: false }).limit(30)); },
+    async reviewBg(id, approve) { return must(await sb.rpc("review_bg_request", { r: id, approve })); },
+    async listMessages(boardId) {
+      const rows = must(await sb.from("messages").select("*").eq("board_id", boardId).order("created_at", { ascending: false }).limit(800));
+      return rows.reverse();
+    },
+    async sendMessage(m) { return must(await sb.from("messages").insert(m).select().single()); },
+    async listReads(boardId) { return must(await sb.from("message_reads").select("*").eq("board_id", boardId)); },
+    async markRead(boardId, peer) { must(await sb.from("message_reads").upsert({ board_id: boardId, user_id: myId(), peer, read_at: new Date().toISOString() })); },
+    async unfurl(url) {
+      try { const { data } = await sb.functions.invoke("notify", { body: { unfurl: url } }); return data || {}; } catch { return {}; }
     },
     async createBoard() { return must(await sb.rpc("create_board")); },
     async joinBoard(code) { return must(await sb.rpc("join_board", { p_code: code })); },
@@ -265,6 +286,14 @@ function createSupabaseApi() {
         .on("postgres_changes", { event: "DELETE", schema: "public", table: "strokes" }, (p) => h.onStroke(p.old, true))
         .on("postgres_changes", { event: "UPDATE", schema: "public", table: "strokes", filter: f }, (p) => h.onStroke(p.new, false))
         .subscribe();
+      // v6 tables on their own channel too
+      if (chatCh) sb.removeChannel(chatCh);
+      chatCh = sb.channel("chat-" + boardId)
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: f }, (p) => h.onMessage(p.new))
+        .on("postgres_changes", { event: "*", schema: "public", table: "message_reads", filter: f }, (p) => h.onRead(p.new))
+        .on("postgres_changes", { event: "*", schema: "public", table: "bg_requests", filter: f }, (p) => h.onBgRequest(p.new))
+        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "boards", filter: `id=eq.${boardId}` }, (p) => h.onBoard(p.new))
+        .subscribe();
     },
     live(boardId, me, h) {
       if (liveCh) sb.removeChannel(liveCh);
@@ -309,7 +338,8 @@ function createSupabaseApi() {
 // Demo backend: localStorage + BroadcastChannel. Each browser tab is its own "person".
 function createDemoApi() {
   const KEY = "soy-demo-db";
-  const blank = () => ({ profiles: {}, boards: {}, members: [], notes: [], media: {}, reactions: [], replies: [], answers: [], pings: [], strokes: [] });
+  const blank = () => ({ profiles: {}, boards: {}, members: [], notes: [], media: {}, reactions: [], replies: [], answers: [], pings: [], strokes: [], messages: [], reads: [], bgreqs: [] });
+  const canSee = (m) => !m.to_id || m.sender_id === meId() || m.to_id === meId();
   const db = () => ({ ...blank(), ...ls.get(KEY, {}) });
   const save = (d) => ls.set(KEY, d);
   const bc = "BroadcastChannel" in window ? new BroadcastChannel("soy-demo") : null;
@@ -331,6 +361,10 @@ function createDemoApi() {
     if (m.type === "ping") handlers.onPing(m.row);
     if (m.type === "answer") handlers.onAnswer();
     if (m.type === "stroke") handlers.onStroke(m.row, m.del);
+    if (m.type === "message" && canSee(m.row)) handlers.onMessage(m.row);
+    if (m.type === "read") handlers.onRead(m.row);
+    if (m.type === "bgreq") { const b = db().boards[m.row.board_id]; if (m.row.user_id === meId() || b?.created_by === meId()) handlers.onBgRequest(m.row); }
+    if (m.type === "board") handlers.onBoard(m.row);
   };
   const code = () => Array.from({ length: 8 }, () => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 32)]).join("");
 
@@ -345,7 +379,38 @@ function createDemoApi() {
     async me() { return db().profiles[meId()] || null; },
     async signIn(name, color) { const d = db(); d.profiles[meId()] = { id: meId(), name, color, muted: [] }; save(d); return d.profiles[meId()]; },
     async updateProfile(patch) { const d = db(); Object.assign(d.profiles[meId()], patch); save(d); emit({ type: "members" }); },
-    async myBoard() { const d = db(); const m = d.members.find((x) => x.user_id === meId()); return m ? d.boards[m.board_id] : null; },
+    async myBoard() { const d = db(); const m = d.members.find((x) => x.user_id === meId()); return m ? { bg_mode: "shared", bg: null, ...d.boards[m.board_id], my_bg: m.bg || null } : null; },
+    async getBoard(boardId) { return { bg_mode: "shared", bg: null, ...db().boards[boardId] }; },
+    async setBoardBg(boardId, mode, bg, setBg) {
+      const d = db(); const b = d.boards[boardId];
+      if (b.created_by !== meId()) throw new Error("Only the board owner can change this");
+      if (mode) b.bg_mode = mode; if (setBg) b.bg = bg; save(d); emit({ type: "board", row: b });
+    },
+    async setMyBg(boardId, bg) { const d = db(); const m = d.members.find((x) => x.board_id === boardId && x.user_id === meId()); if (m) { m.bg = bg; save(d); } },
+    async requestBg(boardId, path, kind) {
+      const d = db(); const row = { id: uid(), board_id: boardId, user_id: meId(), media_path: path, kind, status: "pending", created_at: new Date().toISOString() };
+      d.bgreqs.push(row); save(d); emit({ type: "bgreq", row }); return row;
+    },
+    async listBgRequests(boardId) {
+      const d = db(); const owner = d.boards[boardId]?.created_by === meId();
+      return d.bgreqs.filter((r) => r.board_id === boardId && (owner || r.user_id === meId())).sort((x, y) => (x.created_at < y.created_at ? 1 : -1));
+    },
+    async reviewBg(id, approve) {
+      const d = db(); const r = d.bgreqs.find((x) => x.id === id); const b = d.boards[r.board_id];
+      if (b.created_by !== meId()) throw new Error("Only the board owner can review requests");
+      r.status = approve ? "approved" : "declined"; r.reviewed_at = new Date().toISOString();
+      if (approve) b.bg = { type: r.kind, path: r.media_path };
+      save(d); emit({ type: "bgreq", row: r }); if (approve) emit({ type: "board", row: b });
+      return { user_id: r.user_id };
+    },
+    async listMessages(boardId) { return db().messages.filter((m) => m.board_id === boardId && canSee(m)); },
+    async sendMessage(m) { const d = db(); const row = { ...m, id: uid(), created_at: new Date().toISOString() }; d.messages.push(row); save(d); emit({ type: "message", row }); return row; },
+    async listReads(boardId) { return db().reads.filter((r) => r.board_id === boardId); },
+    async markRead(boardId, peer) {
+      const d = db(); d.reads = d.reads.filter((r) => !(r.board_id === boardId && r.user_id === meId() && r.peer === peer));
+      const row = { board_id: boardId, user_id: meId(), peer, read_at: new Date().toISOString() }; d.reads.push(row); save(d); emit({ type: "read", row });
+    },
+    async unfurl(url) { try { const u = new URL(url); return { title: decodeURIComponent(u.pathname.split("/").filter(Boolean).pop() || u.hostname).replace(/[-_]/g, " "), thumb: null, author: u.hostname }; } catch { return {}; } },
     async createBoard() { const d = db(); const b = { id: uid(), code: code(), created_by: meId() }; d.boards[b.id] = b; d.members.push({ board_id: b.id, user_id: meId() }); save(d); return b; },
     async joinBoard(c) {
       const d = db(); const clean = (c || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -375,7 +440,7 @@ function createDemoApi() {
       if (!b || !(b.created_by === meId() || (mine.length === 1 && mine[0].user_id === meId()))) throw new Error("Only the person who made this board can delete it. You can leave it instead.");
       delete d.boards[boardId];
       for (const n of d.notes) if (n.board_id === boardId && n.media_path) delete d.media[n.media_path];
-      for (const k of ["members", "notes", "reactions", "replies", "answers", "pings", "strokes"]) d[k] = d[k].filter((x) => x.board_id !== boardId);
+      for (const k of ["members", "notes", "reactions", "replies", "answers", "pings", "strokes", "messages", "reads", "bgreqs"]) d[k] = d[k].filter((x) => x.board_id !== boardId);
       save(d); emit({ type: "members" });
     },
     async listNotes(boardId) { return db().notes.filter((n) => n.board_id === boardId && !hiddenFromMe(n)).sort((a, b) => a.z - b.z); },
@@ -464,6 +529,10 @@ const state = {
   view: { tx: 0, ty: 0, s: 1 },
   views: {},             // what each person is looking at: id -> {cx, cy, s, at}
   cursors: new Map(),    // id -> {x, y, at, touch}
+  msgs: [],              // messages you can see, oldest first
+  reads: new Map(),      // "user|peer" -> read_at
+  bgReqs: [],            // background requests you can see
+  playing: null,         // id of the music card playing on the board
   urls: {},              // media path -> url
   scale: 1,
   dragId: null,
@@ -657,6 +726,10 @@ const boardHandlers = () => ({
   onPing: onPingEvent,
   onAnswer: () => refreshQuestionDot(),
   onStroke: onStrokeEvent,
+  onMessage: onMessageEvent,
+  onRead: onReadEvent,
+  onBgRequest: onBgRequestEvent,
+  onBoard: onBoardEvent,
 });
 
 // Phones pause backgrounded web apps and drop their live connection.
@@ -671,6 +744,9 @@ function onResume(force = false) {
   resync().catch(() => {});
   refreshMembers().catch(() => {});
   refreshQuestionDot();
+  loadChats(); loadBgRequests();
+  api.getBoard?.(state.board.id).then((b) => b && onBoardEvent(b)).catch(() => {});
+  markThreadRead();
   clearBadge();
 }
 async function openBoard(board) {
@@ -679,6 +755,9 @@ async function openBoard(board) {
   await refreshMembers();
   await resync();
   initView();
+  applyBackground();
+  loadChats();
+  loadBgRequests();
   api.subscribe(board.id, boardHandlers());
   live = api.live(board.id, state.me, { onMessage: onLiveMessage, onPresence: onPresence });
   api.touchSeen(board.id);
@@ -947,7 +1026,8 @@ function onDown(e) {
   const handle = e.target.closest?.("#sel .h");
   if (handle && sel) { gest = { id: e.pointerId, sx: e.clientX, sy: e.clientY, touch, type: handle.dataset.h === "rot" ? "rotate" : "resize" }; beginTransform(e); return; }
   const noteT = e.target.closest?.("#board .note");
-  gest = { id: e.pointerId, sx: e.clientX, sy: e.clientY, touch, noteId: noteT?.dataset.id || null, strokeId: null, type: "pending" };
+  gest = { id: e.pointerId, sx: e.clientX, sy: e.clientY, touch, noteId: noteT?.dataset.id || null, strokeId: null, type: "pending",
+    ctl: e.target.closest?.(".lk-play, .lk-stop, .lk-open")?.className || null };
   if (inkMode) { gest.type = "ink"; inkStart(e); return; }
   if (!gest.noteId) gest.strokeId = hitOwnStroke(e);
   gest.selected = !!sel && (sel.id === gest.noteId || sel.id === gest.strokeId);
@@ -995,6 +1075,10 @@ function onUp(e) {
 function onTap(g) {
   if (g.noteId) {
     const n = state.notes.get(g.noteId); if (!n) return;
+    if (g.ctl && n.kind === "link") {
+      if (/lk-open/.test(g.ctl)) { window.open(n.meta?.url, "_blank", "noopener"); return; }
+      return playCard(n.id);
+    }
     if (sel?.type === "note" && sel.id === n.id) { deselect(); return openDetail(n.id); }
     if (canEdit(n)) return select("note", n.id);
     deselect();
@@ -1262,6 +1346,7 @@ let editId = null, editPhoto = null, editColor = "c1";
 function openEdit(id) {
   const n = state.notes.get(id); if (!n) return;
   if (!canEdit(n)) return toast("Only the person who made this, or the board owner, can change it");
+  if (n.kind === "link") return toast("Link cards can be resized, rotated and flipped, but not edited");
   editId = id; editPhoto = null; editColor = n.color || "c1";
   for (const s of document.querySelectorAll("#edit [data-kinds]")) s.hidden = !s.dataset.kinds.split(" ").includes(n.kind);
   $("#eText").value = n.kind === "text" ? n.body || "" : "";
@@ -1536,6 +1621,8 @@ function buildNoteContent(n, el) {
     for (let i = 0; i < 16; i++) { const b = document.createElement("i"); b.style.height = 6 + hashNum(n.id, i) * 24 + "px"; wave.appendChild(b); }
     el.appendChild(row);
     const d = document.createElement("div"); d.className = "dur"; d.textContent = "Voice note · " + fmtDur(n.meta?.duration || 0); el.appendChild(d);
+  } else if (n.kind === "link") {
+    buildLinkCard(n, el);
   } else if (n.kind === "countdown") {
     const p = countdownParts(n.meta);
     el.innerHTML = `<div class="cd-big"></div><div class="cd-unit"></div><div class="cd-title"></div>`;
@@ -1660,7 +1747,8 @@ function tickNotes() {
 function openSheet(name) { $("#" + name).hidden = false; $("#" + name + "Backdrop").hidden = false; }
 function closeSheet(name) {
   $("#" + name).hidden = true; $("#" + name + "Backdrop").hidden = true;
-  if (name === "detail") { detailId = null; if (detailAudio) { detailAudio.pause(); detailAudio = null; } }
+  if (name === "detail") { detailId = null; if (detailAudio) { detailAudio.pause(); detailAudio = null; } $("#detailBody").innerHTML = ""; }
+  if (name === "chats") { chat.peer = null; }
   if (name === "together") closeTogether();
 }
 
@@ -1672,6 +1760,21 @@ function openDetail(id) {
   const wrap = $("#detailBody"); wrap.innerHTML = "";
   if (detailAudio) { detailAudio.pause(); detailAudio = null; }
   if (n.kind === "voice") wrap.appendChild(audioPlayer(n, true));
+  else if (n.kind === "link") {
+    const md = n.meta || {};
+    const box = document.createElement("div"); box.className = "detail-player";
+    if (md.embed) {
+      if (state.playing === n.id) playCard(n.id);   // move playback into the sheet
+      const f = document.createElement("iframe"); f.src = md.embed; f.height = Math.max(md.h || 152, 152);
+      if (md.provider === "YouTube") f.style.aspectRatio = "16 / 9", f.removeAttribute("height");
+      f.allow = "autoplay; encrypted-media; clipboard-write; picture-in-picture"; f.setAttribute("allowfullscreen", ""); f.title = md.title || md.provider;
+      box.appendChild(f);
+    }
+    const t = document.createElement("b"); t.textContent = md.title || md.url; box.appendChild(t);
+    const open = document.createElement("a"); open.className = "btn small"; open.href = md.url; open.target = "_blank"; open.rel = "noopener"; open.textContent = `Open in ${md.embed ? md.provider : "browser"} ↗`;
+    box.appendChild(open);
+    wrap.appendChild(box);
+  }
   else {
     const el = document.createElement("div"); buildNoteContent(n, el);
     el.querySelector(".badges")?.remove(); el.querySelector(".pinmark")?.remove();
@@ -1842,6 +1945,7 @@ function openComposer() {
   $("#textInput").value = ""; $("#photoCaption").value = ""; $("#emojiCustom").value = "";
   $("#photoPreview").hidden = true; $("#photoHint").hidden = false; $("#photoInput").value = "";
   $("#cdTitle").value = ""; $("#cdDate").value = ""; $("#cdTime").value = "";
+  $("#linkInput").value = ""; $("#linkPreview").innerHTML = ""; linkMeta = null;
   pad.reset();
   resetRec();
   setSched(false);
@@ -1956,6 +2060,10 @@ async function sendCompose() {
       const path = await api.uploadMedia(state.board.id, rec.blob, AUDIO_EXT[type] || "webm");
       localUrl = rec.url;
       row = { ...base, kind: "voice", media_path: path, color: compose.color, meta: { duration: Math.round(rec.dur) }, ...viewportSpot(160, 90) };
+    } else if (compose.tab === "link") {
+      if (!linkMeta) { busy(btn, false); return toast("Paste a link first"); }
+      if (!state.v2 && !isDemo) { busy(btn, false); return needsUpgrade(); }
+      row = { ...base, kind: "link", body: linkMeta.title || linkMeta.url, color: "c1", meta: { ...linkMeta }, ...viewportSpot(220, 200) };
     } else if (compose.tab === "countdown") {
       const meta = cdMeta();
       if (!meta) { busy(btn, false); return toast("Pick the date you're counting down to"); }
@@ -1974,7 +2082,7 @@ async function sendCompose() {
     console.error(e);
     const msg = e.message || "";
     if (/mime|type/i.test(msg) && compose.tab === "voice") needsUpgrade();
-    else if (/violates check constraint|column .* does not exist|schema cache/i.test(msg)) needsUpgrade();
+    else if (/violates check constraint|column .* does not exist|schema cache/i.test(msg)) toast(compose.tab === "link" ? "Music cards need upgrade-v6.sql in Supabase" : "This needs the latest database update (see SETUP)", 4500);
     else toast(msg || "Couldn't send that");
   } finally { busy(btn, false); $("#composerSend").textContent = compose.sched ? "Schedule it" : "Stick it"; }
 }
@@ -2211,6 +2319,7 @@ function onLiveMessage(m) {
   if (!m || !m.t) return;
   if (m.t === "answered") return refreshQuestionDot();
   if (m.t === "cur") return onCursor(m);
+  if (m.t === "typing") return onTyping(m);
   if (m.t === "view") { if (m.u !== state.me?.id) state.views[m.u] = { cx: m.cx, cy: m.cy, s: m.s, at: Date.now() }; return; }
   if (m.t === "ink") return onRemoteInk(m);
   if (m.t === "inkx") { const s = state.strokes.get(m.id); if (s?._live) removeInk(m.id); return; }
@@ -2388,8 +2497,10 @@ function resetBoardState() {
   clearBoardDom(); $("#memberChips").innerHTML = "";
   state.strokes = new Map(); state.cursors = new Map(); state.views = {};
   deselect(); setInkMode(false); closePeople();
+  state.msgs = []; state.reads = new Map(); state.bgReqs = []; state.playing = null; chat.peer = null;
+  $("#chatDot").hidden = true; $("#gearDot").hidden = true; clearBgLayer();
   together.pad?.reset(); together.open = false;
-  for (const s of ["detail", "composer", "settings", "ping", "question", "together"]) { $("#" + s).hidden = true; $("#" + s + "Backdrop").hidden = true; }
+  for (const s of ["detail", "composer", "settings", "ping", "question", "together", "chats", "edit"]) { $("#" + s).hidden = true; $("#" + s + "Backdrop").hidden = true; }
   $("#qDot").hidden = true; $("#doodleDot").hidden = true;
   $("#codeInput").value = ""; setError($("#pairError"));
 }
@@ -2457,6 +2568,432 @@ async function deleteBoard() {
   finally { leaving = false; busy(btn, false); }
 }
 
+// ================================================================ messages (1-on-1 + group)
+const chat = { peer: null, typingT: 0, typingShow: null };
+const readKey = (u, p) => `${u}|${p}`;
+const threadOf = (m) => (!m.to_id ? "group" : m.sender_id === state.me?.id ? m.to_id : m.sender_id);
+
+async function loadChats() {
+  try {
+    const [msgs, reads] = await Promise.all([api.listMessages(state.board.id), api.listReads(state.board.id)]);
+    state.msgs = msgs;
+    state.reads = new Map(reads.map((r) => [readKey(r.user_id, r.peer), r.read_at]));
+    await loadUrls(msgs);
+    updateChatDot();
+    if (!$("#chats").hidden) chat.peer ? renderThread() : renderThreadList();
+  } catch { /* messages arrive with upgrade-v6.sql */ }
+}
+
+function unreadIn(peer) {
+  const last = state.reads.get(readKey(state.me.id, peer));
+  return state.msgs.filter((m) => threadOf(m) === peer && m.sender_id !== state.me.id && (!last || m.created_at > last)).length;
+}
+
+function updateChatDot() {
+  const peers = new Set(state.msgs.map(threadOf));
+  $("#chatDot").hidden = ![...peers].some((p) => unreadIn(p) > 0);
+}
+
+function openChats() {
+  chat.peer = null;
+  $("#chatList").hidden = false; $("#chatThread").hidden = true;
+  renderThreadList();
+  openSheet("chats");
+}
+
+function renderThreadList() {
+  const ul = $("#threadList"); ul.innerHTML = "";
+  const rows = [{ peer: "group", name: "Everyone", sub: `${state.members.length} people` },
+    ...others().map((m) => ({ peer: m.id, name: m.name, m }))];
+  const lastOf = (p) => { const list = state.msgs.filter((x) => threadOf(x) === p); return list[list.length - 1]; };
+  rows.sort((x, y) => (x.peer === "group" ? -1 : y.peer === "group" ? 1 : ((lastOf(y.peer)?.created_at || "") > (lastOf(x.peer)?.created_at || "") ? 1 : -1)));
+  for (const r of rows) {
+    const li = document.createElement("li");
+    const last = lastOf(r.peer), unread = unreadIn(r.peer);
+    li.classList.toggle("unread", unread > 0);
+    let chip;
+    if (r.m) chip = chipEl(r.m);
+    else { chip = document.createElement("span"); chip.className = "chip group"; chip.textContent = "👥"; }
+    li.appendChild(chip);
+    const info = document.createElement("div"); info.className = "tinfo";
+    const nm = document.createElement("div"); nm.className = "tname";
+    const b = document.createElement("span"); b.textContent = r.name; nm.appendChild(b);
+    if (last) { const t = document.createElement("small"); t.textContent = timeAgo(last.created_at); nm.appendChild(t); }
+    const lt = document.createElement("div"); lt.className = "tlast";
+    lt.textContent = last ? `${last.sender_id === state.me.id ? "You: " : r.peer === "group" ? (memberById(last.sender_id)?.name || "Someone") + ": " : ""}${last.body || "📷 Photo"}` : r.peer === "group" ? "Group chat for the whole board" : "Say hi 👋";
+    info.append(nm, lt); li.appendChild(info);
+    if (unread) { const d = document.createElement("i"); d.className = "udot"; li.appendChild(d); }
+    li.onclick = () => openThread(r.peer);
+    ul.appendChild(li);
+  }
+}
+
+function openThread(peer) {
+  chat.peer = peer;
+  $("#chatList").hidden = true; $("#chatThread").hidden = false;
+  const m = memberById(peer);
+  $("#threadName").textContent = peer === "group" ? "Everyone" : m?.name || "Chat";
+  $("#threadSub").textContent = peer === "group" ? `Group chat · ${state.members.length} people` : isOnline(peer) ? "Online" : m?.last_seen ? `Last seen ${timeAgo(m.last_seen)}` : "";
+  $("#threadTyping").hidden = true;
+  renderThread();
+  markThreadRead();
+  setTimeout(() => $("#msgInput").focus(), 200);
+}
+
+function renderThread() {
+  const box = $("#msgList"); box.innerHTML = "";
+  const list = state.msgs.filter((x) => threadOf(x) === chat.peer);
+  if (!list.length) { const p = document.createElement("p"); p.className = "msg-time"; p.textContent = chat.peer === "group" ? "Say something to everyone 👋" : "No messages yet"; box.appendChild(p); }
+  let lastTime = 0;
+  for (const m of list) {
+    const t = new Date(m.created_at).getTime();
+    if (t - lastTime > 30 * 60 * 1000) {
+      const d = document.createElement("div"); d.className = "msg-time";
+      d.textContent = new Date(m.created_at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+      box.appendChild(d);
+    }
+    lastTime = t;
+    const el = document.createElement("div");
+    el.className = "msg" + (m.sender_id === state.me.id ? " mine" : "");
+    if (chat.peer === "group" && m.sender_id !== state.me.id) { const by = document.createElement("span"); by.className = "by"; by.textContent = memberById(m.sender_id)?.name || "Someone"; el.appendChild(by); }
+    if (m.media_path) { const img = document.createElement("img"); img.alt = "Photo"; img.src = state.urls[m.media_path] || ""; el.appendChild(img); }
+    if (m.body) el.appendChild(document.createTextNode(m.body));
+    box.appendChild(el);
+  }
+  // read receipt under your last message
+  const mineLast = [...list].reverse().find((m) => m.sender_id === state.me.id);
+  if (mineLast && list[list.length - 1] === mineLast) {
+    let txt = "";
+    if (chat.peer === "group") {
+      const n = others().filter((o) => (state.reads.get(readKey(o.id, "group")) || "") >= mineLast.created_at).length;
+      if (n) txt = n === others().length ? "Seen by everyone" : `Seen by ${n}`;
+    } else if ((state.reads.get(readKey(chat.peer, state.me.id)) || "") >= mineLast.created_at) txt = "Seen";
+    if (txt) { const s = document.createElement("div"); s.className = "msg-seen"; s.textContent = "✓ " + txt; box.appendChild(s); }
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+let readT = null;
+function markThreadRead() {
+  if (!chat.peer || $("#chats").hidden || document.visibilityState !== "visible") return;
+  clearTimeout(readT);
+  readT = setTimeout(async () => {
+    const peer = chat.peer; if (!peer) return;
+    state.reads.set(readKey(state.me.id, peer), new Date().toISOString());
+    updateChatDot();
+    try { await api.markRead(state.board.id, peer); } catch { /* v6 */ }
+  }, 300);
+}
+
+async function sendChat(photo = null) {
+  const body = $("#msgInput").value.trim();
+  if (!body && !photo) return;
+  const peer = chat.peer; if (!peer) return;
+  const btn = $("#msgSend"); busy(btn, true, "…");
+  try {
+    const row = { board_id: state.board.id, sender_id: state.me.id, to_id: peer === "group" ? null : peer, body: body || null };
+    if (photo) {
+      row.media_path = await api.uploadMedia(state.board.id, photo, "jpg");
+      state.urls[row.media_path] = URL.createObjectURL(photo);
+    }
+    const saved = await api.sendMessage(row);
+    $("#msgInput").value = "";
+    onMessageEvent(saved);
+    api.notify(state.board.id, "message", peer === "group" ? {} : { to: peer });
+  } catch (e) {
+    console.warn(e);
+    /relation|schema cache|does not exist/i.test(e.message || "") ? toast("Messages need upgrade-v6.sql in Supabase", 4000) : toast("Couldn't send that");
+  }
+  busy(btn, false);
+}
+
+async function onMessageEvent(m) {
+  if (state.msgs.some((x) => x.id === m.id)) return;
+  state.msgs.push(m);
+  if (m.media_path && !state.urls[m.media_path]) await loadUrls([m]);
+  const peer = threadOf(m);
+  const open = !$("#chats").hidden;
+  if (open && chat.peer === peer) { renderThread(); if (m.sender_id !== state.me.id) markThreadRead(); }
+  else if (open && !chat.peer) renderThreadList();
+  if (m.sender_id !== state.me.id && !(open && chat.peer === peer)) {
+    const who = memberById(m.sender_id)?.name || "Someone";
+    toast(`${peer === "group" ? who + " (group)" : who}: ${(m.body || "📷 Photo").slice(0, 60)}`, 3500);
+  }
+  if (m.sender_id !== state.me.id && chat.peer === peer) { $("#threadTyping").hidden = true; }
+  updateChatDot();
+}
+
+function onReadEvent(r) {
+  if (!r?.user_id) return;
+  state.reads.set(readKey(r.user_id, r.peer), r.read_at);
+  if (!$("#chats").hidden && chat.peer) renderThread();
+}
+
+function sendTyping() {
+  const now = Date.now();
+  if (!chat.peer || now - chat.typingT < 2000) return;
+  chat.typingT = now;
+  live?.send({ t: "typing", u: state.me.id, to: chat.peer });
+}
+
+function onTyping(m) {
+  if (m.u === state.me?.id || $("#chats").hidden) return;
+  const forMe = (chat.peer === "group" && m.to === "group") || (chat.peer === m.u && m.to === state.me.id);
+  if (!forMe) return;
+  const el = $("#threadTyping");
+  el.textContent = `${memberById(m.u)?.name || "Someone"} is typing…`;
+  el.hidden = false;
+  clearTimeout(chat.typingShow);
+  chat.typingShow = setTimeout(() => (el.hidden = true), 3500);
+}
+
+// ================================================================ backgrounds
+const BG_COLORS = ["#f4efe6", "#ffe3ec", "#e3f0ff", "#e6f7e9", "#efe6ff", "#1b1d24", "#2b3a55", "#5b3a29"];
+const MAX_BG_BYTES = 10 * 1024 * 1024;
+
+function isOwner() { return state.board?.created_by === state.me?.id; }
+function effectiveBg() {
+  if (!state.board) return null;
+  return (state.board.bg_mode === "personal" ? state.board.my_bg : state.board.bg) || null;
+}
+
+function clearBgLayer() { const l = $("#bgLayer"); l.innerHTML = ""; l.style.background = ""; l.style.backgroundImage = ""; delete l.dataset.key; }
+
+async function applyBackground() {
+  const bg = effectiveBg(), l = $("#bgLayer");
+  const key = bg ? JSON.stringify(bg) : "";
+  if (l.dataset.key === key) return;
+  clearBgLayer(); l.dataset.key = key;
+  if (!bg) return;
+  if (bg.type === "color") { l.style.background = bg.value; return; }
+  if (!bg.path) return;
+  if (!state.urls[bg.path]) Object.assign(state.urls, await api.mediaUrls([bg.path]));
+  const url = state.urls[bg.path]; if (!url) return;
+  if (bg.type === "video") {
+    const v = document.createElement("video");
+    v.muted = true; v.defaultMuted = true; v.loop = true; v.autoplay = true; v.playsInline = true;
+    v.setAttribute("muted", ""); v.setAttribute("playsinline", ""); v.setAttribute("webkit-playsinline", "");
+    v.disablePictureInPicture = true; v.controls = false; v.src = url;
+    l.appendChild(v);
+    v.play().catch(() => {});
+  } else {
+    l.style.backgroundImage = `url("${url.replace(/"/g, "%22")}")`;
+  }
+}
+
+function onBoardEvent(row) {
+  if (!state.board || row.id !== state.board.id) return;
+  const modeChanged = row.bg_mode !== state.board.bg_mode;
+  Object.assign(state.board, { bg_mode: row.bg_mode, bg: row.bg, created_by: row.created_by });
+  applyBackground();
+  if (modeChanged && !isOwner()) toast(row.bg_mode === "personal" ? "You can now pick your own background in Settings" : "The board has a shared background again");
+  if (!$("#settings").hidden) renderBgSettings();
+}
+
+async function loadBgRequests() {
+  try { state.bgReqs = await api.listBgRequests(state.board.id); } catch { state.bgReqs = []; }
+  updateGearDot();
+}
+
+function updateGearDot() { $("#gearDot").hidden = !(isOwner() && state.bgReqs.some((r) => r.status === "pending")); }
+
+function onBgRequestEvent(r) {
+  const i = state.bgReqs.findIndex((x) => x.id === r.id);
+  const prev = i >= 0 ? state.bgReqs[i] : null;
+  if (i >= 0) state.bgReqs[i] = r; else state.bgReqs.unshift(r);
+  if (isOwner() && r.status === "pending" && !prev && r.user_id !== state.me.id) toast(`${memberById(r.user_id)?.name || "Someone"} suggested a background. Open Settings to see it 🖼️`, 4500);
+  if (r.user_id === state.me.id && prev?.status === "pending" && r.status !== "pending") toast(r.status === "approved" ? "Your background was approved 🎉" : "The owner passed on your background idea", 4500);
+  updateGearDot();
+  if (!$("#settings").hidden) renderBgSettings();
+}
+
+function renderBgSettings() {
+  const owner = isOwner(), mode = state.board?.bg_mode || "shared";
+  const canSetOwn = owner || mode === "personal";
+  const segEl = $("#bgMode");
+  segEl.hidden = !owner;
+  segEl.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
+  const info = $("#bgInfo");
+  if (owner) info.textContent = mode === "shared" ? "Everyone sees the background you pick. Members can suggest an image or GIF for you to approve." : "Everyone picks their own background. Yours is below.";
+  else info.textContent = mode === "shared" ? `${ownerName()} picks the shared background. You can suggest an image or GIF.` : "Pick your own background. Only you see it.";
+  // colors
+  const cur = effectiveBg();
+  const colors = $("#bgColors"); colors.innerHTML = ""; colors.hidden = !canSetOwn;
+  for (const c of BG_COLORS) {
+    const b = document.createElement("button"); b.type = "button"; b.style.background = c; b.setAttribute("aria-label", "Background color " + c);
+    b.setAttribute("aria-pressed", String(cur?.type === "color" && cur.value === c));
+    b.onclick = () => setBackground({ type: "color", value: c });
+    colors.appendChild(b);
+  }
+  const lbl = $("#bgFileLbl"), file = $("#bgFile");
+  if (canSetOwn) { lbl.textContent = owner ? "Upload image, GIF or video" : "Upload image or GIF"; file.accept = owner ? "image/*,video/mp4,video/webm,video/quicktime" : "image/*"; }
+  else { lbl.textContent = "Suggest an image or GIF"; file.accept = "image/*"; }
+  $("#bgClear").hidden = !canSetOwn || !cur;
+  // requests
+  const box = $("#bgRequests"); box.innerHTML = "";
+  const list = owner ? state.bgReqs.filter((r) => r.status === "pending") : state.bgReqs.filter((r) => r.user_id === state.me.id).slice(0, 3);
+  if (list.length) {
+    const paths = list.map((r) => r.media_path).filter((p) => !state.urls[p]);
+    if (paths.length) api.mediaUrls(paths).then((u) => { Object.assign(state.urls, u); box.querySelectorAll("img[data-p]").forEach((im) => (im.src = state.urls[im.dataset.p] || "")); });
+  }
+  for (const r of list) {
+    const row = document.createElement("div"); row.className = "bgreq";
+    const img = document.createElement("img"); img.alt = "Suggested background"; img.dataset.p = r.media_path; img.src = state.urls[r.media_path] || "";
+    const who = document.createElement("span"); who.className = "who";
+    who.textContent = owner ? `${memberById(r.user_id)?.name || "Someone"} suggested this` : "Your suggestion";
+    const sm = document.createElement("small"); sm.textContent = owner ? timeAgo(r.created_at) : { pending: "Waiting for the owner", approved: "Approved 🎉", declined: "Not this time" }[r.status];
+    who.appendChild(sm);
+    row.append(img, who);
+    if (owner) {
+      const acts = document.createElement("div"); acts.className = "acts";
+      const ok = document.createElement("button"); ok.className = "btn small primary"; ok.textContent = "Approve"; ok.onclick = () => reviewBg(r, true);
+      const no = document.createElement("button"); no.className = "btn small"; no.textContent = "Decline"; no.onclick = () => reviewBg(r, false);
+      acts.append(ok, no); row.appendChild(acts);
+    }
+    box.appendChild(row);
+  }
+}
+
+async function setBackground(bg) {
+  try {
+    if (isOwner() && state.board.bg_mode !== "personal") { await api.setBoardBg(state.board.id, null, bg, true); state.board.bg = bg; }
+    else { await api.setMyBg(state.board.id, bg); state.board.my_bg = bg; }
+    applyBackground(); renderBgSettings();
+  } catch (e) { bgError(e); }
+}
+
+async function setBgMode(mode) {
+  if (!isOwner() || mode === state.board.bg_mode) return;
+  try { await api.setBoardBg(state.board.id, mode, null, false); state.board.bg_mode = mode; applyBackground(); renderBgSettings(); }
+  catch (e) { bgError(e); }
+}
+
+function bgError(e) {
+  const m = e?.message || "";
+  if (/function|schema cache|column|does not exist/i.test(m)) toast("Backgrounds need upgrade-v6.sql in Supabase", 4000);
+  else if (/mime|type|size|large/i.test(m)) toast("That file type or size isn't allowed (10 MB max)", 4000);
+  else toast(m || "Couldn't change the background");
+}
+
+function videoDuration(file) {
+  return new Promise((res) => {
+    const v = document.createElement("video"); v.preload = "metadata"; v.muted = true;
+    const url = URL.createObjectURL(file);
+    v.onloadedmetadata = () => { URL.revokeObjectURL(url); res(v.duration); };
+    v.onerror = () => { URL.revokeObjectURL(url); res(NaN); };
+    v.src = url;
+  });
+}
+
+async function onBgFile(file) {
+  if (!file) return;
+  const owner = isOwner(), mode = state.board.bg_mode || "shared";
+  const isVideo = /^video\//.test(file.type), isGif = file.type === "image/gif", isImage = /^image\//.test(file.type);
+  if (!isVideo && !isImage) return toast("Pick an image, GIF or video");
+  if (isVideo && !owner) return toast("Only the owner can use a video background");
+  if (file.size > MAX_BG_BYTES) return toast("That file is over 10 MB. Try a smaller one.");
+  const lbl = $("#bgFileLbl"); const old = lbl.textContent; lbl.textContent = "Uploading…";
+  try {
+    let blob = file, ext = isGif ? "gif" : "jpg", type = isGif ? "gif" : "image";
+    if (isVideo) {
+      const d = await videoDuration(file);
+      if (isFinite(d) && d > 15.5) { lbl.textContent = old; return toast("Videos can be up to 15 seconds"); }
+      ext = (file.type.split("/")[1] || "mp4").replace("quicktime", "mov"); type = "video";
+    } else if (!isGif) blob = await compressImage(file, 1920, 0.85);
+    const path = await api.uploadMedia(state.board.id, blob, ext);
+    state.urls[path] = URL.createObjectURL(blob);
+    if (!owner && mode === "shared") {
+      const r = await api.requestBg(state.board.id, path, type === "gif" ? "gif" : "image");
+      onBgRequestEvent(r);
+      api.notify(state.board.id, "bgrequest");
+      toast(`Sent to ${ownerName()} for approval 🖼️`);
+    } else await setBackground({ type, path });
+  } catch (e) { bgError(e); }
+  lbl.textContent = old; renderBgSettings();
+}
+
+async function reviewBg(r, approve) {
+  try {
+    await api.reviewBg(r.id, approve);
+    r.status = approve ? "approved" : "declined";
+    if (approve) { state.board.bg = { type: r.kind, path: r.media_path }; if (state.board.bg_mode === "personal") toast("Approved. Switch to Shared so everyone sees it."); applyBackground(); }
+    api.notify(state.board.id, "bgreply", { to: r.user_id, approved: approve });
+    updateGearDot(); renderBgSettings();
+    toast(approve ? "Background updated for everyone" : "Declined");
+  } catch (e) { bgError(e); }
+}
+
+// ================================================================ music / link cards
+function parseLink(raw) {
+  let u; try { u = new URL(raw.trim()); } catch { return null; }
+  if (!/^https?:$/.test(u.protocol)) return null;
+  const h = u.hostname.replace(/^www\.|^m\./, ""), p = u.pathname;
+  let m;
+  if (/(^|\.)youtube\.com$/.test(h) || h === "youtu.be" || h === "music.youtube.com") {
+    const list = u.searchParams.get("list");
+    const id = h === "youtu.be" ? p.slice(1).split("/")[0] : u.searchParams.get("v") || (p.match(/\/(?:shorts|embed|live)\/([\w-]{6,})/) || [])[1];
+    if (id) return { provider: "YouTube", icon: "▶️", embed: `https://www.youtube.com/embed/${id}?autoplay=1&playsinline=1${list ? "&list=" + list : ""}`, h: 124 };
+    if (list) return { provider: "YouTube", icon: "▶️", embed: `https://www.youtube.com/embed/videoseries?list=${list}&autoplay=1&playsinline=1`, h: 124 };
+  }
+  if (h === "open.spotify.com" && (m = p.match(/\/(?:intl-[a-z-]+\/)?(track|album|playlist|episode|show|artist)\/([A-Za-z0-9]+)/)))
+    return { provider: "Spotify", icon: "🎧", embed: `https://open.spotify.com/embed/${m[1]}/${m[2]}?utm_source=pinned`, h: m[1] === "track" || m[1] === "episode" ? 152 : 232 };
+  if (h === "music.apple.com" || h === "embed.music.apple.com")
+    return { provider: "Apple Music", icon: "🎵", embed: `https://embed.music.apple.com${p}${u.search}`, h: u.searchParams.get("i") || /\/song\//.test(p) ? 175 : 300 };
+  if (h === "soundcloud.com" || h === "on.soundcloud.com")
+    return { provider: "SoundCloud", icon: "☁️", embed: `https://w.soundcloud.com/player/?url=${encodeURIComponent(u.href)}&auto_play=true&visual=false&hide_related=true`, h: 166 };
+  return { provider: h, icon: "🔗", embed: null, h: 0 };
+}
+
+function buildLinkCard(n, el, inDetail = false) {
+  const md = n.meta || {};
+  const playing = !inDetail && state.playing === n.id && md.embed;
+  if (playing) {
+    const f = document.createElement("iframe");
+    f.src = md.embed; f.height = md.h || 152; f.allow = "autoplay; encrypted-media; clipboard-write; picture-in-picture"; f.loading = "lazy";
+    f.setAttribute("allowfullscreen", ""); f.title = md.title || md.provider;
+    el.appendChild(f);
+    const stop = document.createElement("span"); stop.className = "lk-stop"; stop.textContent = "■ Stop";
+    el.appendChild(stop);
+  } else {
+    const cover = document.createElement("div"); cover.className = "lk-cover" + (md.thumb ? "" : " none");
+    cover.dataset.icon = md.icon || "🎵";
+    if (md.thumb) cover.style.backgroundImage = `url("${String(md.thumb).replace(/"/g, "%22")}")`;
+    const badge = document.createElement("span"); badge.className = "lk-badge"; badge.textContent = md.provider || "Link"; cover.appendChild(badge);
+    const btn = document.createElement("span"); btn.className = md.embed ? "lk-play" : "lk-open"; btn.textContent = md.embed ? "▶" : "↗";
+    if (inDetail) btn.onclick = () => (md.embed ? null : window.open(md.url, "_blank", "noopener"));
+    cover.appendChild(btn);
+    el.appendChild(cover);
+  }
+  const t = document.createElement("div"); t.className = "lk-title"; t.textContent = md.title || md.url || "Link"; el.appendChild(t);
+  if (md.author) { const s = document.createElement("div"); s.className = "lk-sub"; s.textContent = md.author; el.appendChild(s); }
+}
+
+function playCard(id) {
+  const prev = state.playing;
+  state.playing = state.playing === id ? null : id;
+  for (const pid of [prev, state.playing]) { if (!pid) continue; const n = state.notes.get(pid), el = noteEl(pid); if (n && el) { buildNoteContent(n, el); placeNote(el, n); } }
+}
+
+let linkTimer = null, linkMeta = null;
+function onLinkInput() {
+  clearTimeout(linkTimer);
+  linkTimer = setTimeout(async () => {
+    const raw = $("#linkInput").value.trim();
+    const box = $("#linkPreview"); box.innerHTML = "";
+    linkMeta = null;
+    const info = parseLink(raw);
+    if (!info) return;
+    linkMeta = { url: new URL(raw).href, ...info, title: null, thumb: null, author: null };
+    const draw = () => { box.innerHTML = ""; const el = document.createElement("div"); el.className = "note link"; buildLinkCard({ id: "preview", meta: linkMeta }, el, true); box.appendChild(el); };
+    draw();
+    const u = await api.unfurl(linkMeta.url);
+    if (linkMeta && linkMeta.url === new URL($("#linkInput").value.trim() || "about:blank").href) {
+      Object.assign(linkMeta, { title: u.title || linkMeta.title, thumb: u.thumb || null, author: u.author || (info.embed ? info.provider : null) });
+      draw();
+    }
+  }, 350);
+}
+
 // ---------------------------------------------------------------- settings
 function openSettings() {
   // themes
@@ -2480,6 +3017,7 @@ function openSettings() {
   renderMutes();
   renderAccount();
   renderBoardActions();
+  renderBgSettings();
   openSheet("settings");
 }
 
@@ -2769,6 +3307,22 @@ function wireStatic() {
   $("#bDone").onclick = () => setInkMode(false);
   buildTools({ pens: $("#bPens"), sizes: $("#bSizes"), eraser: $("#bEraser"), undo: $("#bUndo"), clear: $("#bClear") }, inkTool, { onUndo: inkUndo, onClear: () => {} });
   $("#memberChips").onclick = openPeople;
+  $("#dockChats").onclick = openChats;
+  $("#chatsClose").onclick = () => closeSheet("chats");
+  $("#chatsBackdrop").onclick = () => closeSheet("chats");
+  $("#chatBack").onclick = () => { chat.peer = null; $("#chatList").hidden = false; $("#chatThread").hidden = true; renderThreadList(); };
+  $("#msgSend").onclick = () => sendChat();
+  $("#msgInput").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } });
+  $("#msgInput").addEventListener("input", sendTyping);
+  $("#msgPhoto").addEventListener("change", async (e) => {
+    const f = e.target.files && e.target.files[0]; e.target.value = ""; if (!f) return;
+    try { sendChat(await compressImage(f)); } catch (err) { toast(err.message); }
+  });
+  $("#bgMode").querySelectorAll("button").forEach((b) => (b.onclick = () => setBgMode(b.dataset.mode)));
+  $("#bgFile").addEventListener("change", (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; onBgFile(f); });
+  $("#bgClear").onclick = () => setBackground(null);
+  $("#linkInput").addEventListener("input", onLinkInput);
+  $("#linkInput").addEventListener("paste", () => setTimeout(onLinkInput, 0));
   $("#sOpen").onclick = () => { const id = sel?.id; deselect(); if (id) openDetail(id); };
   $("#sEdit").onclick = () => { const id = sel?.id; if (id) openEdit(id); };
   $("#sRotL").onclick = () => selRotate(-15);

@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Stuck on You: "notify" edge function
+// Pinned: "notify" edge function
 // Sends "New note from <name>" to the other person's phone(s) using Web Push.
 // No npm packages: encryption (RFC 8291) and VAPID (RFC 8292) use built-in WebCrypto.
 //
@@ -115,11 +115,15 @@ if (typeof Deno !== "undefined" && Deno.serve) {
   const vapid = {
     publicKey: Deno.env.get("VAPID_PUBLIC_KEY") ?? "",
     privateKey: Deno.env.get("VAPID_PRIVATE_KEY") ?? "",
-    // Apple's push service rejects the request (403 BadJwtToken) unless this is a clean mailto: or https: value
+    // Apple's push service rejects the request (403 BadJwtToken) unless this is a real mailto: or https: contact.
+    // Placeholders like you@example.com work on Android but fail on iPhone, so those fall back to the app's address.
     subject: (() => {
+      const fallback = "https://9bitbin.github.io/stuck-on-you/";
       let v = (Deno.env.get("VAPID_SUBJECT") ?? "").replace(/\s+/g, "").replace(/^["']|["']$/g, "");
-      if (!v) return "mailto:stuckonyou.app@gmail.com";
-      if (!/^(mailto:|https:\/\/)/i.test(v)) v = "mailto:" + v;
+      if (v && !/^(mailto:|https:\/\/)/i.test(v) && v.includes("@")) v = "mailto:" + v;
+      const okMail = /^mailto:[^@]+@[^@]+\.[a-z]{2,}$/i.test(v);
+      const okUrl = /^https:\/\/[^/]+\.[a-z]{2,}/i.test(v);
+      if (!(okMail || okUrl) || /example\.(com|org|net)|localhost|\.local\b|yourname|you@/i.test(v)) return fallback;
       return v;
     })(),
   };
@@ -135,7 +139,7 @@ if (typeof Deno !== "undefined" && Deno.serve) {
     mood_happy: "is feeling happy 😊", mood_chill: "is feeling chill 😌", mood_tired: "is feeling tired 😴",
     mood_stressed: "is feeling stressed 😣", mood_excited: "is feeling excited 🤩", mood_sad: "is feeling down 😢",
   };
-  const MUTABLE = ["reaction", "reply", "ping", "answer", "doodle"];
+  const MUTABLE = ["reaction", "reply", "ping", "answer", "doodle", "message", "bgrequest", "bgreply"];
   const q = (v: string) => encodeURIComponent(v);
   const getJson = async (path: string) => { const r = await admin(path); return r.ok ? await r.json() : []; };
 
@@ -185,16 +189,50 @@ if (typeof Deno !== "undefined" && Deno.serve) {
       const members: { user_id: string }[] = await getJson(`/rest/v1/board_members?board_id=eq.${q(n.board_id)}&select=user_id`);
       const others = members.map((m) => m.user_id).filter((id) => id !== n.author_id);
       const name = await nameOf(n.author_id);
-      const res = await sendTo(others, { title: "Stuck on You", body: `New note from ${name}`, url: "./", tag: "soy-note" }, "note");
+      const res = await sendTo(others, { title: "Pinned", body: `New note from ${name}`, url: "./", tag: "soy-note" }, "note");
       sent += res.sent;
     }
     return json({ due: due.length, sent });
   }
 
+  // ---- link previews for playlist cards (done here because browsers can't read other sites) ----
+  const OEMBED: [RegExp, (u: string) => string][] = [
+    [/(^|\.)(youtube\.com|youtu\.be)$/i, (u) => `https://www.youtube.com/oembed?format=json&url=${q(u)}`],
+    [/(^|\.)spotify\.com$/i, (u) => `https://open.spotify.com/oembed?url=${q(u)}`],
+    [/(^|\.)soundcloud\.com$/i, (u) => `https://soundcloud.com/oembed?format=json&url=${q(u)}`],
+  ];
+  const meta = (html: string, prop: string) => {
+    const m = html.match(new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]*content=["']([^"']+)["']`, "i"))
+      || html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]*(?:property|name)=["']${prop}["']`, "i"));
+    return m ? m[1].replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'") : null;
+  };
+  async function unfurl(raw: string) {
+    let url: URL;
+    try { url = new URL(raw); } catch { return { error: "That doesn't look like a link" }; }
+    if (!/^https?:$/.test(url.protocol)) return { error: "Only web links work" };
+    const host = url.hostname;
+    // never let this be used to reach private or internal addresses
+    if (/^(localhost|0\.|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1|\[?f[cd])/i.test(host) || !host.includes(".")) return { error: "That link can't be previewed" };
+    const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 6000);
+    try {
+      const o = OEMBED.find(([re]) => re.test(host));
+      if (o) {
+        const r = await fetch(o[1](url.href), { signal: ctrl.signal });
+        if (r.ok) { const j = await r.json(); return { title: j.title || null, thumb: j.thumbnail_url || null, author: j.author_name || null }; }
+      }
+      // anything else (Apple Music, articles...): read the page's preview tags
+      const r = await fetch(url.href, { signal: ctrl.signal, headers: { "User-Agent": "Mozilla/5.0 (compatible; PinnedBot/1.0)", Accept: "text/html" } });
+      const html = (await r.text()).slice(0, 300000);
+      const t = meta(html, "og:title") || (html.match(/<title[^>]*>([^<]{1,200})<\/title>/i) || [])[1] || null;
+      return { title: t ? t.trim() : null, thumb: meta(html, "og:image"), author: meta(html, "og:site_name") };
+    } catch { return { title: null, thumb: null }; }
+    finally { clearTimeout(timer); }
+  }
+
   Deno.serve(async (req) => {
     setCors(req);
     if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
-    if (req.method === "GET") return json({ ok: true, function: "notify", version: 2, vapidSet: !!(vapid.publicKey && vapid.privateKey) });
+    if (req.method === "GET") return json({ ok: true, function: "notify", version: 4, vapidSet: !!(vapid.publicKey && vapid.privateKey) });
     try {
       if (!vapid.publicKey || !vapid.privateKey) return json({ error: "VAPID secrets missing" }, 500);
       const body = await req.json().catch(() => ({}));
@@ -206,19 +244,24 @@ if (typeof Deno !== "undefined" && Deno.serve) {
       if (!ures.ok) return json({ error: "unauthorized" }, 401);
       const user = await ures.json();
 
+      if (body.unfurl) return json(await unfurl(String(body.unfurl)));
+
       const { board_id, test } = body;
       if (!board_id) return json({ error: "board_id required" }, 400);
       const members: { user_id: string }[] = await getJson(`/rest/v1/board_members?board_id=eq.${q(board_id)}&select=user_id`);
       if (!members.some((m) => m.user_id === user.id)) return json({ error: "not a member" }, 403);
 
       // test mode sends to the caller's own phone(s), so one person can check the whole chain
-      if (test) return json(await sendTo([user.id], { title: "Stuck on You", body: "Test notification: it works ✅", url: "./", tag: "soy-test" }, "test", true));
+      if (test) {
+        const r = await sendTo([user.id], { title: "Pinned", body: "Test notification: it works ✅", url: "./", tag: "soy-test" }, "test", true);
+        return json({ ...r, subject: vapid.subject });
+      }
 
-      const others = members.filter((m) => m.user_id !== user.id).map((m) => m.user_id);
+      let others = members.filter((m) => m.user_id !== user.id).map((m) => m.user_id);
       if (!others.length) return json({ sent: 0, devices: 0, note: "nobody else on the board yet" });
 
       // older app versions send the note kind ("text", "image"...) instead of a type
-      const type = ["reaction", "reply", "ping", "answer", "doodle"].includes(body.type) ? body.type : "note";
+      const type = ["reaction", "reply", "ping", "answer", "doodle", "message", "bgrequest", "bgreply"].includes(body.type) ? body.type : "note";
       const name = await nameOf(user.id);
       let text = `New note from ${name}`;
 
@@ -233,12 +276,27 @@ if (typeof Deno !== "undefined" && Deno.serve) {
       } else if (type === "reply") text = `${name} replied to a note 💬`;
       else if (type === "answer") text = `${name} answered today's question 💬`;
       else if (type === "doodle") text = `${name} wants to doodle together ✏️`;
+      else if (type === "message") {
+        // a 1-on-1 message only goes to that person; group messages go to everyone else
+        if (body.to) { if (!others.includes(String(body.to))) return json({ error: "not on this board" }, 400); others = [String(body.to)]; text = `Message from ${name}`; }
+        else text = `${name} in the group chat`;
+      } else if (type === "bgrequest") {
+        const [b] = await getJson(`/rest/v1/boards?id=eq.${q(board_id)}&select=created_by`);
+        if (!b?.created_by || b.created_by === user.id) return json({ sent: 0 });
+        others = [b.created_by];
+        text = `${name} wants to change the board background 🖼️`;
+      } else if (type === "bgreply") {
+        const [b] = await getJson(`/rest/v1/boards?id=eq.${q(board_id)}&select=created_by`);
+        if (b?.created_by !== user.id || !others.includes(String(body.to))) return json({ error: "not allowed" }, 403);
+        others = [String(body.to)];
+        text = body.approved ? `${name} approved your background 🎉` : `${name} passed on your background idea`;
+      }
       else if (type === "ping") {
         const p = PINGS[String(body.ping)];
         if (!p) return json({ error: "unknown check-in" }, 400);
         text = `${name} ${p}`;
       }
-      return json(await sendTo(others, { title: "Stuck on You", body: text, url: "./", tag: `soy-${type}` }, type));
+      return json(await sendTo(others, { title: "Pinned", body: text, url: "./", tag: `soy-${type}` }, type));
     } catch (e) {
       console.log(e);
       return json({ error: String(e) }, 500);

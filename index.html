@@ -92,7 +92,7 @@
     <header class="topbar">
       <button class="who" id="memberChips" aria-label="Who's on the board"></button>
       <div class="title">Pinned</div>
-      <button class="iconbtn" id="openSettings" aria-label="Settings">
+      <button class="iconbtn" id="openSettings" aria-label="Settings"><i class="gear-dot" id="gearDot" hidden></i>
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
       </button>
     </header>
@@ -102,6 +102,7 @@
     </div>
     <div class="banner warn" id="demoBanner" hidden>Demo mode: notes stay on this device until Supabase is set up.</div>
     <main id="scroller">
+      <div id="bgLayer" aria-hidden="true"></div>
       <div id="board">
         <svg id="ink" width="1" height="1" aria-hidden="true"></svg>
         <div id="sel" hidden>
@@ -118,6 +119,7 @@
       <button id="dockPing" aria-label="Check in"><span class="ic">💭</span><span class="lb">Check in</span><i class="dot" hidden></i></button>
       <button id="dockQuestion" aria-label="Today's question"><span class="ic">❓</span><span class="lb">Today</span><i class="dot" id="qDot" hidden></i></button>
       <button id="dockDoodle" aria-label="Draw together"><span class="ic">🎨</span><span class="lb">Together</span><i class="dot live" id="doodleDot" hidden></i></button>
+      <button id="dockChats" aria-label="Messages"><span class="ic">💬</span><span class="lb">Chats</span><i class="dot" id="chatDot" hidden></i></button>
     </nav>
     <div class="boardtools" id="boardTools">
       <button id="toolFind" aria-label="Find someone" title="Find someone">👀</button>
@@ -169,6 +171,7 @@
       <button data-tab="drawing">Draw</button>
       <button data-tab="voice">Voice</button>
       <button data-tab="countdown">Countdown</button>
+      <button data-tab="link">Music</button>
     </nav>
 
     <div class="pane" data-pane="text">
@@ -239,6 +242,12 @@
       <div class="swatches small" id="cdSwatches"></div>
     </div>
 
+    <div class="pane" data-pane="link" hidden>
+      <input id="linkInput" class="caption-input" type="url" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="Paste a Spotify, YouTube, Apple Music or SoundCloud link">
+      <p class="muted small-note">Any other link pins as a plain link card.</p>
+      <div class="link-preview" id="linkPreview"></div>
+    </div>
+
     <div class="sched" id="schedBox">
       <button class="chiptoggle" id="schedToggle" type="button" aria-pressed="false">⏰ Send later</button>
       <div class="sched-row" id="schedRow" hidden>
@@ -286,6 +295,20 @@
 
     <h3>Theme</h3>
     <div class="themes" id="themePicker"></div>
+
+    <h3>Background</h3>
+    <div class="seg" id="bgMode" hidden>
+      <button type="button" data-mode="shared">Shared for everyone</button>
+      <button type="button" data-mode="personal">Each person picks</button>
+    </div>
+    <p class="muted small-note" id="bgInfo"></p>
+    <div class="bg-colors" id="bgColors"></div>
+    <div class="bg-actions">
+      <label class="btn small" for="bgFile" id="bgFileLbl">Upload image, GIF or video</label>
+      <input type="file" id="bgFile" hidden>
+      <button class="btn small" id="bgClear">Use the theme</button>
+    </div>
+    <div class="bg-requests" id="bgRequests"></div>
 
     <h3>Notifications</h3>
     <div class="setting-row">
@@ -417,6 +440,31 @@
       <button class="btn" id="eCancel">Cancel</button>
       <button class="btn primary" id="eSave">Save</button>
     </div>
+  </section>
+
+  <!-- Messages -->
+  <div class="sheet-backdrop" id="chatsBackdrop" hidden></div>
+  <section class="sheet tall chats" id="chats" hidden aria-label="Messages">
+    <div class="grab"></div>
+    <div id="chatList">
+      <h2>Messages</h2>
+      <ul class="threads" id="threadList"></ul>
+    </div>
+    <div id="chatThread" hidden>
+      <div class="thread-head">
+        <button class="iconbtn" id="chatBack" aria-label="Back">‹</button>
+        <div><b id="threadName"></b><small id="threadSub"></small></div>
+      </div>
+      <div class="msgs" id="msgList"></div>
+      <p class="typing" id="threadTyping" hidden></p>
+      <div class="msg-box">
+        <label class="iconbtn" for="msgPhoto" aria-label="Send a photo">📷</label>
+        <input type="file" id="msgPhoto" accept="image/*" hidden>
+        <input id="msgInput" maxlength="2000" placeholder="Message…" autocomplete="off">
+        <button class="btn small primary" id="msgSend">Send</button>
+      </div>
+    </div>
+    <div class="sheet-actions"><button class="btn" id="chatsClose">Close</button></div>
   </section>
 
   <div class="fx" id="fx" aria-hidden="true"></div>
