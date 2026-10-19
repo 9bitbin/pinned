@@ -33,12 +33,36 @@ Total time: about 30 minutes, once. Everything here is on free plans with **no c
 2. Open `supabase/schema.sql`, copy everything, paste it in, press **Run**.
 3. You should see "Success. No rows returned."
 
-## Step 3: Turn on code-based sign-in
+## Step 3: Email sign-in (magic link)
 
-The app signs each phone in without email or password. Your pairing code is what links you.
+You type your email, tap the link it sends, and you're in. No passwords.
 
-1. Left sidebar: **Authentication** > **Sign In / Providers** (on some dashboards it's under **Settings**).
-2. Turn on **Allow anonymous sign-ins** and save.
+**3a. Database piece.** SQL Editor > New query > paste all of `supabase/email-login.sql` > Run. (Already included if you ran the newest `schema.sql` on a fresh project.)
+
+**3b. Allowed link address.** Authentication > **URL Configuration**:
+- **Site URL:** `https://9bitbin.github.io/stuck-on-you/`
+- **Redirect URLs** > Add: `https://9bitbin.github.io/stuck-on-you/**`
+
+**3c. An email sender (required).** Supabase's built-in email only sends to people on your Supabase team, max 2 an hour, so your girlfriend's email would be rejected. Brevo's free plan fixes that:
+1. Sign up at **brevo.com** (free).
+2. **Senders, domains & dedicated IPs** > Senders > add the email you want links to come from and verify it.
+3. **SMTP & API** > SMTP tab > **Generate a new SMTP key**. Note the login shown there too.
+4. In Supabase: Authentication > **Emails** > **SMTP Settings** > turn on **Enable custom SMTP**:
+
+| Field | Value |
+|---|---|
+| Sender email | the address you verified in Brevo |
+| Sender name | `Stuck on You` |
+| Host | `smtp-relay.brevo.com` |
+| Port | `587` |
+| Username | the SMTP login from Brevo |
+| Password | the SMTP key from Brevo |
+
+5. Save. Optional: Authentication > Emails > **Magic Link** template, change the subject to something like "Your Stuck on You sign-in link".
+
+**3d. Phones that were already set up** (signed in before email login existed): open the app > gear icon > **Account** > type your email > **Add email** > tap the link in the email. Same profile, same board, nothing lost. After that you can log in on any new phone with that email.
+
+**How sign-in works on iPhone:** the link opens in Safari, not the app. Safari passes the sign-in back to the app and shows "You're signed in". Switch back to Stuck on You and it finishes within a few seconds. Links expire after about an hour and only work once.
 
 ## Step 4: Notifications
 
@@ -78,13 +102,14 @@ Never put the private key or the `service_role` / secret key in config.js.
 1. Open the link in **Safari** (not Chrome; iPhone only allows installing from Safari).
 2. Share button > **Add to Home Screen** > Add.
 3. Open **Stuck on You from the home screen icon** (notifications only work from the icon, not the Safari tab).
-4. Enter your name and color > **Start a new board**. You'll see your 8-character code.
-5. Gear icon > Notifications > **Turn on** > Allow.
+4. Enter your email > tap the link in your inbox > switch back to the app.
+5. Enter your name and color > **Start a new board**. You'll see your 8-character code.
+6. Gear icon > Notifications > **Turn on** > Allow.
 
 **Android:**
 1. Open the link in **Chrome**.
 2. Menu (⋮) > **Add to Home screen** or **Install app**.
-3. Open it from the icon, enter name and color, then type the code under **Got a code?** > **Join board**.
+3. Open it from the icon, sign in with email (tap the link, come back), enter name and color, then type the code under **Got a code?** > **Join board**.
 4. Gear icon > Notifications > **Turn on** > Allow.
 
 Test it: post a note from one phone while the other is locked.
@@ -103,12 +128,14 @@ Test it: post a note from one phone while the other is locked.
 
 | Problem | Fix |
 |---|---|
-| "Anonymous sign-ins are off" | Step 3 |
+| No sign-in email arrives | Check spam. Check Step 3c (custom SMTP on, sender verified in Brevo). Supabase > Authentication > Logs shows send errors. |
+| "That link expired or was already used" | Send a new one. Always tap the newest email. |
+| Tapped the link but the app still says "Check your email" | Make sure Step 3b is saved, then switch back to the app and wait 5 seconds. |
 | Notifications say "Add to Home Screen first" on iPhone | Open it from the home-screen icon, not Safari |
 | No notification arrives | Check the other phone turned notifications on. Supabase > Edge Functions > notify > **Logs** shows errors. Re-check the three secrets. |
 | Android notifications late | Settings > Apps > Chrome (or Stuck on You) > Battery > **Unrestricted** |
 | New version not showing | Close the app fully and reopen it twice |
-| Lost a phone or reset it | On the other phone: Settings > On this board > **Remove** the old one, then rejoin with the code |
+| Lost a phone or reset it | If you added your email: just sign in again with it. If not: on the other phone, Settings > On this board > **Remove** the old one, then rejoin with the code |
 | Supabase says the project is paused | Free projects pause after about a week with no use. Press **Restore** in the dashboard. |
 
 Free-tier limits that matter here: 500 MB database and 1 GB file storage. That's thousands of photos.

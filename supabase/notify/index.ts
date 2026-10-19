@@ -1,3 +1,4 @@
+// @ts-nocheck
 // Stuck on You: "notify" edge function
 // Sends "New note from <name>" to the other person's phone(s) using Web Push.
 // No npm packages: encryption (RFC 8291) and VAPID (RFC 8292) use built-in WebCrypto.
@@ -94,10 +95,16 @@ export async function sendPush(
 
 // ---------------- HTTP handler ----------------
 
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+// CORS: echo back whatever headers the browser asks to send, so newer supabase-js versions aren't blocked
+let cors: Record<string, string> = {};
+const setCors = (req: Request) => {
+  cors = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": req.headers.get("Access-Control-Request-Headers") ??
+      "authorization, x-client-info, apikey, content-type, x-supabase-api-version",
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+    "Access-Control-Max-Age": "86400",
+  };
 };
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { ...cors, "Content-Type": "application/json" } });
@@ -108,7 +115,13 @@ if (typeof Deno !== "undefined" && Deno.serve) {
   const vapid = {
     publicKey: Deno.env.get("VAPID_PUBLIC_KEY") ?? "",
     privateKey: Deno.env.get("VAPID_PRIVATE_KEY") ?? "",
-    subject: Deno.env.get("VAPID_SUBJECT") ?? "mailto:stuck-on-you@example.com",
+    // Apple's push service rejects the request (403 BadJwtToken) unless this is a clean mailto: or https: value
+    subject: (() => {
+      let v = (Deno.env.get("VAPID_SUBJECT") ?? "").replace(/\s+/g, "").replace(/^["']|["']$/g, "");
+      if (!v) return "mailto:stuckonyou.app@gmail.com";
+      if (!/^(mailto:|https:\/\/)/i.test(v)) v = "mailto:" + v;
+      return v;
+    })(),
   };
   const admin = (path: string, init: RequestInit = {}) =>
     fetch(`${URL_}${path}`, {
@@ -117,7 +130,9 @@ if (typeof Deno !== "undefined" && Deno.serve) {
     });
 
   Deno.serve(async (req) => {
+    setCors(req);
     if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+    if (req.method === "GET") return json({ ok: true, function: "notify", vapidSet: !!(vapid.publicKey && vapid.privateKey) });
     try {
       if (!vapid.publicKey || !vapid.privateKey) return json({ error: "VAPID secrets missing" }, 500);
 
@@ -127,31 +142,36 @@ if (typeof Deno !== "undefined" && Deno.serve) {
       if (!ures.ok) return json({ error: "unauthorized" }, 401);
       const user = await ures.json();
 
-      const { board_id } = await req.json();
+      const { board_id, test } = await req.json();
       if (!board_id) return json({ error: "board_id required" }, 400);
 
       const members: { user_id: string }[] =
         await (await admin(`/rest/v1/board_members?board_id=eq.${encodeURIComponent(board_id)}&select=user_id`)).json();
       if (!members.some((m) => m.user_id === user.id)) return json({ error: "not a member" }, 403);
-      const others = members.filter((m) => m.user_id !== user.id).map((m) => m.user_id);
-      if (!others.length) return json({ sent: 0 });
+      // test mode sends to the caller's own phone(s), so one person can check the whole chain
+      const others = test ? [user.id] : members.filter((m) => m.user_id !== user.id).map((m) => m.user_id);
+      if (!others.length) return json({ sent: 0, devices: 0, note: "nobody else on the board yet" });
 
       const [me] = await (await admin(`/rest/v1/profiles?id=eq.${user.id}&select=name`)).json();
       const subs: { endpoint: string; p256dh: string; auth: string }[] =
         await (await admin(`/rest/v1/push_subs?user_id=in.(${others.join(",")})&select=endpoint,p256dh,auth`)).json();
 
-      const payload = { title: "Stuck on You", body: `New note from ${me?.name ?? "your person"}`, url: "./" };
+      const payload = test
+        ? { title: "Stuck on You", body: "Test notification: it works ✅", url: "./" }
+        : { title: "Stuck on You", body: `New note from ${me?.name ?? "your person"}`, url: "./" };
       let sent = 0;
+      const failures: string[] = [];
       await Promise.all(subs.map(async (s) => {
         try {
           const r = await sendPush(s, payload, vapid);
           if (r.status === 404 || r.status === 410) {
             await admin(`/rest/v1/push_subs?endpoint=eq.${encodeURIComponent(s.endpoint)}`, { method: "DELETE" });
+            failures.push(`${r.status} expired subscription (removed)`);
           } else if (r.ok) sent++;
-          else console.log("push failed", r.status, await r.text());
-        } catch (e) { console.log("push error", e); }
+          else { const t = await r.text(); console.log("push failed", r.status, t); failures.push(`${r.status} ${t.slice(0, 120)}`); }
+        } catch (e) { console.log("push error", e); failures.push(String(e)); }
       }));
-      return json({ sent });
+      return json({ sent, devices: subs.length, failures });
     } catch (e) {
       console.log(e);
       return json({ error: String(e) }, 500);

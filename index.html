@@ -19,6 +19,39 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <!-- Login: email magic link -->
+  <section id="login" class="screen" hidden>
+    <div class="card intro">
+      <div class="logo" aria-hidden="true"><span>📌</span></div>
+      <h1>Stuck on You</h1>
+      <div id="loginForm">
+        <p class="muted">Sign in with your email. No password, just a link.</p>
+        <label class="field">
+          <span>Your email</span>
+          <input id="emailInput" type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" placeholder="you@example.com">
+        </label>
+        <button class="btn primary" id="sendLink">Email me a sign-in link</button>
+      </div>
+      <div id="loginWait" hidden>
+        <p class="wait-title">Check your email ✉️</p>
+        <p class="muted">We sent a link to <b id="waitEmail"></b>. Tap it, then come back to this app. You'll be signed in here automatically.</p>
+        <div class="waiting"><span></span><span></span><span></span></div>
+        <button class="btn" id="resendLink">Send it again</button>
+        <button class="btn plain" id="changeEmail">Use a different email</button>
+      </div>
+      <p class="error" id="loginError" hidden></p>
+    </div>
+  </section>
+
+  <!-- Shown in the browser tab the email link opens -->
+  <section id="linked" class="screen" hidden>
+    <div class="card intro">
+      <div class="logo" aria-hidden="true"><span>✅</span></div>
+      <h1>You're signed in</h1>
+      <p class="muted">Go back to the Stuck on You app. It'll finish signing in by itself in a few seconds. You can close this tab.</p>
+    </div>
+  </section>
+
   <!-- Welcome: name + color -->
   <section id="welcome" class="screen" hidden>
     <div class="card intro">
@@ -179,6 +212,14 @@
       <button class="btn small" id="saveName">Save</button>
     </div>
     <div class="swatches small" id="settingsSwatches"></div>
+
+    <h3>Account</h3>
+    <p class="muted" id="acctStatus"></p>
+    <div class="setting-row" id="acctLinkRow" hidden>
+      <input id="acctEmail" type="email" inputmode="email" autocomplete="email" autocapitalize="off" placeholder="you@example.com">
+      <button class="btn small" id="acctLinkBtn">Add email</button>
+    </div>
+    <button class="btn small danger" id="logoutBtn" hidden>Log out of this phone</button>
 
     <h3>On this board</h3>
     <ul class="members" id="memberList"></ul>

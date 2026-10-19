@@ -38,9 +38,63 @@ function createSupabaseApi() {
 
   return {
     async init() {
+      // read what the email link put in the address before supabase-js tidies it away
+      const q = new URLSearchParams(location.search);
+      const h = new URLSearchParams(location.hash.slice(1));
+      const handoff = q.get("handoff");
+      const cameFromLink = h.has("access_token") || q.has("code") || h.has("error_description") || q.has("error_description");
+      const linkError = h.get("error_description") || q.get("error_description");
+
       const { createClient } = await import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm");
-      sb = createClient(CONFIG.supabaseUrl, CONFIG.supabaseAnonKey, { auth: { persistSession: true, autoRefreshToken: true } });
+      sb = createClient(CONFIG.supabaseUrl, CONFIG.supabaseAnonKey, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
       session = (await sb.auth.getSession()).data.session;
+      sb.auth.onAuthStateChange((_e, s) => { session = s; });
+      if (cameFromLink || handoff) history.replaceState(null, "", location.pathname);
+
+      if (linkError) return { linkError: linkError.replace(/\+/g, " ") };
+      if (handoff && session && cameFromLink) {
+        // pass this sign-in to the app that asked for it, then forget it here
+        await sb.rpc("put_handoff", { p_nonce: handoff, p_access: session.access_token, p_refresh: session.refresh_token });
+        if (!isStandalone()) {
+          sb.auth.stopAutoRefresh();
+          Object.keys(localStorage).filter((k) => k.startsWith("sb-")).forEach((k) => localStorage.removeItem(k));
+          session = null;
+          return { landing: "linked" };
+        }
+      }
+      return {};
+    },
+    hasSession: () => !!session,
+    async sendLink(email, nonce) {
+      const base = location.origin + location.pathname;
+      const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: `${base}?handoff=${nonce}`, shouldCreateUser: true } });
+      if (error) throw new Error(/rate|limit/i.test(error.message) ? "Too many emails sent. Wait a bit and try again." : error.message);
+    },
+    async claimHandoff(nonce) {
+      const { data, error } = await sb.rpc("claim_handoff", { p_nonce: nonce });
+      if (error || !data) return false;
+      const res = await sb.auth.setSession({ access_token: data.access_token, refresh_token: data.refresh_token });
+      if (res.error) throw new Error(res.error.message);
+      session = res.data.session;
+      return true;
+    },
+    async account() {
+      const { data } = await sb.auth.getUser();
+      const u = data.user || session?.user || {};
+      return { email: u.email || null, pending: u.new_email || null, anonymous: !!u.is_anonymous || !u.email };
+    },
+    async linkEmail(email) {
+      const { error } = await sb.auth.updateUser({ email }, { emailRedirectTo: location.origin + location.pathname });
+      if (error) throw new Error(error.message);
+    },
+    async signOut() {
+      try {
+        const reg = await navigator.serviceWorker?.ready;
+        const sub = await reg?.pushManager?.getSubscription();
+        if (sub) { await sb.from("push_subs").delete().eq("endpoint", sub.endpoint); await sub.unsubscribe(); }
+      } catch { /* ignore */ }
+      await sb.auth.signOut({ scope: "local" });
+      session = null;
     },
     async me() {
       if (!session) return null;
@@ -48,11 +102,7 @@ function createSupabaseApi() {
       return rows[0] || null;
     },
     async signIn(name, color) {
-      if (!session) {
-        const res = await sb.auth.signInAnonymously();
-        if (res.error) throw new Error(res.error.message.includes("disabled") ? "Anonymous sign-ins are off. Turn them on in Supabase (see SETUP.md)." : res.error.message);
-        session = res.data.session;
-      }
+      if (!session) throw new Error("Please sign in with your email first.");
       must(await sb.from("profiles").upsert({ id: session.user.id, name, color }));
       return { id: session.user.id, name, color };
     },
@@ -154,7 +204,13 @@ function createDemoApi() {
   const code = () => Array.from({ length: 8 }, () => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 32)]).join("");
 
   return {
-    async init() {},
+    async init() { return {}; },
+    hasSession: () => true,
+    async sendLink() {},
+    async claimHandoff() { return true; },
+    async account() { return { email: "demo@example.com", pending: null, anonymous: false }; },
+    async linkEmail() {},
+    async signOut() { localStorage.removeItem("soy-demo-me" + who); },
     async me() { return db().profiles[meId()] || null; },
     async signIn(name, color) { const d = db(); d.profiles[meId()] = { id: meId(), name, color }; save(d); return d.profiles[meId()]; },
     async updateProfile(patch) { const d = db(); Object.assign(d.profiles[meId()], patch); save(d); emit({ type: "members" }); },
@@ -209,7 +265,7 @@ function toast(msg, ms = 2600) {
   const t = $("#toast"); t.textContent = msg; t.hidden = false;
   clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), ms);
 }
-function show(id) { for (const s of ["#welcome", "#pair", "#boardScreen"]) $(s).hidden = s !== id; }
+function show(id) { for (const s of ["#login", "#linked", "#welcome", "#pair", "#boardScreen"]) $(s).hidden = s !== id; }
 function setError(el, msg) { el.textContent = msg || ""; el.hidden = !msg; }
 function busy(btn, on, label) {
   if (on) { btn.dataset.label = btn.textContent; btn.textContent = label || "…"; btn.disabled = true; }
@@ -253,9 +309,16 @@ async function boot() {
   if ("serviceWorker" in navigator && location.protocol !== "file:") {
     navigator.serviceWorker.register("sw.js").catch((e) => console.warn("SW failed", e));
   }
-  try { await api.init(); } catch (e) { toast("Couldn't reach the server. Check your connection."); console.error(e); }
+  let init = {};
+  try { init = (await api.init()) || {}; } catch (e) { toast("Couldn't reach the server. Check your connection."); console.error(e); }
   $("#demoBanner").hidden = !isDemo;
   wireStatic();
+  if (init.landing === "linked") return show("#linked");
+  if (!api.hasSession()) return showLogin(init.linkError);
+  await afterLogin();
+}
+
+async function afterLogin() {
   try {
     state.me = await api.me();
     if (!state.me) return showWelcome();
@@ -266,6 +329,54 @@ async function boot() {
     console.error(e); toast(e.message || "Something went wrong");
     showWelcome();
   }
+}
+
+// ---------------------------------------------------------------- email login
+let pollTimer = null;
+const PENDING = "soy-login-pending";
+function newNonce() {
+  const b = crypto.getRandomValues(new Uint8Array(24));
+  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+}
+function showLogin(err) {
+  show("#login");
+  const p = ls.get(PENDING);
+  if (p && Date.now() - p.ts < 15 * 60 * 1000) showWaiting(p);
+  else { ls.set(PENDING, null); $("#loginForm").hidden = false; $("#loginWait").hidden = true; }
+  if (err) setError($("#loginError"), /expired|invalid/i.test(err) ? "That link expired or was already used. Send a new one." : err);
+}
+function showWaiting(p) {
+  $("#loginForm").hidden = true; $("#loginWait").hidden = false;
+  $("#waitEmail").textContent = p.email;
+  startPolling(p.nonce);
+}
+async function onSendLink(again = false) {
+  const email = (again ? (ls.get(PENDING) || {}).email : $("#emailInput").value || "").trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return setError($("#loginError"), "That email doesn't look right.");
+  setError($("#loginError"));
+  const btn = again ? $("#resendLink") : $("#sendLink"); busy(btn, true, "Sending…");
+  try {
+    const p = { email, nonce: newNonce(), ts: Date.now() };
+    await api.sendLink(email, p.nonce);
+    ls.set(PENDING, p);
+    showWaiting(p);
+    if (again) toast("Sent a new link. Use the newest email.");
+  } catch (e) { setError($("#loginError"), e.message); }
+  busy(btn, false);
+}
+function startPolling(nonce) {
+  clearInterval(pollTimer);
+  const tick = async () => {
+    try {
+      if (await api.claimHandoff(nonce)) {
+        clearInterval(pollTimer); pollTimer = null; ls.set(PENDING, null);
+        toast("Signed in");
+        await afterLogin();
+      }
+    } catch (e) { setError($("#loginError"), e.message); }
+  };
+  pollTimer = setInterval(tick, 3000);
+  tick();
 }
 
 // ---------------------------------------------------------------- welcome / pair
@@ -781,7 +892,34 @@ function openSettings() {
   }, "bright");
   renderMemberList();
   renderNotifStatus();
+  renderAccount();
   openSheet("settings");
+}
+
+async function renderAccount() {
+  const st = $("#acctStatus"), row = $("#acctLinkRow"), out = $("#logoutBtn");
+  st.textContent = "…"; row.hidden = true; out.hidden = true;
+  try {
+    const a = await api.account();
+    if (a.pending) { st.textContent = `Check ${a.pending} and tap the link to finish adding your email.`; row.hidden = false; }
+    else if (a.anonymous) { st.textContent = "No email yet. Add one so you can sign back in on a new phone."; row.hidden = false; }
+    else { st.textContent = `Signed in as ${a.email}`; out.hidden = false; }
+  } catch { st.textContent = ""; }
+}
+
+async function onLinkEmail() {
+  const email = $("#acctEmail").value.trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast("That email doesn't look right");
+  const btn = $("#acctLinkBtn"); busy(btn, true, "Sending…");
+  try { await api.linkEmail(email); toast("Check your email and tap the link"); renderAccount(); }
+  catch (e) { toast(e.message, 5000); }
+  busy(btn, false);
+}
+
+async function onLogout() {
+  if (!confirm("Log out of this phone? You can sign back in with your email anytime.")) return;
+  await api.signOut();
+  location.reload();
 }
 
 function rebuildAllNotes() {
@@ -897,6 +1035,12 @@ function b64uToBytes(s) {
 
 // ---------------------------------------------------------------- wiring
 function wireStatic() {
+  $("#sendLink").onclick = () => onSendLink(false);
+  $("#emailInput").addEventListener("keydown", (e) => e.key === "Enter" && onSendLink(false));
+  $("#resendLink").onclick = () => onSendLink(true);
+  $("#changeEmail").onclick = () => { clearInterval(pollTimer); ls.set(PENDING, null); setError($("#loginError")); $("#loginForm").hidden = false; $("#loginWait").hidden = true; };
+  $("#acctLinkBtn").onclick = onLinkEmail;
+  $("#logoutBtn").onclick = onLogout;
   $("#welcomeGo").onclick = onWelcome;
   $("#nameInput").addEventListener("keydown", (e) => e.key === "Enter" && onWelcome());
   $("#createBoard").onclick = onCreateBoard;
@@ -954,6 +1098,7 @@ function wireStatic() {
 
   window.addEventListener("resize", () => { if (state.board) layoutBoard(); });
   document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && pollTimer) { const p = ls.get(PENDING); if (p) startPolling(p.nonce); }
     if (document.visibilityState === "visible" && state.board) { resync().catch(() => {}); refreshMembers().catch(() => {}); clearBadge(); }
     if (document.visibilityState === "hidden") markSeen();
   });
