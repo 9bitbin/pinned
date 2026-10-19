@@ -1,6 +1,6 @@
 {
-  "name": "Stuck on You",
-  "short_name": "Stuck on You",
+  "name": "Pinned",
+  "short_name": "Pinned",
   "description": "A shared sticky-note board for two.",
   "start_url": "./",
   "scope": "./",

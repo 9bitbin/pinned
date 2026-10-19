@@ -1,4 +1,4 @@
-// Stuck on You: shared sticky-note board for two
+// Pinned: shared sticky-note board for two
 import { CONFIG } from "./config.js";
 
 // ---------------------------------------------------------------- constants
@@ -1875,9 +1875,9 @@ function renderMemberList() {
 
 async function shareCode() {
   const code = fmtCode(state.board?.code);
-  const text = `Join my board on Stuck on You with code ${code}`;
+  const text = `Join my board on Pinned with code ${code}`;
   try {
-    if (navigator.share) await navigator.share({ title: "Stuck on You", text, url: location.href.split("#")[0] });
+    if (navigator.share) await navigator.share({ title: "Pinned", text, url: location.href.split("#")[0] });
     else { await navigator.clipboard.writeText(code); toast("Code copied"); }
   } catch { /* user cancelled */ }
 }
@@ -1899,7 +1899,7 @@ function renderNotifStatus() {
   const sup = notifSupport();
   if (sup === "install") {
     st.textContent = "Add to Home Screen first";
-    hint.textContent = "On iPhone: tap the Share button in Safari, choose \"Add to Home Screen\", then open Stuck on You from your home screen and turn notifications on here.";
+    hint.textContent = "On iPhone: tap the Share button in Safari, choose \"Add to Home Screen\", then open Pinned from your home screen and turn notifications on here.";
     hint.hidden = false; btn.hidden = true; return;
   }
   if (sup === "unsupported") { st.textContent = "Not supported in this browser"; btn.hidden = true; return; }
@@ -1908,7 +1908,7 @@ function renderNotifStatus() {
   if (p === "granted") { st.textContent = "On"; btn.textContent = "Send test"; }
   else if (p === "denied") {
     st.textContent = "Blocked";
-    hint.textContent = isIOS ? "Turn them back on in iPhone Settings > Notifications > Stuck on You." : "Turn them back on in your phone's settings for this app (long-press the icon > App info > Notifications).";
+    hint.textContent = isIOS ? "Turn them back on in iPhone Settings > Notifications > Pinned." : "Turn them back on in your phone's settings for this app (long-press the icon > App info > Notifications).";
     hint.hidden = false; btn.hidden = true;
   } else { st.textContent = "Off"; btn.textContent = "Turn on"; }
 }
@@ -1950,7 +1950,7 @@ async function refreshPushSubscription(force = false) {
 async function localNotify(body) {
   try {
     const reg = await navigator.serviceWorker.ready;
-    await reg.showNotification("Stuck on You", { body, icon: "icons/icon-192.png", tag: "soy-note" });
+    await reg.showNotification("Pinned", { body, icon: "icons/icon-192.png", tag: "soy-note" });
   } catch { toast(body); }
 }
 
