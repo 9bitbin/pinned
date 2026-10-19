@@ -261,6 +261,18 @@
       <button class="btn small" id="shareCode">Share</button>
     </div>
 
+    <h3>Board</h3>
+    <div class="board-actions">
+      <button class="btn small" id="switchBoardBtn">Join a different board</button>
+      <div class="setting-row" id="switchRow" hidden>
+        <input id="switchCode" maxlength="9" placeholder="XXXX-XXXX" autocapitalize="characters" autocomplete="off" spellcheck="false">
+        <button class="btn small primary" id="switchGo">Join</button>
+      </div>
+      <button class="btn small" id="leaveBoardBtn">Leave this board</button>
+      <button class="btn small danger" id="deleteBoardBtn">Delete board and start over</button>
+      <p class="hint" id="boardHint" hidden></p>
+    </div>
+
     <h3>You</h3>
     <div class="setting-row">
       <input id="settingsName" maxlength="30">

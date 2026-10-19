@@ -536,3 +536,7 @@ input, textarea { font: inherit; -webkit-user-select: text; user-select: text; }
 [data-theme="midnight"] .note.voice::after, [data-theme="midnight"] .note.countdown::after {
   content: ""; position: absolute; left: 12px; right: 12px; top: 0; height: 3px; border-radius: 0 0 3px 3px; opacity: .9;
 }
+
+.board-actions { display: grid; gap: 8px; justify-items: start; }
+.board-actions .setting-row { width: 100%; }
+#switchCode { letter-spacing: 2px; text-transform: uppercase; font-weight: 800; }

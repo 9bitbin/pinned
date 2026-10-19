@@ -160,7 +160,7 @@ function createSupabaseApi() {
       must(await sb.from("profiles").update(patch).eq("id", myId()));
     },
     async myBoard() {
-      const rows = must(await sb.from("board_members").select("board_id, boards(id, code)").eq("user_id", myId()).order("joined_at", { ascending: false }).limit(1));
+      const rows = must(await sb.from("board_members").select("board_id, boards(id, code, created_by)").eq("user_id", myId()).order("joined_at", { ascending: false }).limit(1));
       return rows[0] ? rows[0].boards : null;
     },
     async createBoard() { return must(await sb.rpc("create_board")); },
@@ -172,6 +172,18 @@ function createSupabaseApi() {
     },
     async removeMember(boardId, userId) {
       must(await sb.from("board_members").delete().eq("board_id", boardId).eq("user_id", userId));
+    },
+    async leaveBoard(boardId) {
+      must(await sb.from("board_members").delete().eq("board_id", boardId).eq("user_id", myId()));
+    },
+    async deleteBoard(boardId) {
+      // photos, drawings and voice notes live in storage, which doesn't cascade: clear them first
+      try {
+        const files = must(await bucket().list(boardId, { limit: 1000 })) || [];
+        if (files.length) await bucket().remove(files.map((f) => `${boardId}/${f.name}`));
+      } catch (e) { console.warn("media cleanup", e); }
+      const { error } = await sb.rpc("delete_board", { b: boardId });
+      if (error) throw new Error(/function .*delete_board|schema cache/i.test(error.message) ? "Run upgrade-v3.sql in Supabase first (see SETUP)." : error.message);
     },
     async listNotes(boardId) {
       return must(await sb.from("notes").select("*").eq("board_id", boardId).order("z", { ascending: true }));
@@ -315,7 +327,7 @@ function createDemoApi() {
     async signIn(name, color) { const d = db(); d.profiles[meId()] = { id: meId(), name, color, muted: [] }; save(d); return d.profiles[meId()]; },
     async updateProfile(patch) { const d = db(); Object.assign(d.profiles[meId()], patch); save(d); emit({ type: "members" }); },
     async myBoard() { const d = db(); const m = d.members.find((x) => x.user_id === meId()); return m ? d.boards[m.board_id] : null; },
-    async createBoard() { const d = db(); const b = { id: uid(), code: code() }; d.boards[b.id] = b; d.members.push({ board_id: b.id, user_id: meId() }); save(d); return b; },
+    async createBoard() { const d = db(); const b = { id: uid(), code: code(), created_by: meId() }; d.boards[b.id] = b; d.members.push({ board_id: b.id, user_id: meId() }); save(d); return b; },
     async joinBoard(c) {
       const d = db(); const clean = (c || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
       const b = Object.values(d.boards).find((x) => x.code === clean);
@@ -328,6 +340,16 @@ function createDemoApi() {
     },
     async members(boardId) { const d = db(); return d.members.filter((m) => m.board_id === boardId).map((m) => d.profiles[m.user_id]).filter(Boolean); },
     async removeMember(boardId, userId) { const d = db(); d.members = d.members.filter((m) => !(m.board_id === boardId && m.user_id === userId)); save(d); emit({ type: "members" }); },
+    async leaveBoard(boardId) { return this.removeMember(boardId, meId()); },
+    async deleteBoard(boardId) {
+      const d = db(); const b = d.boards[boardId];
+      const mine = d.members.filter((m) => m.board_id === boardId);
+      if (!b || !(b.created_by === meId() || (mine.length === 1 && mine[0].user_id === meId()))) throw new Error("Only the person who made this board can delete it. You can leave it instead.");
+      delete d.boards[boardId];
+      for (const n of d.notes) if (n.board_id === boardId && n.media_path) delete d.media[n.media_path];
+      for (const k of ["members", "notes", "reactions", "replies", "answers", "pings"]) d[k] = d[k].filter((x) => x.board_id !== boardId);
+      save(d); emit({ type: "members" });
+    },
     async listNotes(boardId) { return db().notes.filter((n) => n.board_id === boardId && !hiddenFromMe(n)).sort((a, b) => a.z - b.z); },
     async addNote(n) { const d = db(); const row = { pinned: false, ...n, id: uid(), created_at: new Date().toISOString() }; d.notes.push(row); save(d); emit({ type: "insert", note: row }); return row; },
     async updateNote(id, patch) { const d = db(); const n = d.notes.find((x) => x.id === id); if (!n) return; Object.assign(n, patch); save(d); emit({ type: "update", note: n }); },
@@ -653,9 +675,10 @@ async function refreshMembers() {
   if (!state.board) return;
   state.members = await api.members(state.board.id);
   if (state.me && !state.members.some((m) => m.id === state.me.id)) {
-    // removed from the board
-    state.board = null; state.notes.clear(); $("#board").innerHTML = "";
-    toast("You were removed from the board");
+    // removed from the board, or it was deleted
+    if (leaving) return;
+    resetBoardState();
+    toast("This board was deleted, or you were removed from it");
     return showPair();
   }
   renderChips();
@@ -1676,6 +1699,84 @@ async function refreshQuestionDot() {
   } catch { $("#qDot").hidden = true; }
 }
 
+// ---------------------------------------------------------------- switch / leave / delete board
+let leaving = false;
+function resetBoardState() {
+  clearInterval(ticker);
+  state.board = null; state.members = [];
+  state.notes.clear(); state.reactions = new Map(); state.replies = new Map(); state.pings = []; state.presence = {};
+  $("#board").innerHTML = ""; $("#memberChips").innerHTML = "";
+  together.pad?.reset(); together.open = false;
+  for (const s of ["detail", "composer", "settings", "ping", "question", "together"]) { $("#" + s).hidden = true; $("#" + s + "Backdrop").hidden = true; }
+  $("#qDot").hidden = true; $("#doodleDot").hidden = true;
+  $("#codeInput").value = ""; setError($("#pairError"));
+}
+
+function canDeleteBoard() {
+  return state.board && (state.board.created_by === state.me?.id || state.members.length <= 1);
+}
+
+function renderBoardActions() {
+  $("#switchRow").hidden = true; $("#switchCode").value = "";
+  const can = canDeleteBoard();
+  $("#deleteBoardBtn").hidden = !can;
+  const pt = partner();
+  const hint = $("#boardHint");
+  hint.hidden = can;
+  if (!can) hint.textContent = `Only ${pt?.name || "the person who made it"} can delete this board. You can leave it instead.`;
+}
+
+async function switchBoard() {
+  const code = $("#switchCode").value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (code.length < 8) return toast("Codes are 8 characters");
+  if (code === state.board?.code) return toast("You're already on that board");
+  const pt = partner();
+  if (!confirm(`Move to the other board? You'll leave this one${pt ? ` (${pt.name} keeps it)` : ""}.`)) return;
+  const btn = $("#switchGo"); busy(btn, true, "…");
+  const old = state.board;
+  leaving = true;
+  try {
+    const next = await api.joinBoard(code);      // join first, so a bad code leaves you where you are
+    await api.leaveBoard(old.id);
+    resetBoardState();
+    await openBoard((await api.myBoard()) || next);
+    toast("Joined the new board 🎉");
+  } catch (e) { toast(e.message, 4000); }
+  finally { leaving = false; busy(btn, false); }
+}
+
+async function leaveBoard() {
+  const pt = partner();
+  const msg = pt ? `Leave this board? ${pt.name} keeps it and everything on it. You'd need the code to come back.`
+    : "Leave this board? Nobody else is on it, so you may want to delete it instead.";
+  if (!confirm(msg)) return;
+  leaving = true;
+  try {
+    await api.leaveBoard(state.board.id);
+    resetBoardState();
+    const other = await api.myBoard();
+    other ? await openBoard(other) : showPair();
+    toast("You left the board");
+  } catch (e) { toast(e.message, 4000); }
+  finally { leaving = false; }
+}
+
+async function deleteBoard() {
+  const pt = partner();
+  if (!confirm(`Delete this board for ${pt ? `both you and ${pt.name}` : "good"}? Every note, photo, voice note and answer on it will be erased. This can't be undone.`)) return;
+  if (!confirm("Last check: delete everything and start over?")) return;
+  const btn = $("#deleteBoardBtn"); busy(btn, true, "Deleting…");
+  leaving = true;
+  try {
+    await api.deleteBoard(state.board.id);
+    resetBoardState();
+    const other = await api.myBoard();
+    other ? await openBoard(other) : showPair();
+    toast("Board deleted. Start a new one or join with a code.", 4000);
+  } catch (e) { toast(e.message, 5000); }
+  finally { leaving = false; busy(btn, false); }
+}
+
 // ---------------------------------------------------------------- settings
 function openSettings() {
   // themes
@@ -1698,6 +1799,7 @@ function openSettings() {
   renderNotifStatus();
   renderMutes();
   renderAccount();
+  renderBoardActions();
   openSheet("settings");
 }
 
@@ -1759,7 +1861,7 @@ function renderMemberList() {
     li.innerHTML = `<span class="chip" style="background:${BRIGHT[m.color] || BRIGHT.c1}"></span><span></span>`;
     li.querySelector(".chip").textContent = (m.name || "?").slice(0, 1).toUpperCase();
     li.querySelector("span:last-child").textContent = m.name + (m.id === state.me?.id ? " (you)" : "");
-    if (m.id !== state.me?.id) {
+    if (m.id !== state.me?.id && state.board?.created_by === state.me?.id) {
       const b = document.createElement("button"); b.className = "btn small danger"; b.textContent = "Remove";
       b.onclick = async () => {
         if (!confirm(`Remove ${m.name} from this board? They'd need the code to rejoin.`)) return;
@@ -1939,6 +2041,14 @@ function wireStatic() {
   };
 
   // settings
+  $("#switchBoardBtn").onclick = () => { $("#switchRow").hidden = !$("#switchRow").hidden; if (!$("#switchRow").hidden) $("#switchCode").focus(); };
+  $("#switchGo").onclick = switchBoard;
+  $("#switchCode").addEventListener("input", (e) => {
+    const raw = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+    e.target.value = raw.length > 4 ? raw.slice(0, 4) + "-" + raw.slice(4) : raw;
+  });
+  $("#leaveBoardBtn").onclick = leaveBoard;
+  $("#deleteBoardBtn").onclick = deleteBoard;
   $("#openSettings").onclick = openSettings;
   $("#settingsClose").onclick = () => closeSheet("settings");
   $("#settingsBackdrop").onclick = () => closeSheet("settings");
