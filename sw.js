@@ -1,5 +1,5 @@
-// Pinned service worker: offline shell + push notifications
-const CACHE = "soy-v5";
+// Stuck on You service worker: offline shell + push notifications
+const CACHE = "soy-v6";
 const SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./config.js", "./manifest.webmanifest", "./icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {
@@ -32,7 +32,7 @@ self.addEventListener("fetch", (e) => {
 self.addEventListener("push", (e) => {
   let data = {};
   try { data = e.data ? e.data.json() : {}; } catch { data = { body: e.data && e.data.text() }; }
-  const title = data.title || "Pinned";
+  const title = data.title || "Stuck on You";
   const options = {
     body: data.body || "New note",
     icon: "icons/icon-192.png",
@@ -60,6 +60,6 @@ self.addEventListener("notificationclick", (e) => {
 // Demo mode: the page asks the worker to show a local notification
 self.addEventListener("message", (e) => {
   if (e.data && e.data.type === "local-notify") {
-    self.registration.showNotification("Pinned", { body: e.data.body, icon: "icons/icon-192.png", tag: "soy-note", renotify: true });
+    self.registration.showNotification("Stuck on You", { body: e.data.body, icon: "icons/icon-192.png", tag: "soy-note", renotify: true });
   }
 });

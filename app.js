@@ -1,4 +1,4 @@
-// Pinned: shared sticky-note board for two
+// Stuck on You: shared sticky-note board for two
 import { CONFIG } from "./config.js";
 
 // ---------------------------------------------------------------- constants
@@ -605,22 +605,38 @@ async function onJoinBoard() {
 
 // ---------------------------------------------------------------- board
 let ticker = null;
+const boardHandlers = () => ({
+  onInsert: (n) => { upsertNote(n, true); markPartnerSeen(); },
+  onUpdate: (n) => { if (state.dragId !== n.id) upsertNote(n); },
+  onDelete: (id) => removeNoteEl(id),
+  onMembers: () => refreshMembers(),
+  onReaction: onReactionEvent,
+  onReply: onReplyEvent,
+  onPing: onPingEvent,
+  onAnswer: () => refreshQuestionDot(),
+});
+
+// Phones pause backgrounded web apps and drop their live connection.
+// When the app comes back, reconnect and pull anything that was missed (including "seen" ticks).
+let lastResume = 0, hiddenAt = 0;
+function onResume(force = false) {
+  if (!state.board || document.visibilityState !== "visible") return;
+  if (!force && Date.now() - lastResume < 3000) return;
+  lastResume = Date.now();
+  if (hiddenAt && Date.now() - hiddenAt > 20000) api.subscribe(state.board.id, boardHandlers());
+  hiddenAt = 0;
+  resync().catch(() => {});
+  refreshMembers().catch(() => {});
+  refreshQuestionDot();
+  clearBadge();
+}
 async function openBoard(board) {
   state.board = board;
   show("#boardScreen");
   layoutBoard();
   await refreshMembers();
   await resync();
-  api.subscribe(board.id, {
-    onInsert: (n) => { upsertNote(n, true); markPartnerSeen(); },
-    onUpdate: (n) => { if (state.dragId !== n.id) upsertNote(n); },
-    onDelete: (id) => removeNoteEl(id),
-    onMembers: () => refreshMembers(),
-    onReaction: onReactionEvent,
-    onReply: onReplyEvent,
-    onPing: onPingEvent,
-    onAnswer: () => refreshQuestionDot(),
-  });
+  api.subscribe(board.id, boardHandlers());
   live = api.live(board.id, state.me, { onMessage: onLiveMessage, onPresence: onPresence });
   refreshPushSubscription();
   refreshQuestionDot();
@@ -630,7 +646,7 @@ async function openBoard(board) {
   let n = 0;
   ticker = setInterval(() => {
     tickNotes();
-    if (++n % 2 === 0 && document.visibilityState === "visible") resync().catch(() => {});
+    if (document.visibilityState === "visible") resync().catch(() => {});
   }, 30000);
 }
 
@@ -869,14 +885,14 @@ function markSeen() {
 
 // tell the other person their notes have been seen
 let seenTimer = null;
-function markPartnerSeen() {
+function markPartnerSeen(delay = 1200) {
   clearTimeout(seenTimer);
   seenTimer = setTimeout(async () => {
     if (document.visibilityState !== "visible") return;
     const ids = [...state.notes.values()].filter((n) => n.author_id !== state.me?.id && !n.seen_at && !isScheduled(n)).map((n) => n.id);
     if (!ids.length) return;
     try { await api.markSeen(ids); ids.forEach((id) => { const n = state.notes.get(id); if (n) n.seen_at = new Date().toISOString(); }); } catch { /* column missing until v2 */ }
-  }, 1200);
+  }, delay);
 }
 
 function tickNotes() {
@@ -1018,6 +1034,7 @@ function openDetail(id) {
   $("#replyInput").value = "";
   noteEl(id)?.classList.remove("fresh");
   openSheet("detail");
+  if (n.author_id !== state.me?.id && !n.seen_at) markPartnerSeen(0);
 }
 
 function renderDetailMeta(n) {
@@ -1875,9 +1892,9 @@ function renderMemberList() {
 
 async function shareCode() {
   const code = fmtCode(state.board?.code);
-  const text = `Join my board on Pinned with code ${code}`;
+  const text = `Join my board on Stuck on You with code ${code}`;
   try {
-    if (navigator.share) await navigator.share({ title: "Pinned", text, url: location.href.split("#")[0] });
+    if (navigator.share) await navigator.share({ title: "Stuck on You", text, url: location.href.split("#")[0] });
     else { await navigator.clipboard.writeText(code); toast("Code copied"); }
   } catch { /* user cancelled */ }
 }
@@ -1899,7 +1916,7 @@ function renderNotifStatus() {
   const sup = notifSupport();
   if (sup === "install") {
     st.textContent = "Add to Home Screen first";
-    hint.textContent = "On iPhone: tap the Share button in Safari, choose \"Add to Home Screen\", then open Pinned from your home screen and turn notifications on here.";
+    hint.textContent = "On iPhone: tap the Share button in Safari, choose \"Add to Home Screen\", then open Stuck on You from your home screen and turn notifications on here.";
     hint.hidden = false; btn.hidden = true; return;
   }
   if (sup === "unsupported") { st.textContent = "Not supported in this browser"; btn.hidden = true; return; }
@@ -1908,7 +1925,7 @@ function renderNotifStatus() {
   if (p === "granted") { st.textContent = "On"; btn.textContent = "Send test"; }
   else if (p === "denied") {
     st.textContent = "Blocked";
-    hint.textContent = isIOS ? "Turn them back on in iPhone Settings > Notifications > Pinned." : "Turn them back on in your phone's settings for this app (long-press the icon > App info > Notifications).";
+    hint.textContent = isIOS ? "Turn them back on in iPhone Settings > Notifications > Stuck on You." : "Turn them back on in your phone's settings for this app (long-press the icon > App info > Notifications).";
     hint.hidden = false; btn.hidden = true;
   } else { st.textContent = "Off"; btn.textContent = "Turn on"; }
 }
@@ -1950,7 +1967,7 @@ async function refreshPushSubscription(force = false) {
 async function localNotify(body) {
   try {
     const reg = await navigator.serviceWorker.ready;
-    await reg.showNotification("Pinned", { body, icon: "icons/icon-192.png", tag: "soy-note" });
+    await reg.showNotification("Stuck on You", { body, icon: "icons/icon-192.png", tag: "soy-note" });
   } catch { toast(body); }
 }
 
@@ -2063,10 +2080,14 @@ function wireStatic() {
   window.addEventListener("resize", () => { if (state.board) layoutBoard(); });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && pollTimer) { const p = ls.get(PENDING); if (p) startPolling(p.nonce); }
-    if (document.visibilityState === "visible" && state.board) { resync().catch(() => {}); refreshMembers().catch(() => {}); refreshQuestionDot(); clearBadge(); }
-    if (document.visibilityState === "hidden") markSeen();
+    if (document.visibilityState === "visible") onResume(true);
+    if (document.visibilityState === "hidden") { hiddenAt = Date.now(); markSeen(); }
   });
-  window.addEventListener("pagehide", markSeen);
+  // iPhone home-screen apps don't always fire visibilitychange when reopened; these catch the rest
+  window.addEventListener("pageshow", () => onResume());
+  window.addEventListener("focus", () => onResume());
+  window.addEventListener("online", () => { hiddenAt = hiddenAt || 1; onResume(true); });
+  window.addEventListener("pagehide", () => { hiddenAt = Date.now(); markSeen(); });
 }
 
 boot();
