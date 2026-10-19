@@ -120,6 +120,7 @@
       <button id="dockQuestion" aria-label="Today's question"><span class="ic">❓</span><span class="lb">Today</span><i class="dot" id="qDot" hidden></i></button>
       <button id="dockDoodle" aria-label="Draw together"><span class="ic">🎨</span><span class="lb">Together</span><i class="dot live" id="doodleDot" hidden></i></button>
       <button id="dockChats" aria-label="Messages"><span class="ic">💬</span><span class="lb">Chats</span><i class="dot" id="chatDot" hidden></i></button>
+      <button id="dockGames" aria-label="Games"><span class="ic">🎮</span><span class="lb">Games</span><i class="dot" id="gamesDot" hidden></i></button>
     </nav>
     <div class="boardtools" id="boardTools">
       <button id="toolFind" aria-label="Find someone" title="Find someone">👀</button>
@@ -466,6 +467,79 @@
     </div>
     <div class="sheet-actions"><button class="btn" id="chatsClose">Close</button></div>
   </section>
+
+  <!-- Games -->
+  <div class="sheet-backdrop" id="gamesBackdrop" hidden></div>
+  <section class="sheet tall games" id="games" hidden aria-label="Games">
+    <div class="grab"></div>
+    <div id="gameListView">
+      <h2>Games</h2>
+      <p class="banner warn" id="gamesV7" hidden>Scores and tic-tac-toe need the latest database update (upgrade-v7.sql). Solo games still work.</p>
+      <div class="race-banner" id="raceBanner" hidden></div>
+      <div id="gameList"></div>
+      <div class="game-card" id="tttCard"></div>
+    </div>
+    <div id="gameBoardView" hidden>
+      <div class="thread-head">
+        <button class="iconbtn" id="sbBack" aria-label="Back">‹</button>
+        <div><b id="sbTitle"></b><small>Scores on this board</small></div>
+      </div>
+      <h3>Best on this board</h3>
+      <ol class="lb" id="sbBest"></ol>
+      <h3>Last 10 rounds</h3>
+      <ul class="lb rounds" id="sbRecent"></ul>
+      <div class="sheet-actions"><button class="btn" id="sbSolo">Play solo</button><button class="btn primary" id="sbRace">Race</button></div>
+    </div>
+    <div class="sheet-actions"><button class="btn" id="gamesClose">Close</button></div>
+  </section>
+
+  <!-- Tic-tac-toe -->
+  <div class="sheet-backdrop" id="tttBackdrop" hidden></div>
+  <section class="sheet" id="ttt" hidden aria-label="Tic-tac-toe">
+    <div class="grab"></div>
+    <h2 id="tttTitle">Tic-tac-toe</h2>
+    <p class="ttt-status" id="tttStatus"></p>
+    <div class="seg" id="tttLevel" hidden>
+      <button data-level="easy" aria-pressed="true">Easy</button>
+      <button data-level="hard" aria-pressed="false">Hard</button>
+    </div>
+    <div class="ttt-grid" id="tttGrid"></div>
+    <div class="sheet-actions wrap">
+      <button class="btn primary" id="tttAccept" hidden>Accept</button>
+      <button class="btn" id="tttDecline" hidden>Not now</button>
+      <button class="btn primary" id="tttRematch" hidden>Rematch</button>
+      <button class="btn danger" id="tttQuit" hidden>Resign</button>
+      <button class="btn" id="tttClose">Back</button>
+    </div>
+  </section>
+
+  <!-- A game being played -->
+  <div class="game-overlay" id="gameOverlay" hidden>
+    <div class="go-bar">
+      <button class="iconbtn" id="gameExit" aria-label="Leave the game">✕</button>
+      <b id="gameTitle"></b>
+      <div class="go-chips" id="raceChips"></div>
+    </div>
+    <iframe id="gameFrame" title="Game" allow="autoplay; fullscreen"></iframe>
+    <div class="go-count" id="gameCount" hidden></div>
+    <div class="go-panel" id="raceLobby" hidden>
+      <div class="go-card">
+        <h2>🏁 Race lobby</h2>
+        <p class="lobby-game" id="lobbyGame"></p>
+        <ul class="lobby-list" id="lobbyList"></ul>
+        <p class="muted" id="lobbyTimer"></p>
+        <p class="muted small">Everyone gets the same course. You'll see each other as ghosts.</p>
+        <div class="sheet-actions"><button class="btn" id="lobbyLeave">Leave</button><button class="btn primary" id="lobbyStart">Start now</button></div>
+      </div>
+    </div>
+    <div class="go-panel" id="raceResults" hidden>
+      <div class="go-card">
+        <h2 id="resultTitle">Results</h2>
+        <ol class="lb" id="resultList"></ol>
+        <div class="sheet-actions"><button class="btn" id="raceDone">Done</button><button class="btn primary" id="raceAgain">Race again</button></div>
+      </div>
+    </div>
+  </div>
 
   <div class="fx" id="fx" aria-hidden="true"></div>
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>

@@ -28,7 +28,8 @@ const PING_TEXT = {
 };
 const PING_EMOJI = Object.fromEntries([...FEELINGS, ...MOODS].map(([k, e]) => [k, e]));
 const MUTE_TYPES = [["message", "Messages"], ["reaction", "Reactions"], ["reply", "Replies"], ["ping", "Check-ins"],
-  ["answer", "Daily question answers"], ["doodle", "Draw-together invites"], ["bgrequest", "Background requests (owner)"], ["bgreply", "Background replies"]];
+  ["answer", "Daily question answers"], ["doodle", "Draw-together invites"], ["bgrequest", "Background requests (owner)"], ["bgreply", "Background replies"],
+  ["game", "Race invites"], ["lead", "Someone beats your best score"], ["ttt", "Tic-tac-toe"]];
 const QUESTIONS = [
   "What's a small thing I do that makes your day better?", "If we could teleport anywhere for one day, where would we go?",
   "What song reminds you of us?", "What's your favorite memory of us so far?", "What's something you've never told me but want to?",
@@ -77,7 +78,7 @@ const toLocalInput = (d) => `${localDateKey(d)}T${pad2(d.getHours())}:${pad2(d.g
 // Both backends expose the same async interface.
 
 function createSupabaseApi() {
-  let sb, session, channel, extras, liveCh, inkCh, chatCh;
+  let sb, session, channel, extras, liveCh, inkCh, chatCh, gamesCh;
   const bucket = () => sb.storage.from("board-media");
   const urlCache = new Map();
   const must = ({ data, error }) => { if (error) throw new Error(error.message); return data; };
@@ -294,7 +295,27 @@ function createSupabaseApi() {
         .on("postgres_changes", { event: "*", schema: "public", table: "bg_requests", filter: f }, (p) => h.onBgRequest(p.new))
         .on("postgres_changes", { event: "UPDATE", schema: "public", table: "boards", filter: `id=eq.${boardId}` }, (p) => h.onBoard(p.new))
         .subscribe();
+      // v7 games tables on their own channel too
+      if (gamesCh) sb.removeChannel(gamesCh);
+      gamesCh = sb.channel("games-" + boardId)
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "game_scores", filter: f }, (p) => h.onScore(p.new))
+        .on("postgres_changes", { event: "*", schema: "public", table: "ttt_games", filter: f }, (p) => h.onTtt(p.new))
+        .subscribe();
     },
+    // ---- games (v7) ----
+    async gameBoard(boardId, game) { return must(await sb.rpc("game_board", { p_board: boardId, p_game: game })) || { best: [], recent: [] }; },
+    async saveScore(boardId, game, score, mode, roundId) {
+      return must(await sb.from("game_scores").insert({ board_id: boardId, user_id: myId(), game, score, mode, round_id: roundId || null }).select().single());
+    },
+    async listTtt(boardId) { return must(await sb.from("ttt_games").select("*").eq("board_id", boardId).order("updated_at", { ascending: false }).limit(80)); },
+    async tttChallenge(boardId, oId) {
+      const { data, error } = await sb.from("ttt_games").insert({ board_id: boardId, x_id: myId(), o_id: oId }).select().single();
+      if (error) throw new Error(/duplicate|unique/i.test(error.message) ? "You already have a game going with them" : error.message);
+      return data;
+    },
+    async tttRespond(id, accept) { return must(await sb.rpc("ttt_respond", { p_game: id, p_accept: accept })); },
+    async tttMove(id, cell) { return must(await sb.rpc("ttt_move", { p_game: id, p_cell: cell })); },
+    async tttQuit(id) { return must(await sb.rpc("ttt_quit", { p_game: id })); },
     live(boardId, me, h) {
       if (liveCh) sb.removeChannel(liveCh);
       let presence = { name: me.name, color: me.color, visible: true, doodling: false };
@@ -338,7 +359,7 @@ function createSupabaseApi() {
 // Demo backend: localStorage + BroadcastChannel. Each browser tab is its own "person".
 function createDemoApi() {
   const KEY = "soy-demo-db";
-  const blank = () => ({ profiles: {}, boards: {}, members: [], notes: [], media: {}, reactions: [], replies: [], answers: [], pings: [], strokes: [], messages: [], reads: [], bgreqs: [] });
+  const blank = () => ({ profiles: {}, boards: {}, members: [], notes: [], media: {}, reactions: [], replies: [], answers: [], pings: [], strokes: [], messages: [], reads: [], bgreqs: [], scores: [], ttt: [] });
   const canSee = (m) => !m.to_id || m.sender_id === meId() || m.to_id === meId();
   const db = () => ({ ...blank(), ...ls.get(KEY, {}) });
   const save = (d) => ls.set(KEY, d);
@@ -365,7 +386,13 @@ function createDemoApi() {
     if (m.type === "read") handlers.onRead(m.row);
     if (m.type === "bgreq") { const b = db().boards[m.row.board_id]; if (m.row.user_id === meId() || b?.created_by === meId()) handlers.onBgRequest(m.row); }
     if (m.type === "board") handlers.onBoard(m.row);
+    if (m.type === "score") handlers.onScore(m.row);
+    if (m.type === "ttt") handlers.onTtt(m.row);
   };
+  // tic-tac-toe rules, same as the database functions
+  const TTT_LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+  const tttWinner = (c) => { for (const [a, b, e] of TTT_LINES) if (c[a] !== "-" && c[a] === c[b] && c[a] === c[e]) return c[a]; return c.includes("-") ? null : "draw"; };
+  const tttSave = (d, g) => { g.updated_at = new Date().toISOString(); save(d); emit({ type: "ttt", row: g }); return { ...g }; };
   const code = () => Array.from({ length: 8 }, () => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 32)]).join("");
 
   return {
@@ -509,6 +536,49 @@ function createDemoApi() {
     async savePushSub() {},
     async notify() { return { sent: 1, devices: 1, failures: [] }; },
     pushReady: () => true,
+    async gameBoard(boardId, game) {
+      const rows = db().scores.filter((r) => r.board_id === boardId && r.game === game);
+      const by = {};
+      for (const r of rows) { const b = by[r.user_id] || (by[r.user_id] = { user_id: r.user_id, best: -1, plays: 0, best_at: null }); b.plays++; if (r.score > b.best) { b.best = r.score; b.best_at = r.created_at; } }
+      return { best: Object.values(by).sort((a, b) => b.best - a.best), recent: rows.sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, 10) };
+    },
+    async saveScore(boardId, game, score, mode, roundId) {
+      const d = db(); const row = { id: uid(), board_id: boardId, user_id: meId(), game, score, mode, round_id: roundId || null, created_at: new Date().toISOString() };
+      d.scores.push(row); save(d); emit({ type: "score", row }); return row;
+    },
+    async listTtt(boardId) { return db().ttt.filter((g) => g.board_id === boardId).sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1)); },
+    async tttChallenge(boardId, oId) {
+      const d = db();
+      if (d.ttt.some((g) => g.board_id === boardId && ["invited", "active"].includes(g.status) && [g.x_id, g.o_id].includes(oId) && [g.x_id, g.o_id].includes(meId()))) throw new Error("You already have a game going with them");
+      const g = { id: uid(), board_id: boardId, x_id: meId(), o_id: oId, cells: "---------", turn: "X", status: "invited", winner: null, created_at: new Date().toISOString() };
+      d.ttt.push(g); return tttSave(d, g);
+    },
+    async tttRespond(id, accept) {
+      const d = db(), g = d.ttt.find((x) => x.id === id);
+      if (!g) throw new Error("Game not found");
+      if (g.o_id !== meId()) throw new Error("Only the person challenged can answer");
+      if (g.status !== "invited") throw new Error("This challenge was already answered");
+      g.status = accept ? "active" : "declined"; return tttSave(d, g);
+    },
+    async tttMove(id, cell) {
+      const d = db(), g = d.ttt.find((x) => x.id === id);
+      if (!g) throw new Error("Game not found");
+      if (g.status !== "active") throw new Error("This game is not being played");
+      const mark = meId() === g.x_id ? "X" : meId() === g.o_id ? "O" : null;
+      if (!mark) throw new Error("You are watching this game, not playing");
+      if (g.turn !== mark) throw new Error("Not your turn yet");
+      if (g.cells[cell] !== "-") throw new Error("That square is taken");
+      g.cells = g.cells.slice(0, cell) + mark + g.cells.slice(cell + 1);
+      g.winner = tttWinner(g.cells); g.turn = mark === "X" ? "O" : "X"; if (g.winner) g.status = "done";
+      return tttSave(d, g);
+    },
+    async tttQuit(id) {
+      const d = db(), g = d.ttt.find((x) => x.id === id);
+      if (!g || ![g.x_id, g.o_id].includes(meId())) throw new Error("Not your game");
+      if (g.status === "invited") g.status = "cancelled";
+      else if (g.status === "active") { g.status = "done"; g.winner = meId() === g.x_id ? "O" : "X"; }
+      return tttSave(d, g);
+    },
     meId,
   };
 }
@@ -730,6 +800,8 @@ const boardHandlers = () => ({
   onRead: onReadEvent,
   onBgRequest: onBgRequestEvent,
   onBoard: onBoardEvent,
+  onScore: onScoreEvent,
+  onTtt: onTttEvent,
 });
 
 // Phones pause backgrounded web apps and drop their live connection.
@@ -744,7 +816,8 @@ function onResume(force = false) {
   resync().catch(() => {});
   refreshMembers().catch(() => {});
   refreshQuestionDot();
-  loadChats(); loadBgRequests();
+  loadChats(); loadBgRequests(); loadTtt();
+  if (!games.race) raceSend("ask");
   api.getBoard?.(state.board.id).then((b) => b && onBoardEvent(b)).catch(() => {});
   markThreadRead();
   clearBadge();
@@ -761,6 +834,8 @@ async function openBoard(board) {
   api.subscribe(board.id, boardHandlers());
   live = api.live(board.id, state.me, { onMessage: onLiveMessage, onPresence: onPresence });
   api.touchSeen(board.id);
+  loadTtt();
+  setTimeout(() => raceSend("ask"), 1500);
   refreshPushSubscription();
   refreshQuestionDot();
   clearBadge();
@@ -2318,6 +2393,7 @@ async function stickTogether() {
 function onLiveMessage(m) {
   if (!m || !m.t) return;
   if (m.t === "answered") return refreshQuestionDot();
+  if (m.t === "race") return onRaceMsg(m);
   if (m.t === "cur") return onCursor(m);
   if (m.t === "typing") return onTyping(m);
   if (m.t === "view") { if (m.u !== state.me?.id) state.views[m.u] = { cx: m.cx, cy: m.cy, s: m.s, at: Date.now() }; return; }
@@ -2499,8 +2575,9 @@ function resetBoardState() {
   deselect(); setInkMode(false); closePeople();
   state.msgs = []; state.reads = new Map(); state.bgReqs = []; state.playing = null; chat.peer = null;
   $("#chatDot").hidden = true; $("#gearDot").hidden = true; clearBgLayer();
+  resetGames();
   together.pad?.reset(); together.open = false;
-  for (const s of ["detail", "composer", "settings", "ping", "question", "together", "chats", "edit"]) { $("#" + s).hidden = true; $("#" + s + "Backdrop").hidden = true; }
+  for (const s of ["detail", "composer", "settings", "ping", "question", "together", "chats", "edit", "games", "ttt"]) { $("#" + s).hidden = true; $("#" + s + "Backdrop").hidden = true; }
   $("#qDot").hidden = true; $("#doodleDot").hidden = true;
   $("#codeInput").value = ""; setError($("#pairError"));
 }
@@ -3021,6 +3098,687 @@ function openSettings() {
   openSheet("settings");
 }
 
+// ================================================================ games (Phase 3)
+const GAME_LIST = [
+  { id: "kestrel", name: "Neon Kestrel", icon: "🦅", file: "games/neon-kestrel.html", blurb: "Himal's synthwave flyer. Tap to flap through the neon towers." },
+  { id: "pindrop", name: "Pin Drop", icon: "📌", file: "games/pin-drop.html", blurb: "Drop the swinging pin on a sliding bullseye. 10 drops." },
+  { id: "plane", name: "Paper Plane", icon: "✈️", file: "games/paper-plane.html", blurb: "Hold to climb, let go to dive. Dodge pins, grab hearts." },
+];
+const gameById = (id) => GAME_LIST.find((g) => g.id === id);
+const RACE_WAIT = 20000, RACE_MAX = 4 * 60000, RACE_STALE = 20000;
+const games = { boards: {}, v7: true, v7Warned: false, ttt: [], boardGame: null, race: null, play: null, tttId: null, cpu: null, cpuLevel: "easy", picking: false, timer: null };
+const colorOf = (id) => BRIGHT[memberById(id)?.color] || BRIGHT.c1;
+const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const fmtSecs = (ms) => `0:${pad2(Math.max(0, Math.ceil(ms / 1000)))}`;
+const v7Missing = (e) => /game_board|game_scores|ttt_|schema cache|does not exist|Could not find/i.test(e?.message || "");
+function needsV7() {
+  games.v7 = false;
+  if (!games.v7Warned) { games.v7Warned = true; toast("Scores and tic-tac-toe need the latest database update. Run upgrade-v7.sql in Supabase (see SETUP).", 6000); }
+}
+
+function resetGames() {
+  if (games.play) closeGameOverlay(true);
+  clearInterval(games.timer); games.timer = null;
+  games.race = null; games.boards = {}; games.ttt = []; games.tttId = null; games.cpu = null; games.boardGame = null;
+  const d = $("#gamesDot"); if (d) d.hidden = true;
+}
+
+// ---------------------------------------------------------------- scoreboards
+async function loadGameBoard(game) {
+  if (!state.board) return null;
+  try { const b = await api.gameBoard(state.board.id, game); games.boards[game] = b || { best: [], recent: [] }; games.v7 = true; }
+  catch (e) { if (v7Missing(e)) games.v7 = false; }
+  return games.boards[game] || null;
+}
+const loadAllGameBoards = () => Promise.all(GAME_LIST.map((g) => loadGameBoard(g.id)));
+const bestOf = (game, id) => games.boards[game]?.best?.find((r) => r.user_id === id)?.best ?? null;
+
+function onScoreEvent(row) {
+  if (!row || row.board_id !== state.board?.id) return;
+  loadGameBoard(row.game).then(renderGamesIfOpen);
+}
+
+async function recordScore(game, score, mode, rid) {
+  if (!state.board) return;
+  const before = (games.boards[game] || (await loadGameBoard(game)))?.best || [];
+  const mine = before.find((r) => r.user_id === state.me.id)?.best ?? -1;
+  try { await api.saveScore(state.board.id, game, score, mode, rid || null); }
+  catch (e) { if (v7Missing(e)) needsV7(); else toast("Couldn't save your score: " + e.message); return; }
+  const top = before[0];
+  if (!before.length) toast(`🏆 First score on the board: ${score}`, 3000);
+  else if (score > 0 && score > top.best) toast(`🏆 New board record in ${gameById(game).name}: ${score}!`, 3500);
+  else if (score > mine && mine >= 0) toast(`⭐ New personal best: ${score}`, 3000);
+  // tell people whose best you just passed (once: only when you were below them before)
+  const passed = before.filter((r) => r.user_id !== state.me.id && score > r.best && mine <= r.best);
+  for (const r of passed) api.notify(state.board.id, "lead", { game, score, to: r.user_id });
+  await loadGameBoard(game);
+  renderGamesIfOpen();
+}
+
+// ---------------------------------------------------------------- games sheet
+function openGames() {
+  games.boardGame = null; games.picking = false;
+  renderGames(); openSheet("games");
+  loadAllGameBoards().then(renderGamesIfOpen);
+  loadTtt();
+}
+function renderGamesIfOpen() { if (!$("#games").hidden) renderGames(); if (!$("#ttt").hidden) renderTtt(); updateGamesDot(); }
+
+function renderGames() {
+  $("#gamesV7").hidden = games.v7;
+  $("#gameListView").hidden = !!games.boardGame;
+  $("#gameBoardView").hidden = !games.boardGame;
+  if (games.boardGame) return renderScoreboard();
+  renderRaceBanner();
+  const list = $("#gameList"); list.innerHTML = "";
+  const r = games.race;
+  for (const g of GAME_LIST) {
+    const card = mk("div", "game-card");
+    const top = mk("div", "gc-top");
+    top.appendChild(mk("span", "gc-ic", g.icon));
+    const t = mk("div"); t.appendChild(mk("b", null, g.name)); t.appendChild(mk("small", null, g.blurb)); top.appendChild(t);
+    card.appendChild(top);
+    const b = games.boards[g.id]?.best || [];
+    const line = mk("div", "gc-best");
+    if (b.length) {
+      const lead = b[0], mine = bestOf(g.id, state.me.id);
+      line.textContent = `🏆 ${lead.user_id === state.me.id ? "You" : (memberById(lead.user_id)?.name || "Someone")} ${lead.best}` +
+        (mine != null && lead.user_id !== state.me.id ? ` · You ${mine}` : "");
+    } else line.textContent = games.v7 ? "No scores yet. Be the first!" : "";
+    card.appendChild(line);
+    const acts = mk("div", "gc-actions");
+    const solo = mk("button", "btn small", "Play solo"); solo.onclick = () => openGameOverlay(g.id, "solo");
+    const raceOpen = r && r.game === g.id && r.phase === "lobby";
+    const raceBusy = r && (r.phase === "count" || r.phase === "run");
+    const race = mk("button", "btn small primary", raceOpen ? (r.joined ? "Back to lobby" : "Join race") : "Race");
+    race.disabled = !!raceBusy || (r && r.phase === "lobby" && r.game !== g.id);
+    race.onclick = () => (raceOpen ? (r.joined ? openGameOverlay(g.id, "race") : joinRace()) : startRace(g.id));
+    const sb = mk("button", "btn small", "Scores"); sb.onclick = () => { games.boardGame = g.id; renderGames(); loadGameBoard(g.id).then(renderGamesIfOpen); };
+    acts.append(solo, race, sb);
+    card.appendChild(acts);
+    list.appendChild(card);
+  }
+  renderTttCard();
+}
+
+function renderRaceBanner() {
+  const el = $("#raceBanner"), r = games.race;
+  el.hidden = true; el.innerHTML = "";
+  if (!r) return;
+  const g = gameById(r.game); if (!g) return;
+  const host = r.host === state.me.id ? "You" : (memberById(r.host)?.name || "Someone");
+  if (r.phase === "lobby") {
+    el.appendChild(mk("span", null, `🏁 ${host} started a ${g.name} race · ${fmtSecs(r.deadline - Date.now())}`));
+    const b = mk("button", "btn small primary", r.joined ? "Open" : "Join");
+    b.onclick = () => (r.joined ? openGameOverlay(r.game, "race") : joinRace());
+    el.appendChild(b);
+  } else if (r.phase === "count" || r.phase === "run") {
+    el.appendChild(mk("span", null, r.joined ? `🏁 Your ${g.name} race is on` : `🏁 A ${g.name} race is on. You'll be in the next one.`));
+    if (r.joined) { const b = mk("button", "btn small primary", "Back"); b.onclick = () => openGameOverlay(r.game, "race"); el.appendChild(b); }
+  } else if (r.phase === "results" && r.ranking?.length) {
+    const w = r.ranking[0];
+    el.appendChild(mk("span", null, `🏆 ${w.id === state.me.id ? "You" : (memberById(w.id)?.name || "Someone")} won the ${g.name} race with ${w.score}`));
+  } else return;
+  el.hidden = false;
+}
+
+function renderScoreboard() {
+  const g = gameById(games.boardGame), b = games.boards[g.id] || { best: [], recent: [] };
+  $("#sbTitle").textContent = `${g.icon} ${g.name}`;
+  const best = $("#sbBest"); best.innerHTML = "";
+  b.best.forEach((r, i) => {
+    const li = mk("li"); const m = memberById(r.user_id) || { name: "Someone who left", color: "c1" };
+    li.appendChild(mk("span", "rank", ["🥇", "🥈", "🥉"][i] || String(i + 1)));
+    li.appendChild(chipEl({ ...m, id: r.user_id }));
+    li.appendChild(mk("span", "nm", r.user_id === state.me.id ? `${m.name} (you)` : m.name));
+    li.appendChild(mk("small", null, `${r.plays} ${r.plays === 1 ? "round" : "rounds"}`));
+    li.appendChild(mk("b", "sc", String(r.best)));
+    best.appendChild(li);
+  });
+  if (!b.best.length) best.appendChild(mk("li", "empty", games.v7 ? "Nobody has played yet." : "Run upgrade-v7.sql to keep scores."));
+  const rec = $("#sbRecent"); rec.innerHTML = "";
+  for (const r of b.recent) {
+    const li = mk("li"); const m = memberById(r.user_id);
+    li.appendChild(mk("span", "nm", r.user_id === state.me.id ? "You" : (m?.name || "Someone")));
+    li.appendChild(mk("small", null, `${r.mode === "race" ? "🏁 race" : "solo"} · ${timeAgo(r.created_at)}`));
+    li.appendChild(mk("b", "sc", String(r.score)));
+    rec.appendChild(li);
+  }
+  if (!b.recent.length) rec.appendChild(mk("li", "empty", "No rounds yet."));
+}
+
+function updateGamesDot() {
+  const me = state.me?.id, r = games.race;
+  const myTurn = games.ttt.some((g) => (g.status === "active" && ((g.turn === "X" && g.x_id === me) || (g.turn === "O" && g.o_id === me))) || (g.status === "invited" && g.o_id === me));
+  const lobby = r && r.phase === "lobby" && !r.joined;
+  const d = $("#gamesDot");
+  d.hidden = !(myTurn || lobby);
+  d.classList.toggle("live", !!lobby);
+}
+
+// ---------------------------------------------------------------- the game window
+function sendToGame(msg) {
+  const f = $("#gameFrame");
+  try { f.contentWindow?.postMessage({ pinned: 1, ...msg }, location.origin); } catch { /* frame gone */ }
+}
+
+function openGameOverlay(gameId, mode) {
+  const g = gameById(gameId), me = state.me;
+  if (games.play && games.play.game === gameId && games.play.mode === mode && (mode === "solo" || games.play.rid === games.race?.rid)) {
+    $("#gameOverlay").hidden = false; closeSheet("games"); renderLobby(); return;
+  }
+  if (games.play) closeGameOverlay(true);
+  const q = new URLSearchParams({ embed: "1", mode, name: me.name || "You", color: BRIGHT[me.color] || "#ff8fb1" });
+  if (mode === "race") q.set("seed", String(games.race.seed));
+  games.play = { game: gameId, mode, ready: false, pendingGo: false, rid: mode === "race" ? games.race.rid : null };
+  $("#gameFrame").src = `${g.file}?${q}`;
+  $("#gameTitle").textContent = `${g.icon} ${g.name}`;
+  $("#gameOverlay").hidden = false; document.body.classList.add("gaming");
+  $("#raceResults").hidden = true; $("#gameCount").hidden = true;
+  $("#raceLobby").hidden = mode !== "race" || games.race?.phase !== "lobby";
+  closeSheet("games");
+  renderLobby(); renderRaceChips();
+}
+
+function closeGameOverlay(silent = false) {
+  const p = games.play; if (!p) return;
+  const r = games.race;
+  if (p.mode === "race" && r && r.rid === p.rid && r.joined) {
+    if (r.phase === "lobby") {
+      r.players.delete(state.me.id); r.joined = false;
+      if (!r.players.size) { raceSend("cancel"); games.race = null; }
+      else {
+        if (r.host === state.me.id) r.host = [...r.players.keys()].sort()[0];
+        raceSend("leave", { host: r.host });
+      }
+    } else if (r.phase === "count" || r.phase === "run") {
+      const mine = r.players.get(state.me.id);
+      if (mine && !mine.over) { mine.over = true; mine.left = true; mine.alive = false; raceSend("over", { s: mine.score || 0, quit: true }); checkRaceDone(); }
+    }
+  }
+  games.play = null;
+  $("#gameFrame").src = "about:blank";
+  $("#gameOverlay").hidden = true; document.body.classList.remove("gaming");
+  updateGamesDot();
+  if (!silent && state.board) { renderGames(); openSheet("games"); }
+}
+
+window.addEventListener("message", (e) => {
+  const f = $("#gameFrame");
+  if (!games.play || !f || e.source !== f.contentWindow || e.origin !== location.origin || !e.data?.pinned) return;
+  const m = e.data, p = games.play, r = games.race;
+  if (m.t === "ready") {
+    p.ready = true;
+    if (p.pendingGo) { p.pendingGo = false; sendToGame({ t: "go" }); f.focus(); }
+    if (p.mode === "race" && r) for (const pl of r.players.values()) if (pl.id !== state.me.id) sendToGame({ t: "ghost", s: ghostOf(pl) });
+  } else if (m.t === "state") {
+    if (p.mode === "race" && r && r.joined && r.rid === p.rid && r.phase === "run") {
+      const mine = r.players.get(state.me.id);
+      if (!mine || mine.over) return;
+      Object.assign(mine, { d: m.d, y: m.y, alive: m.alive !== false, score: m.score || 0, at: Date.now() });
+      raceSend("st", { d: m.d, y: m.y, a: m.alive !== false, s: m.score || 0 });
+      renderRaceChips();
+    }
+  } else if (m.t === "over") onGameOver(m.score);
+});
+
+async function onGameOver(raw) {
+  const p = games.play; if (!p) return;
+  const score = Math.max(0, Math.min(100000, Math.floor(Number(raw) || 0)));
+  const r = games.race;
+  if (p.mode === "race") {
+    if (!r || r.rid !== p.rid || !r.joined) return;
+    const mine = r.players.get(state.me.id);
+    if (!mine || mine.over) return;           // one run per race
+    Object.assign(mine, { over: true, alive: false, score, at: Date.now() });
+    raceSend("over", { s: score });
+    renderRaceChips();
+    checkRaceDone();
+    recordScore(p.game, score, "race", r.rid);
+  } else recordScore(p.game, score, "solo");
+}
+
+// ---------------------------------------------------------------- races
+function raceSend(k, extra = {}) { live?.send({ t: "race", k, rid: games.race?.rid, u: state.me.id, ...extra }); }
+function addRacer(id) {
+  const r = games.race;
+  if (id && !r.players.has(id)) r.players.set(id, { id, d: 0, y: 0, alive: true, score: 0, over: false, at: Date.now() });
+}
+const ghostOf = (pl) => ({ id: pl.id, name: memberById(pl.id)?.name || "Friend", color: colorOf(pl.id), d: pl.d, y: pl.y, alive: pl.alive, score: pl.score });
+const openMsg = (r) => ({ game: r.game, seed: r.seed, host: r.host, wait: Math.max(0, r.deadline - Date.now()), players: [...r.players.keys()] });
+
+function startRace(gameId) {
+  const r = games.race;
+  if (r && r.phase === "lobby") return r.game === gameId ? joinRace() : toast(`Finish the ${gameById(r.game).name} race first`);
+  if (r && (r.phase === "count" || r.phase === "run")) return toast("A race is on right now. You'll be in the next one.");
+  games.race = { rid: uid().replace(/-/g, "").slice(0, 16), game: gameId, seed: (Math.random() * 4294967296) >>> 0, host: state.me.id,
+    phase: "lobby", deadline: Date.now() + RACE_WAIT, players: new Map(), joined: true };
+  addRacer(state.me.id);
+  raceSend("open", openMsg(games.race));
+  if (others().length) api.notify(state.board.id, "game", { game: gameId });
+  openGameOverlay(gameId, "race");
+  raceTick();
+}
+
+function joinRace() {
+  const r = games.race;
+  if (!r || r.phase !== "lobby") return toast("That race already started. Catch the next one!");
+  r.joined = true; addRacer(state.me.id);
+  raceSend("join");
+  openGameOverlay(r.game, "race");
+  raceTick();
+}
+
+function onRaceMsg(m) {
+  if (!m.u || m.u === state.me?.id) return;
+  let r = games.race;
+  const same = r && r.rid === m.rid;
+  switch (m.k) {
+    case "ask":
+      if (r && r.phase === "lobby" && r.host === state.me.id) raceSend("open", openMsg(r));
+      else if (r && (r.phase === "count" || r.phase === "run") && r.host === state.me.id) raceSend("busy", { game: r.game, players: [...r.players.keys()] });
+      return;
+    case "open": {
+      if (same) { r.deadline = Date.now() + m.wait; (m.players || []).forEach(addRacer); renderLobby(); return; }
+      if (!gameById(m.game)) return;
+      if (r && (r.phase === "count" || r.phase === "run") && r.joined) return; // busy racing
+      if (r && r.phase === "lobby") {
+        // two people opened a race at the same moment: everyone keeps the one with the smaller id
+        if (r.rid < m.rid) return;
+        if (r.joined) { const wasPlaying = games.play?.mode === "race"; games.race = null; if (wasPlaying) closeGameOverlay(true); }
+      }
+      const adopt = r && r.phase === "lobby" && r.joined;
+      games.race = r = { rid: m.rid, game: m.game, seed: m.seed >>> 0, host: m.host, phase: "lobby", deadline: Date.now() + m.wait, players: new Map(), joined: false };
+      addRacer(m.host); (m.players || []).forEach(addRacer);
+      if (adopt) joinRace();
+      else toast(`🏁 ${memberById(m.host)?.name || "Someone"} started a ${gameById(m.game).name} race. Tap 🎮 Games to join!`, 5000);
+      raceTick(); renderGamesIfOpen();
+      return;
+    }
+    case "busy":
+      if (!r && gameById(m.game)) {
+        games.race = r = { rid: m.rid, game: m.game, seed: 0, host: m.u, phase: "run", startedAt: Date.now(), players: new Map(), joined: false };
+        (m.players || []).forEach(addRacer); raceTick(); renderGamesIfOpen();
+      }
+      return;
+    case "join": if (same) { addRacer(m.u); renderLobby(); renderRaceChips(); } return;
+    case "leave":
+      if (same) { r.players.delete(m.u); if (m.host) r.host = m.host; renderLobby(); renderRaceChips(); }
+      return;
+    case "cancel":
+      if (same && r.phase === "lobby") {
+        games.race = null;
+        if (games.play?.mode === "race") { closeGameOverlay(true); toast("The race was called off"); }
+        renderGamesIfOpen();
+      }
+      return;
+    case "go": if (same && r.phase === "lobby") beginRace(m.players || []); return;
+    case "st": {
+      if (!same) return;
+      const pl = r.players.get(m.u); if (!pl || pl.over) return;
+      Object.assign(pl, { d: m.d, y: m.y, alive: m.a !== false, score: m.s || 0, at: Date.now() });
+      if (r.joined) sendToGame({ t: "ghost", s: ghostOf(pl) });
+      renderRaceChips();
+      return;
+    }
+    case "over": {
+      if (!same) return;
+      const pl = r.players.get(m.u); if (!pl) return;
+      Object.assign(pl, { over: true, alive: false, score: m.s || 0, left: !!m.quit, at: Date.now() });
+      if (r.joined) sendToGame({ t: "ghost", s: ghostOf(pl) });
+      renderRaceChips(); checkRaceDone();
+      return;
+    }
+  }
+}
+
+function beginRace(ids) {
+  const r = games.race;
+  r.phase = "count"; r.startedAt = Date.now();
+  for (const id of [...r.players.keys()]) if (!ids.includes(id)) r.players.delete(id);
+  ids.forEach(addRacer);
+  for (const pl of r.players.values()) pl.at = Date.now();
+  if (!ids.includes(state.me.id)) r.joined = false;
+  if (!r.joined) { r.phase = "run"; r.runAt = Date.now(); renderGamesIfOpen(); return; }  // watching: just follow along
+  renderGamesIfOpen();
+  $("#raceLobby").hidden = true;
+  const el = $("#gameCount"); el.hidden = false;
+  const steps = ["3", "2", "1", "GO!"];
+  let i = 0;
+  const next = () => {
+    if (games.race !== r || !games.play) { el.hidden = true; return; }
+    if (i < steps.length) { el.textContent = steps[i]; el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop"); i++; setTimeout(next, i === steps.length ? 600 : 800); return; }
+    el.hidden = true;
+    r.phase = "run"; r.runAt = Date.now();
+    for (const pl of r.players.values()) pl.at = Date.now();
+    if (games.play.ready) { sendToGame({ t: "go" }); $("#gameFrame").focus(); } else games.play.pendingGo = true;
+    renderRaceChips();
+  };
+  next();
+}
+
+function raceStartNow() {
+  const r = games.race;
+  if (!r || r.phase !== "lobby" || r.host !== state.me.id) return;
+  const ids = [...r.players.keys()];
+  raceSend("go", { players: ids });
+  beginRace(ids);
+}
+
+function checkRaceDone() {
+  const r = games.race;
+  if (!r || r.phase !== "run") return;
+  const now = Date.now();
+  for (const pl of r.players.values()) if (!pl.over && pl.id !== state.me.id && now - pl.at > RACE_STALE) { pl.over = true; pl.left = true; pl.alive = false; }
+  const all = [...r.players.values()];
+  if (all.every((pl) => pl.over) || now - (r.runAt || r.startedAt) > RACE_MAX) finishRace();
+}
+
+function finishRace() {
+  const r = games.race;
+  r.phase = "results"; r.endedAt = Date.now();
+  r.ranking = [...r.players.values()].sort((a, b) => (!!a.left - !!b.left) || (b.score - a.score));
+  renderGamesIfOpen();
+  if (!r.joined || !games.play || games.play.rid !== r.rid) return;
+  const ol = $("#resultList"); ol.innerHTML = "";
+  r.ranking.forEach((pl, i) => {
+    const li = mk("li"); const m = memberById(pl.id) || { name: "Friend", color: "c1" };
+    li.appendChild(mk("span", "rank", pl.left ? "👋" : (["🥇", "🥈", "🥉"][i] || String(i + 1))));
+    li.appendChild(chipEl({ ...m, id: pl.id }));
+    li.appendChild(mk("span", "nm", pl.id === state.me.id ? `${m.name} (you)` : m.name));
+    li.appendChild(mk("b", "sc", pl.left ? "left" : String(pl.score)));
+    ol.appendChild(li);
+  });
+  const win = r.ranking[0];
+  $("#resultTitle").textContent = r.ranking.length < 2 ? "Race finished" : win.id === state.me.id ? "You won! 🎉" : `${memberById(win.id)?.name || "Someone"} wins!`;
+  $("#raceResults").hidden = false;
+  if (win.id === state.me.id && r.ranking.length > 1) rain("🏆", 14);
+}
+
+// one ticker drives lobby timers, the "start" signal, stale players, and clearing old results
+function raceTick() {
+  if (games.timer) return;
+  games.timer = setInterval(() => {
+    const r = games.race;
+    if (!r) { clearInterval(games.timer); games.timer = null; return; }
+    const now = Date.now();
+    if (r.phase === "lobby") {
+      const ids = [...r.players.keys()].sort();
+      const hostHere = r.host === state.me.id || isOnline(r.host);
+      // the host starts it; if the host vanished, whoever is first in line does
+      if (now >= r.deadline && (r.host === state.me.id || (!hostHere && r.joined && ids[0] === state.me.id && now >= r.deadline + 3000))) {
+        r.host = state.me.id; raceStartNow();
+      } else if (now > r.deadline + 15000 && !r.joined) { games.race = null; }
+      renderLobby();
+    } else if (r.phase === "run") checkRaceDone();
+    else if (r.phase === "results" && now - r.endedAt > 90000) { if (!games.play || games.play.rid !== r.rid) games.race = null; }
+    if (!r.joined && r.phase !== "lobby" && r.phase !== "results" && now - r.startedAt > RACE_MAX) games.race = null;
+    if (!$("#games").hidden) renderRaceBanner();
+    updateGamesDot();
+  }, 500);
+}
+
+function renderLobby() {
+  const r = games.race, box = $("#raceLobby");
+  if (!games.play || games.play.mode !== "race" || !r || r.rid !== games.play.rid || r.phase !== "lobby") { box.hidden = true; return; }
+  box.hidden = false;
+  const g = gameById(r.game);
+  $("#lobbyGame").textContent = `${g.icon} ${g.name}`;
+  const ul = $("#lobbyList"); ul.innerHTML = "";
+  for (const id of r.players.keys()) {
+    const m = memberById(id) || { name: "Friend", color: "c1" };
+    const li = mk("li"); li.appendChild(chipEl({ ...m, id }));
+    li.appendChild(mk("span", null, id === state.me.id ? `${m.name} (you)` : m.name));
+    if (id === r.host) li.appendChild(mk("small", null, "host"));
+    ul.appendChild(li);
+  }
+  const waiting = others().filter((m) => !r.players.has(m.id) && isOnline(m.id)).length;
+  $("#lobbyTimer").textContent = `Starting in ${fmtSecs(r.deadline - Date.now())}` + (waiting ? ` · ${waiting} more online` : "");
+  $("#lobbyStart").hidden = r.host !== state.me.id;
+}
+
+function renderRaceChips() {
+  const box = $("#raceChips"); box.innerHTML = "";
+  const p = games.play, r = games.race;
+  if (!p) return;
+  if (p.mode !== "race" || !r || r.rid !== p.rid) {
+    const b = bestOf(p.game, state.me.id);
+    box.appendChild(mk("span", "rc solo", b != null ? `Solo · your best ${b}` : "Solo"));
+    return;
+  }
+  const list = [...r.players.values()].sort((a, b) => b.score - a.score || b.d - a.d);
+  for (const pl of list) {
+    const c = mk("span", "rc" + (pl.over ? " out" : ""));
+    const dot = mk("i"); dot.style.background = colorOf(pl.id); c.appendChild(dot);
+    c.appendChild(document.createTextNode(`${pl.id === state.me.id ? "You" : (memberById(pl.id)?.name || "Friend")} ${pl.score}${pl.left ? " 👋" : pl.over ? " 💥" : ""}`));
+    box.appendChild(c);
+  }
+}
+
+// ---------------------------------------------------------------- tic-tac-toe
+const TTT_LINES = [[0, 1, 2], [3, 4, 5], [6, 7, 8], [0, 3, 6], [1, 4, 7], [2, 5, 8], [0, 4, 8], [2, 4, 6]];
+function tttWinnerOf(c) { for (const [a, b, e] of TTT_LINES) if (c[a] !== "-" && c[a] === c[b] && c[a] === c[e]) return c[a]; return c.includes("-") ? null : "draw"; }
+function tttLine(c) { return TTT_LINES.find(([a, b, e]) => c[a] !== "-" && c[a] === c[b] && c[a] === c[e]) || null; }
+function negamax(c, turn) {
+  const w = tttWinnerOf(c);
+  if (w === "draw") return 0;
+  if (w) return -10;                       // the player who just moved won
+  let best = -99;
+  const next = turn === "X" ? "O" : "X";
+  for (let i = 0; i < 9; i++) if (c[i] === "-") {
+    const v = -negamax(c.slice(0, i) + turn + c.slice(i + 1), next) * 0.9;
+    if (v > best) best = v;
+  }
+  return best;
+}
+function cpuMove(c, mark, level) {
+  const free = [...c].map((x, i) => (x === "-" ? i : -1)).filter((i) => i >= 0);
+  if (level === "easy" && Math.random() < 0.55) return free[Math.floor(Math.random() * free.length)];
+  const next = mark === "X" ? "O" : "X";
+  let best = -99, pick = free[0];
+  for (const i of free) { const v = -negamax(c.slice(0, i) + mark + c.slice(i + 1), next); if (v > best || (v === best && Math.random() < 0.3)) { best = v; pick = i; } }
+  return pick;
+}
+
+async function loadTtt() {
+  if (!state.board) return;
+  try { games.ttt = await api.listTtt(state.board.id); games.v7 = true; }
+  catch (e) { if (v7Missing(e)) games.v7 = false; }
+  renderGamesIfOpen();
+}
+function upsertTtt(row) {
+  const i = games.ttt.findIndex((g) => g.id === row.id);
+  if (i >= 0) games.ttt[i] = { ...games.ttt[i], ...row }; else games.ttt.unshift(row);
+  games.ttt.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+}
+function onTttEvent(row) {
+  if (!row || row.board_id !== state.board?.id) return;
+  const prev = games.ttt.find((g) => g.id === row.id);
+  upsertTtt(row);
+  const me = state.me.id, opp = row.x_id === me ? row.o_id : row.x_id, name = memberById(opp)?.name || "Someone";
+  const mine = row.x_id === me || row.o_id === me;
+  const watching = !$("#ttt").hidden && games.tttId === row.id;
+  if (mine && !watching) {
+    if (row.status === "invited" && row.o_id === me && !prev) toast(`❌⭕ ${name} challenged you to tic-tac-toe. Tap 🎮 Games.`, 5000);
+    else if (row.status === "active" && prev?.status === "invited" && row.x_id === me) toast(`${name} accepted! Your move ❌`, 4000);
+    else if (row.status === "declined" && row.x_id === me && prev?.status !== "declined") toast(`${name} passed on tic-tac-toe`);
+  }
+  renderGamesIfOpen();
+}
+
+const tttMark = (g, id) => (g.x_id === id ? "X" : g.o_id === id ? "O" : null);
+function tttStatusText(g) {
+  const me = state.me.id, mark = tttMark(g, me);
+  const nm = (id) => (id === me ? "You" : (memberById(id)?.name || "Someone"));
+  const opp = mark === "X" ? g.o_id : g.x_id;
+  if (!mark) {
+    if (g.status === "active") return `${nm(g.turn === "X" ? g.x_id : g.o_id)} to move`;
+    if (g.status === "done") return g.winner === "draw" ? "Draw" : `${nm(g.winner === "X" ? g.x_id : g.o_id)} won`;
+    return g.status === "invited" ? "Waiting to start" : "";
+  }
+  if (g.status === "invited") return g.o_id === me ? `${nm(g.x_id)} challenged you` : `Waiting for ${nm(opp)} to accept`;
+  if (g.status === "active") return g.turn === mark ? "Your move" : `${nm(opp)}'s move`;
+  if (g.status === "declined") return `${nm(g.o_id === me ? me : opp)} passed`;
+  if (g.status === "cancelled") return "Called off";
+  if (g.status === "done") return g.winner === "draw" ? "It's a draw 🤝" : g.winner === mark ? "You won! 🎉" : `${nm(opp)} won`;
+  return "";
+}
+
+function renderTttCard() {
+  const card = $("#tttCard"); card.innerHTML = "";
+  const top = mk("div", "gc-top");
+  top.appendChild(mk("span", "gc-ic", "❌⭕"));
+  const t = mk("div"); t.appendChild(mk("b", null, "Tic-tac-toe")); t.appendChild(mk("small", null, "Challenge someone on the board, or play the computer.")); top.appendChild(t);
+  card.appendChild(top);
+  const me = state.me.id;
+  // your record against each person
+  const rec = {};
+  for (const g of games.ttt) {
+    if (g.status !== "done") continue;
+    const mark = tttMark(g, me); if (!mark) continue;
+    const opp = mark === "X" ? g.o_id : g.x_id, r = rec[opp] || (rec[opp] = { w: 0, l: 0, d: 0 });
+    if (g.winner === "draw") r.d++; else if (g.winner === mark) r.w++; else r.l++;
+  }
+  const recs = Object.entries(rec).map(([id, r]) => `vs ${memberById(id)?.name || "someone"} ${r.w}–${r.l}${r.d ? ` (${r.d} draw${r.d > 1 ? "s" : ""})` : ""}`);
+  card.appendChild(mk("div", "gc-best", recs.length ? `Your record: ${recs.join(" · ")}` : "No games yet."));
+  const acts = mk("div", "gc-actions");
+  const cpu = mk("button", "btn small", "vs Computer"); cpu.onclick = () => openCpu();
+  const ch = mk("button", "btn small primary", "Challenge");
+  ch.disabled = !others().length || !games.v7;
+  ch.onclick = () => { if (others().length === 1) tttChallenge(others()[0].id); else { games.picking = !games.picking; renderGames(); } };
+  acts.append(cpu, ch);
+  card.appendChild(acts);
+  if (games.picking && others().length > 1) {
+    const pick = mk("div", "ttt-pick");
+    for (const m of others()) { const b = mk("button", "btn small"); b.appendChild(chipEl(m)); b.appendChild(document.createTextNode(m.name)); b.onclick = () => { games.picking = false; tttChallenge(m.id); }; pick.appendChild(b); }
+    card.appendChild(pick);
+  }
+  const open = games.ttt.filter((g) => g.status === "invited" || g.status === "active").slice(0, 12);
+  if (open.length) {
+    const ul = mk("ul", "ttt-list");
+    for (const g of open) {
+      const li = mk("li");
+      const mine = !!tttMark(g, me);
+      const who = mine ? `vs ${memberById(g.x_id === me ? g.o_id : g.x_id)?.name || "someone"}` : `${memberById(g.x_id)?.name || "?"} vs ${memberById(g.o_id)?.name || "?"}`;
+      li.appendChild(mk("span", "nm", who));
+      const st = tttStatusText(g);
+      li.appendChild(mk("small", st === "Your move" || st.endsWith("challenged you") ? "hot" : null, st));
+      const b = mk("button", "btn small", mine ? "Open" : "Watch"); b.onclick = () => openTtt(g.id);
+      li.appendChild(b);
+      ul.appendChild(li);
+    }
+    card.appendChild(ul);
+  }
+}
+
+async function tttChallenge(oppId) {
+  try {
+    const g = await api.tttChallenge(state.board.id, oppId);
+    upsertTtt(g); api.notify(state.board.id, "ttt", { game_id: g.id });
+    openTtt(g.id);
+  } catch (e) { if (v7Missing(e)) needsV7(); else toast(e.message); }
+}
+
+function openCpu() {
+  games.cpu = { cells: "---------", turn: "X", first: "X", winner: null, busy: false };
+  games.tttId = "cpu"; closeSheet("games"); renderTtt(); openSheet("ttt");
+}
+function openTtt(id) { games.tttId = id; closeSheet("games"); renderTtt(); openSheet("ttt"); }
+function closeTtt() { closeSheet("ttt"); games.tttId = null; games.cpu = null; renderGames(); openSheet("games"); }
+
+function renderTtt() {
+  const cpu = games.tttId === "cpu", g = cpu ? null : games.ttt.find((x) => x.id === games.tttId);
+  if (!cpu && !g) return;
+  const me = state.me.id;
+  const cells = cpu ? games.cpu.cells : g.cells;
+  let canMove = false, status = "";
+  if (cpu) {
+    const c = games.cpu;
+    $("#tttTitle").textContent = "You ❌ vs Computer ⭕";
+    status = c.winner ? (c.winner === "draw" ? "It's a draw 🤝" : c.winner === "X" ? "You won! 🎉" : "The computer won") : c.turn === "X" ? "Your move" : "Thinking…";
+    canMove = !c.winner && c.turn === "X" && !c.busy;
+  } else {
+    const nm = (id) => (id === me ? "You" : (memberById(id)?.name || "Someone"));
+    $("#tttTitle").textContent = `${nm(g.x_id)} ❌ vs ${nm(g.o_id)} ⭕`;
+    status = tttStatusText(g);
+    const mark = tttMark(g, me);
+    canMove = g.status === "active" && mark && g.turn === mark;
+  }
+  $("#tttStatus").textContent = status;
+  $("#tttStatus").classList.toggle("hot", status === "Your move");
+  const grid = $("#tttGrid"); grid.innerHTML = "";
+  const line = tttLine(cells) || [];
+  [...cells].forEach((v, i) => {
+    const b = mk("button", "cell" + (line.includes(i) ? " win" : ""), v === "X" ? "❌" : v === "O" ? "⭕" : "");
+    b.setAttribute("aria-label", `Square ${i + 1}${v !== "-" ? (v === "X" ? ", X" : ", O") : ""}`);
+    b.disabled = !canMove || v !== "-";
+    b.onclick = () => (cpu ? cpuPlay(i) : tttPlay(g.id, i));
+    grid.appendChild(b);
+  });
+  const mark = g ? tttMark(g, me) : "X";
+  $("#tttAccept").hidden = cpu || !(g.status === "invited" && g.o_id === me);
+  $("#tttDecline").hidden = $("#tttAccept").hidden;
+  $("#tttQuit").hidden = cpu || !mark || !(g.status === "invited" || g.status === "active");
+  $("#tttQuit").textContent = g?.status === "invited" ? (g.x_id === me ? "Call off" : "Not now") : "Resign";
+  if (g?.status === "invited" && g.o_id === me) $("#tttQuit").hidden = true;
+  $("#tttRematch").hidden = cpu ? !games.cpu.winner : !(mark && ["done", "declined", "cancelled"].includes(g.status));
+  $("#tttLevel").hidden = !cpu;
+  $("#tttLevel").querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.level === games.cpuLevel)));
+}
+
+async function tttPlay(id, cell) {
+  const g = games.ttt.find((x) => x.id === id); if (!g) return;
+  const mark = tttMark(g, state.me.id);
+  // show it right away; the database has the final say
+  const before = { ...g };
+  upsertTtt({ ...g, cells: g.cells.slice(0, cell) + mark + g.cells.slice(cell + 1), turn: mark === "X" ? "O" : "X" });
+  renderTtt();
+  try { const row = await api.tttMove(id, cell); upsertTtt(row); api.notify(state.board.id, "ttt", { game_id: id }); if (row.status === "done" && row.winner === mark) rain("🎉", 10); }
+  catch (e) { upsertTtt(before); toast(e.message); }
+  renderTtt(); updateGamesDot();
+}
+async function tttRespondUi(accept) {
+  const id = games.tttId;
+  try { const row = await api.tttRespond(id, accept); upsertTtt(row); api.notify(state.board.id, "ttt", { game_id: id }); }
+  catch (e) { toast(e.message); }
+  if (accept) renderTtt(); else closeTtt();
+}
+async function tttQuitUi() {
+  const g = games.ttt.find((x) => x.id === games.tttId); if (!g) return;
+  if (g.status === "active" && !confirm("Resign this game? It counts as a loss.")) return;
+  try { const row = await api.tttQuit(g.id); upsertTtt(row); if (row.status === "done") api.notify(state.board.id, "ttt", { game_id: g.id }); }
+  catch (e) { toast(e.message); }
+  renderTtt();
+}
+function tttRematch() {
+  if (games.tttId === "cpu") {
+    const first = games.cpu.first === "X" ? "O" : "X";
+    games.cpu = { cells: "---------", turn: first, first, winner: null, busy: false };
+    renderTtt(); if (first === "O") cpuTurn();
+    return;
+  }
+  const g = games.ttt.find((x) => x.id === games.tttId); if (!g) return;
+  tttChallenge(g.x_id === state.me.id ? g.o_id : g.x_id);
+}
+function cpuPlay(i) {
+  const c = games.cpu; if (!c || c.winner || c.turn !== "X" || c.cells[i] !== "-") return;
+  c.cells = c.cells.slice(0, i) + "X" + c.cells.slice(i + 1);
+  c.winner = tttWinnerOf(c.cells); c.turn = "O";
+  renderTtt();
+  if (c.winner === "X") rain("🎉", 10);
+  if (!c.winner) cpuTurn();
+}
+function cpuTurn() {
+  const c = games.cpu; c.busy = true; renderTtt();
+  setTimeout(() => {
+    if (games.cpu !== c) return;
+    const i = cpuMove(c.cells, "O", games.cpuLevel);
+    c.cells = c.cells.slice(0, i) + "O" + c.cells.slice(i + 1);
+    c.winner = tttWinnerOf(c.cells); c.turn = "X"; c.busy = false;
+    renderTtt();
+  }, 450);
+}
+
 function renderMutes() {
   const box = $("#muteList");
   box.querySelectorAll(".mute-row").forEach((r) => r.remove());
@@ -3308,6 +4066,25 @@ function wireStatic() {
   buildTools({ pens: $("#bPens"), sizes: $("#bSizes"), eraser: $("#bEraser"), undo: $("#bUndo"), clear: $("#bClear") }, inkTool, { onUndo: inkUndo, onClear: () => {} });
   $("#memberChips").onclick = openPeople;
   $("#dockChats").onclick = openChats;
+  // games
+  $("#dockGames").onclick = openGames;
+  $("#gamesClose").onclick = () => closeSheet("games");
+  $("#gamesBackdrop").onclick = () => closeSheet("games");
+  $("#sbBack").onclick = () => { games.boardGame = null; renderGames(); };
+  $("#sbSolo").onclick = () => games.boardGame && openGameOverlay(games.boardGame, "solo");
+  $("#sbRace").onclick = () => games.boardGame && startRace(games.boardGame);
+  $("#gameExit").onclick = () => closeGameOverlay();
+  $("#lobbyStart").onclick = raceStartNow;
+  $("#lobbyLeave").onclick = () => closeGameOverlay();
+  $("#raceAgain").onclick = () => { const g = games.race?.game || games.play?.game; closeGameOverlay(true); games.race = null; if (g) startRace(g); };
+  $("#raceDone").onclick = () => closeGameOverlay();
+  $("#tttClose").onclick = closeTtt;
+  $("#tttBackdrop").onclick = closeTtt;
+  $("#tttAccept").onclick = () => tttRespondUi(true);
+  $("#tttDecline").onclick = () => tttRespondUi(false);
+  $("#tttQuit").onclick = tttQuitUi;
+  $("#tttRematch").onclick = tttRematch;
+  $("#tttLevel").querySelectorAll("button").forEach((b) => (b.onclick = () => { games.cpuLevel = b.dataset.level; renderTtt(); }));
   $("#chatsClose").onclick = () => closeSheet("chats");
   $("#chatsBackdrop").onclick = () => closeSheet("chats");
   $("#chatBack").onclick = () => { chat.peer = null; $("#chatList").hidden = false; $("#chatThread").hidden = true; renderThreadList(); };
