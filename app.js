@@ -116,7 +116,13 @@ function createSupabaseApi() {
         const { data, error } = await sb.functions.invoke("notify", { body: { board_id: boardId, kind, test } });
         if (error) {
           let detail = error.message;
-          try { const b = await error.context.json(); detail = b.error || detail; } catch { /* no body */ }
+          const res = error.context;
+          if (res && typeof res.status === "number") {
+            let body = "";
+            try { body = await res.clone().text(); } catch { /* no body */ }
+            try { const j = JSON.parse(body); body = j.error || j.msg || j.message || body; } catch { /* plain text */ }
+            detail = `${res.status} ${body || res.statusText || ""}`.trim();
+          }
           return { error: detail };
         }
         return data;
