@@ -179,6 +179,8 @@ function createSupabaseApi() {
     async listStrokes(boardId) { return must(await sb.from("strokes").select("*").eq("board_id", boardId).order("created_at")); },
     async addStroke(s) { must(await sb.from("strokes").insert(s)); },
     async deleteStroke(id) { must(await sb.from("strokes").delete().eq("id", id)); },
+    async updateStroke(id, patch) { must(await sb.from("strokes").update(patch).eq("id", id)); },
+    async deleteMedia(path) { try { await bucket().remove([path]); } catch { /* ignore */ } },
     async removeMember(boardId, userId) {
       must(await sb.from("board_members").delete().eq("board_id", boardId).eq("user_id", userId));
     },
@@ -261,6 +263,7 @@ function createSupabaseApi() {
       inkCh = sb.channel("ink-" + boardId)
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "strokes", filter: f }, (p) => h.onStroke(p.new, false))
         .on("postgres_changes", { event: "DELETE", schema: "public", table: "strokes" }, (p) => h.onStroke(p.old, true))
+        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "strokes", filter: f }, (p) => h.onStroke(p.new, false))
         .subscribe();
     },
     live(boardId, me, h) {
@@ -362,6 +365,8 @@ function createDemoApi() {
     async listStrokes(boardId) { return db().strokes.filter((s) => s.board_id === boardId); },
     async addStroke(s) { const d = db(); const row = { ...s, created_at: new Date().toISOString() }; d.strokes.push(row); save(d); emit({ type: "stroke", row, del: false }); },
     async deleteStroke(id) { const d = db(); d.strokes = d.strokes.filter((s) => s.id !== id); save(d); emit({ type: "stroke", row: { id }, del: true }); },
+    async updateStroke(id, patch) { const d = db(); const s = d.strokes.find((x) => x.id === id); if (!s) return; Object.assign(s, patch); save(d); emit({ type: "stroke", row: s, del: false }); },
+    async deleteMedia(path) { const d = db(); delete d.media[path]; save(d); },
     async removeMember(boardId, userId) { const d = db(); d.members = d.members.filter((m) => !(m.board_id === boardId && m.user_id === userId)); save(d); emit({ type: "members" }); },
     async leaveBoard(boardId) { return this.removeMember(boardId, meId()); },
     async deleteBoard(boardId) {
@@ -375,7 +380,14 @@ function createDemoApi() {
     },
     async listNotes(boardId) { return db().notes.filter((n) => n.board_id === boardId && !hiddenFromMe(n)).sort((a, b) => a.z - b.z); },
     async addNote(n) { const d = db(); const row = { pinned: false, ...n, id: uid(), created_at: new Date().toISOString() }; d.notes.push(row); save(d); emit({ type: "insert", note: row }); return row; },
-    async updateNote(id, patch) { const d = db(); const n = d.notes.find((x) => x.id === id); if (!n) return; Object.assign(n, patch); save(d); emit({ type: "update", note: n }); },
+    async updateNote(id, patch) {
+      const d = db(); const n = d.notes.find((x) => x.id === id); if (!n) return;
+      const looks = ["body", "color", "media_path", "meta", "kind", "scale", "rot", "flip_x", "flip_y", "show_at"];
+      const owner = d.boards[n.board_id]?.created_by;
+      if (looks.some((k) => k in patch && JSON.stringify(patch[k]) !== JSON.stringify(n[k])) && n.author_id !== meId() && owner !== meId())
+        throw new Error("Only the person who made this, or the board owner, can change it");
+      Object.assign(n, patch); save(d); emit({ type: "update", note: n });
+    },
     async deleteNote(n) {
       const d = db(); d.notes = d.notes.filter((x) => x.id !== n.id); if (n.media_path) delete d.media[n.media_path];
       d.reactions = d.reactions.filter((r) => r.note_id !== n.id); d.replies = d.replies.filter((r) => r.note_id !== n.id);
@@ -822,6 +834,7 @@ function applyView() {
     const sc = $("#scroller");
     sc.style.backgroundPosition = `${tx}px ${ty}px`;
     for (const el of document.querySelectorAll("#cursors .cursor")) placeCursor(el);
+    if (sel) renderSel();
     const now = Date.now();
     if (state.board && now - viewSaveT > 400) { viewSaveT = now; ls.set("pinned-view-" + state.board.id, state.view); }
     if (now - viewSendT > 500) { viewSendT = now; sendView(); }
@@ -860,8 +873,9 @@ function zoomAt(cx, cy, factor) {
 }
 
 function noteBox(n) {
-  const el = noteEl(n.id);
-  return { x: n.x, y: n.y, w: el ? el.offsetWidth : 150, h: el ? el.offsetHeight : 150 };
+  const el = noteEl(n.id), s = n.scale || 1;
+  const w = el ? el.offsetWidth : 150, h = el ? el.offsetHeight : 150;
+  return { x: n.x - (w * s - w) / 2, y: n.y - (h * s - h) / 2, w: w * s, h: h * s };
 }
 
 function goHome(animate = true) {
@@ -929,10 +943,15 @@ function onDown(e) {
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (pointers.size === 2) return startPinch();
   if (pointers.size > 2) return;
+  const touch = e.pointerType !== "mouse";
+  const handle = e.target.closest?.("#sel .h");
+  if (handle && sel) { gest = { id: e.pointerId, sx: e.clientX, sy: e.clientY, touch, type: handle.dataset.h === "rot" ? "rotate" : "resize" }; beginTransform(e); return; }
   const noteT = e.target.closest?.("#board .note");
-  gest = { id: e.pointerId, sx: e.clientX, sy: e.clientY, touch: e.pointerType !== "mouse", noteId: noteT?.dataset.id || null, type: "pending" };
+  gest = { id: e.pointerId, sx: e.clientX, sy: e.clientY, touch, noteId: noteT?.dataset.id || null, strokeId: null, type: "pending" };
   if (inkMode) { gest.type = "ink"; inkStart(e); return; }
-  if (gest.noteId && gest.touch) gest.hold = setTimeout(() => { if (gest?.type === "pending") startNoteDrag(); }, 280);
+  if (!gest.noteId) gest.strokeId = hitOwnStroke(e);
+  gest.selected = !!sel && (sel.id === gest.noteId || sel.id === gest.strokeId);
+  if (gest.noteId && touch && !gest.selected) gest.hold = setTimeout(() => { if (gest?.type === "pending") startNoteDrag(); }, 280);
 }
 
 function onMove(e) {
@@ -943,30 +962,50 @@ function onMove(e) {
   if (!gest || gest.id !== e.pointerId) return;
   const dx = e.clientX - gest.sx, dy = e.clientY - gest.sy;
   if (gest.type === "ink") return inkMove(e);
+  if (gest.type === "resize" || gest.type === "rotate") return moveTransform(e);
   if (gest.type === "pending" && Math.hypot(dx, dy) > 7) {
     clearTimeout(gest.hold);
-    if (gest.noteId && !gest.touch) startNoteDrag();
+    if (gest.noteId && (!gest.touch || gest.selected)) startNoteDrag();
+    else if (gest.strokeId && gest.selected) startStrokeDrag();
     else { gest.type = "pan"; gest.tx = state.view.tx; gest.ty = state.view.ty; $("#scroller").classList.add("panning"); }
   }
   if (gest.type === "pan") setView({ s: state.view.s, tx: gest.tx + dx, ty: gest.ty + dy });
   if (gest.type === "note") moveNoteDrag(dx, dy);
+  if (gest.type === "sdrag") { sel.pv.dx = dx / state.view.s; sel.pv.dy = dy / state.view.s; previewStroke(); }
 }
 
 function onUp(e) {
   pointers.delete(e.pointerId);
-  if (pinch) { if (pointers.size < 2) { pinch = null; gest = null; } return; }
+  if (pinch) { if (pointers.size < 2) { const p = pinch; pinch = null; gest = null; if (p.item) commitTransform(); } return; }
   if (!gest || gest.id !== e.pointerId) return;
   clearTimeout(gest.hold);
   const g = gest; gest = null;
   $("#scroller").classList.remove("panning");
   if (g.type === "ink") inkEnd();
   else if (g.type === "note") endNoteDrag(g);
-  else if (g.type === "pending" && g.noteId && e.type === "pointerup") { if (g.touch) swallowGhostClick(); openDetail(g.noteId); }
+  else if (g.type === "resize" || g.type === "rotate" || g.type === "sdrag") commitTransform();
+  else if (g.type === "pending" && e.type === "pointerup") {
+    if (g.touch) swallowGhostClick();
+    onTap(g);
+  }
   if (g.touch) sendCursor(null);
 }
 
-// After a touch tap, phones fire a delayed "click" at the same spot. Once the note sheet is open,
-// that click would land on the dimmed background and close it again, so eat it.
+// tap: select something you can edit; tap it again (or anything you can't edit) to open it
+function onTap(g) {
+  if (g.noteId) {
+    const n = state.notes.get(g.noteId); if (!n) return;
+    if (sel?.type === "note" && sel.id === n.id) { deselect(); return openDetail(n.id); }
+    if (canEdit(n)) return select("note", n.id);
+    deselect();
+    return openDetail(n.id);
+  }
+  if (g.strokeId) return select("stroke", g.strokeId);
+  deselect();
+}
+
+// After a touch tap, phones fire a delayed "click" at the same spot. If a sheet or toolbar has just
+// appeared there, that click would hit it, so eat it.
 function swallowGhostClick() {
   const eat = (ev) => { ev.stopPropagation(); ev.preventDefault(); document.removeEventListener("click", eat, true); };
   document.addEventListener("click", eat, true);   // only the one ghost click
@@ -974,6 +1013,7 @@ function swallowGhostClick() {
 }
 
 function startPinch() {
+  const onItem = gest && sel && (gest.selected || gest.type === "note" && gest.noteId === sel.id);
   if (gest) {
     clearTimeout(gest.hold);
     if (gest.type === "ink") inkCancel();
@@ -982,14 +1022,20 @@ function startPinch() {
   }
   const [a, b] = [...pointers.values()];
   const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-  pinch = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, s0: state.view.s, w: toWorld(mid.x, mid.y) };
+  pinch = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, a0: Math.atan2(b.y - a.y, b.x - a.x), s0: state.view.s, w: toWorld(mid.x, mid.y) };
+  if (onItem) { pinch.item = true; beginTransform(null); }   // two fingers on the selected item: resize + twist it
 }
 
 function movePinch() {
   const [a, b] = [...pointers.values()]; if (!a || !b) return;
+  const d = Math.hypot(a.x - b.x, a.y - b.y), ang = Math.atan2(b.y - a.y, b.x - a.x);
+  if (pinch.item) {
+    applyTransform(d / pinch.d0, (ang - pinch.a0) * 180 / Math.PI);
+    return;
+  }
   const r = vp();
   const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-  const s = Math.min(MAX_S, Math.max(MIN_S, pinch.s0 * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d0));
+  const s = Math.min(MAX_S, Math.max(MIN_S, pinch.s0 * d / pinch.d0));
   setView({ s, tx: mid.x - r.left - pinch.w.x * s, ty: mid.y - r.top - pinch.w.y * s });
 }
 
@@ -1005,7 +1051,7 @@ function startNoteDrag() {
   state.dragId = n.id;
   el.classList.add("dragging");
   el.style.zIndex = "2147483000";
-  el.style.transform = `rotate(${n.rot || 0}deg) scale(1.06)`;
+  el.style.transform = noteTransform(n, "scale(1.06)");
   if (navigator.vibrate) navigator.vibrate(12);
 }
 
@@ -1013,6 +1059,7 @@ function moveNoteDrag(dx, dy) {
   const n = state.notes.get(gest.noteId), el = noteEl(gest.noteId); if (!n || !el) return;
   n.x = Math.round(gest.ox + dx / state.view.s); n.y = Math.round(gest.oy + dy / state.view.s);
   el.style.left = n.x + "px"; el.style.top = n.y + "px";
+  if (sel?.id === n.id) renderSel();
 }
 
 async function endNoteDrag(g) {
@@ -1023,6 +1070,244 @@ async function endNoteDrag(g) {
   placeNote(el, n);
   try { await api.updateNote(n.id, { x: n.x, y: n.y, z: n.z }); } catch { toast("Couldn't save the move"); }
   setTimeout(() => { if (state.dragId === n.id) state.dragId = null; }, 600);
+}
+
+// ================================================================ select · resize · rotate · flip
+// sel = { type: "note" | "stroke", id, pv: live preview for lines {dx, dy, sc, rot, fx, fy}, t0: values when a transform began }
+let sel = null;
+
+function canEdit(n) { return n.author_id === state.me?.id || state.board?.created_by === state.me?.id; }
+
+function hitOwnStroke(e) {
+  const w = toWorld(e.clientX, e.clientY), r = 12 / state.view.s;
+  const list = [...state.strokes.values()].filter((s) => s.author_id === state.me?.id && !s._live).reverse();
+  for (const s of list) {
+    const pad = r + s.width / 2;
+    if (s.points.some(([x, y]) => Math.abs(x - w.x) < pad && Math.abs(y - w.y) < pad && Math.hypot(x - w.x, y - w.y) < pad)) return s.id;
+  }
+  return null;
+}
+
+function strokeBox(s) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [x, y] of s.points) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+  const p = s.width / 2 + 4;
+  return { x: x0 - p, y: y0 - p, w: x1 - x0 + p * 2, h: y1 - y0 + p * 2 };
+}
+
+function select(type, id) {
+  if (sel && sel.id !== id) deselect();
+  sel = { type, id, pv: { dx: 0, dy: 0, sc: 1, rot: 0, fx: 1, fy: 1 } };
+  document.body.classList.add("selecting");
+  $("#selBar").hidden = false;
+  const isNote = type === "note";
+  for (const b of document.querySelectorAll("#selBar [data-for]")) b.hidden = b.dataset.for !== (isNote ? "note" : "stroke") && b.dataset.for !== "both";
+  if (isNote) noteEl(id)?.classList.add("selected");
+  renderSel();
+}
+
+function deselect() {
+  if (!sel) return;
+  if (sel.type === "note") noteEl(sel.id)?.classList.remove("selected");
+  if (sel.type === "stroke") { inkPathEl(sel.id)?.removeAttribute("transform"); }
+  sel = null;
+  document.body.classList.remove("selecting");
+  $("#selBar").hidden = true;
+  $("#sel").hidden = true;
+}
+
+function renderSel() {
+  const box = $("#sel");
+  if (!sel) { box.hidden = true; return; }
+  let x, y, w, h, tf;
+  if (sel.type === "note") {
+    const n = state.notes.get(sel.id), el = noteEl(sel.id);
+    if (!n || !el) return deselect();
+    w = el.offsetWidth; h = el.offsetHeight; x = n.x; y = n.y;
+    tf = `rotate(${n.rot || 0}deg) scale(${n.scale || 1})`;
+    box.style.setProperty("--k", 1 / (state.view.s * (n.scale || 1)));
+  } else {
+    const s = state.strokes.get(sel.id);
+    if (!s) return deselect();
+    const b = strokeBox(s), p = sel.pv;
+    ({ x, y, w, h } = b);
+    tf = `translate(${p.dx}px, ${p.dy}px) rotate(${p.rot}deg) scale(${p.sc})`;
+    box.style.setProperty("--k", 1 / (state.view.s * p.sc));
+  }
+  Object.assign(box.style, { left: x + "px", top: y + "px", width: w + "px", height: h + "px", transform: tf });
+  box.hidden = false;
+}
+
+function selCenter() {
+  if (sel.type === "note") {
+    const n = state.notes.get(sel.id), el = noteEl(sel.id);
+    return { x: n.x + el.offsetWidth / 2, y: n.y + el.offsetHeight / 2 };
+  }
+  const b = strokeBox(state.strokes.get(sel.id));
+  return { x: b.x + b.w / 2 + sel.pv.dx, y: b.y + b.h / 2 + sel.pv.dy };
+}
+
+function beginTransform(e) {
+  const c = selCenter();
+  if (sel.type === "note") {
+    const n = state.notes.get(sel.id);
+    sel.t0 = { sc: n.scale || 1, rot: n.rot || 0 };
+    state.dragId = n.id;
+  } else sel.t0 = { sc: sel.pv.sc, rot: sel.pv.rot };
+  if (e) {
+    const w = toWorld(e.clientX, e.clientY);
+    sel.t0.c = c; sel.t0.d = Math.hypot(w.x - c.x, w.y - c.y) || 1; sel.t0.a = Math.atan2(w.y - c.y, w.x - c.x);
+  }
+}
+
+function moveTransform(e) {
+  const w = toWorld(e.clientX, e.clientY), c = sel.t0.c;
+  if (gest.type === "resize") applyTransform(Math.hypot(w.x - c.x, w.y - c.y) / sel.t0.d, 0);
+  else applyTransform(1, (Math.atan2(w.y - c.y, w.x - c.x) - sel.t0.a) * 180 / Math.PI);
+}
+
+const snapAngle = (deg) => { const r = ((deg % 360) + 360) % 360; for (const t of [0, 90, 180, 270, 360]) if (Math.abs(r - t) < 5) return deg - r + t; return deg; };
+
+function applyTransform(k, dRot) {
+  const sc = Math.min(4, Math.max(0.3, sel.t0.sc * k));
+  const rot = Math.round(snapAngle(sel.t0.rot + dRot) * 10) / 10;
+  if (sel.type === "note") {
+    const n = state.notes.get(sel.id), el = noteEl(sel.id); if (!n || !el) return;
+    n.scale = Math.round(sc * 100) / 100; n.rot = rot;
+    el.style.transform = noteTransform(n);
+    renderSel();
+  } else { sel.pv.sc = sc; sel.pv.rot = rot; previewStroke(); }
+}
+
+function startStrokeDrag() { gest.type = "sdrag"; sel.pv.dx0 = sel.pv.dx; sel.pv.dy0 = sel.pv.dy; }
+
+function previewStroke() {
+  const s = state.strokes.get(sel.id); if (!s) return;
+  const b = strokeBox(s), cx = b.x + b.w / 2, cy = b.y + b.h / 2, p = sel.pv;
+  inkPathEl(s.id)?.setAttribute("transform", `translate(${cx + p.dx} ${cy + p.dy}) rotate(${p.rot}) scale(${p.sc * p.fx} ${p.sc * p.fy}) translate(${-cx} ${-cy})`);
+  renderSel();
+}
+
+async function commitTransform() {
+  if (!sel) return;
+  if (sel.type === "note") {
+    const n = state.notes.get(sel.id); if (!n) return;
+    const prev = sel.t0 || {};
+    try { await api.updateNote(n.id, { scale: n.scale || 1, rot: n.rot || 0 }); }
+    catch (e) { n.scale = prev.sc; n.rot = prev.rot; const el = noteEl(n.id); if (el) placeNote(el, n); editError(e); }
+    setTimeout(() => { if (state.dragId === n.id) state.dragId = null; }, 600);
+  } else await bakeStroke();
+}
+
+// lines are saved with the move/size/turn/flip baked into their points
+async function bakeStroke() {
+  const s = state.strokes.get(sel.id); if (!s) return;
+  const p = sel.pv;
+  if (!p.dx && !p.dy && p.sc === 1 && !p.rot && p.fx === 1 && p.fy === 1) return;
+  const b = strokeBox(s), cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  const rad = p.rot * Math.PI / 180, cos = Math.cos(rad), sin = Math.sin(rad);
+  const points = s.points.map(([x, y]) => {
+    const lx = (x - cx) * p.sc * p.fx, ly = (y - cy) * p.sc * p.fy;
+    return [+(cx + p.dx + lx * cos - ly * sin).toFixed(1), +(cy + p.dy + lx * sin + ly * cos).toFixed(1)];
+  });
+  const old = { points: s.points, width: s.width };
+  s.points = points; s.width = +(s.width * p.sc).toFixed(2);
+  sel.pv = { dx: 0, dy: 0, sc: 1, rot: 0, fx: 1, fy: 1 };
+  inkPathEl(s.id)?.removeAttribute("transform");
+  drawInk(s); renderSel();
+  try { await api.updateStroke(s.id, { points: s.points, width: s.width }); }
+  catch (e) { Object.assign(s, old); drawInk(s); renderSel(); /schema|policy|permission/i.test(e.message || "") ? toast("Changing lines needs upgrade-v5.sql in Supabase", 4000) : toast("Couldn't save that change"); }
+}
+
+function editError(e) {
+  const m = e?.message || "";
+  if (/Only the person/i.test(m)) toast("Only the person who made this, or the board owner, can change it", 4000);
+  else if (/column|schema cache|scale/i.test(m)) toast("Resizing and flipping need upgrade-v5.sql in Supabase", 4000);
+  else toast("Couldn't save that change");
+}
+
+async function selRotate(deg) {
+  if (!sel) return;
+  if (sel.type === "note") { beginTransform(null); applyTransform(1, deg); return commitTransform(); }
+  sel.pv.rot += deg; previewStroke(); bakeStroke();
+}
+
+async function selFlip(axis) {
+  if (!sel) return;
+  if (sel.type === "stroke") { sel.pv[axis === "x" ? "fx" : "fy"] *= -1; previewStroke(); return bakeStroke(); }
+  const n = state.notes.get(sel.id), el = noteEl(sel.id); if (!n || !el) return;
+  const k = axis === "x" ? "flip_x" : "flip_y";
+  n[k] = !n[k]; placeNote(el, n);
+  try { await api.updateNote(n.id, { [k]: n[k] }); } catch (e) { n[k] = !n[k]; placeNote(el, n); editError(e); }
+}
+
+async function selReset() {
+  if (!sel || sel.type !== "note") return;
+  const n = state.notes.get(sel.id), el = noteEl(sel.id); if (!n || !el) return;
+  const prev = { scale: n.scale, rot: n.rot, flip_x: n.flip_x, flip_y: n.flip_y };
+  Object.assign(n, { scale: 1, rot: 0, flip_x: false, flip_y: false }); placeNote(el, n);
+  try { await api.updateNote(n.id, { scale: 1, rot: 0, flip_x: false, flip_y: false }); }
+  catch (e) { Object.assign(n, prev); placeNote(el, n); editError(e); }
+}
+
+function selDeleteStroke() {
+  if (sel?.type !== "stroke") return;
+  const s = state.strokes.get(sel.id); deselect(); if (!s) return;
+  removeInk(s.id);
+  api.deleteStroke(s.id).catch(() => { addInk(s); toast("Couldn't delete that line"); });
+}
+
+// ---------------------------------------------------------------- edit sheet
+let editId = null, editPhoto = null, editColor = "c1";
+function openEdit(id) {
+  const n = state.notes.get(id); if (!n) return;
+  if (!canEdit(n)) return toast("Only the person who made this, or the board owner, can change it");
+  editId = id; editPhoto = null; editColor = n.color || "c1";
+  for (const s of document.querySelectorAll("#edit [data-kinds]")) s.hidden = !s.dataset.kinds.split(" ").includes(n.kind);
+  $("#eText").value = n.kind === "text" ? n.body || "" : "";
+  $("#eEmoji").value = n.kind === "emoji" ? n.body || "" : "";
+  $("#eCap").value = n.kind === "image" ? n.body || "" : "";
+  $("#ePhotoName").textContent = "";
+  if (n.kind === "countdown") {
+    const t = new Date(n.meta?.target || Date.now());
+    $("#eCdTitle").value = n.meta?.title || "";
+    $("#eCdDate").value = localDateKey(t);
+    $("#eCdTime").value = n.meta?.allDay ? "" : `${pad2(t.getHours())}:${pad2(t.getMinutes())}`;
+  }
+  swatchRow($("#eSwatches"), editColor, (c) => (editColor = c));
+  $("#editTitle").textContent = { text: "Edit note", emoji: "Change emoji", image: "Edit photo", drawing: "Edit drawing", voice: "Edit voice note", countdown: "Edit countdown" }[n.kind] || "Edit";
+  openSheet("edit");
+}
+
+async function saveEdit() {
+  const n = state.notes.get(editId); if (!n) return closeSheet("edit");
+  const patch = {};
+  if (["text", "drawing", "voice", "countdown"].includes(n.kind) && editColor !== n.color) patch.color = editColor;
+  if (n.kind === "text") { const b = $("#eText").value.trim(); if (!b) return toast("A note can't be empty"); if (b !== n.body) patch.body = b; }
+  if (n.kind === "emoji") { const b = $("#eEmoji").value.trim().slice(0, 8); if (!b) return toast("Pick an emoji"); if (b !== n.body) patch.body = b; }
+  if (n.kind === "image") { const c = $("#eCap").value.trim() || null; if (c !== (n.body || null)) patch.body = c; }
+  if (n.kind === "countdown") {
+    const date = $("#eCdDate").value, time = $("#eCdTime").value, title = $("#eCdTitle").value.trim();
+    if (!date || !title) return toast("A countdown needs a name and a date");
+    const target = new Date(`${date}T${time || "00:00"}`);
+    patch.meta = { ...n.meta, target: target.toISOString(), allDay: !time, title }; patch.body = title;
+  }
+  const btn = $("#eSave"); busy(btn, true, "Saving…");
+  const oldPath = n.media_path;
+  try {
+    if (n.kind === "image" && editPhoto) {
+      patch.media_path = await api.uploadMedia(state.board.id, editPhoto, "jpg");
+      state.urls[patch.media_path] = URL.createObjectURL(editPhoto);
+    }
+    if (Object.keys(patch).length) {
+      await api.updateNote(n.id, patch);
+      await upsertNote({ ...n, ...patch });
+      if (patch.media_path && oldPath) api.deleteMedia(oldPath);
+    }
+    closeSheet("edit");
+    toast("Saved");
+  } catch (e) { editError(e); }
+  busy(btn, false);
 }
 
 // ---------------------------------------------------------------- live cursors
@@ -1108,11 +1393,14 @@ function addInk(row) { state.strokes.set(row.id, row); drawInk(row); }
 function removeInk(id) { state.strokes.delete(id); inkPathEl(id)?.remove(); }
 
 function onStrokeEvent(row, deleted) {
-  if (deleted) return removeInk(row.id);
+  if (deleted) { if (sel?.id === row.id) deselect(); return removeInk(row.id); }
+  if (sel?.id === row.id && gest) return;   // you're mid-change on it
   addInk(row);
+  if (sel?.id === row.id) renderSel();
 }
 
 function setInkMode(on) {
+  if (on) deselect();
   inkMode = on;
   document.body.classList.toggle("drawmode", on);
   $("#drawBar").hidden = !on;
@@ -1292,12 +1580,18 @@ function decorate(el, n) {
 
 function redecorate(id) { const n = state.notes.get(id), el = noteEl(id); if (n && el) decorate(el, n); }
 
+function noteTransform(n, extra = "") {
+  const s = n.scale || 1;
+  return `rotate(${n.rot || 0}deg) scale(${s * (n.flip_x ? -1 : 1)}, ${s * (n.flip_y ? -1 : 1)}) ${extra}`.trim();
+}
+
 function placeNote(el, n) {
   el.style.left = n.x + "px";
   el.style.top = n.y + "px";
   const base = Math.max(1, Math.floor((n.z || 0) / 1000) % 1000000000);
   el.style.zIndex = String(n.pinned ? 1000000000 + base : base);
-  el.style.transform = `rotate(${n.rot || 0}deg)`;
+  el.style.transform = noteTransform(n);
+  if (sel?.type === "note" && sel.id === n.id) renderSel();
 }
 
 async function upsertNote(n, fromRealtime = false) {
@@ -1323,10 +1617,12 @@ async function upsertNote(n, fromRealtime = false) {
     if (isDemo && document.hidden) localNotify(`New note from ${memberById(n.author_id)?.name || "your person"}`);
   }
   if (detailId === n.id) renderDetailMeta(n);
+  if (sel?.id === n.id) renderSel();
   updateEmpty();
 }
 
 function removeNoteEl(id) {
+  if (sel?.id === id) deselect();
   state.notes.delete(id);
   noteEl(id)?.remove();
   if (detailId === id) closeSheet("detail");
@@ -1382,6 +1678,7 @@ function openDetail(id) {
     wrap.appendChild(el);
   }
   renderDetailMeta(n);
+  $("#detailEdit").hidden = !canEdit(n);
   renderReactRow();
   renderReplies();
   $("#replyInput").value = "";
@@ -1540,6 +1837,7 @@ async function pinDetail() {
 const compose = { tab: "text", color: "c1", emoji: "❤️", photo: null, padColor: "c1", cdColor: "c5", sched: false };
 
 function openComposer() {
+  deselect();
   compose.photo = null;
   $("#textInput").value = ""; $("#photoCaption").value = ""; $("#emojiCustom").value = "";
   $("#photoPreview").hidden = true; $("#photoHint").hidden = false; $("#photoInput").value = "";
@@ -2089,7 +2387,7 @@ function resetBoardState() {
   state.notes.clear(); state.reactions = new Map(); state.replies = new Map(); state.pings = []; state.presence = {};
   clearBoardDom(); $("#memberChips").innerHTML = "";
   state.strokes = new Map(); state.cursors = new Map(); state.views = {};
-  setInkMode(false); closePeople();
+  deselect(); setInkMode(false); closePeople();
   together.pad?.reset(); together.open = false;
   for (const s of ["detail", "composer", "settings", "ping", "question", "together"]) { $("#" + s).hidden = true; $("#" + s + "Backdrop").hidden = true; }
   $("#qDot").hidden = true; $("#doodleDot").hidden = true;
@@ -2419,6 +2717,7 @@ function wireStatic() {
   $("#detailRemove").onclick = removeDetail;
   $("#detailFront").onclick = frontDetail;
   $("#detailPin").onclick = pinDetail;
+  $("#detailEdit").onclick = () => { const id = detailId; closeSheet("detail"); if (id) openEdit(id); };
   $("#replySend").onclick = sendReply;
   $("#replyInput").addEventListener("keydown", (e) => e.key === "Enter" && sendReply());
 
@@ -2470,6 +2769,22 @@ function wireStatic() {
   $("#bDone").onclick = () => setInkMode(false);
   buildTools({ pens: $("#bPens"), sizes: $("#bSizes"), eraser: $("#bEraser"), undo: $("#bUndo"), clear: $("#bClear") }, inkTool, { onUndo: inkUndo, onClear: () => {} });
   $("#memberChips").onclick = openPeople;
+  $("#sOpen").onclick = () => { const id = sel?.id; deselect(); if (id) openDetail(id); };
+  $("#sEdit").onclick = () => { const id = sel?.id; if (id) openEdit(id); };
+  $("#sRotL").onclick = () => selRotate(-15);
+  $("#sRotR").onclick = () => selRotate(15);
+  $("#sFlipX").onclick = () => selFlip("x");
+  $("#sFlipY").onclick = () => selFlip("y");
+  $("#sReset").onclick = selReset;
+  $("#sDelete").onclick = selDeleteStroke;
+  $("#sDone").onclick = deselect;
+  $("#eSave").onclick = saveEdit;
+  $("#eCancel").onclick = () => closeSheet("edit");
+  $("#editBackdrop").onclick = () => closeSheet("edit");
+  $("#ePhoto").addEventListener("change", async (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    try { editPhoto = await compressImage(f); $("#ePhotoName").textContent = "New photo ready ✓"; } catch (err) { toast(err.message); }
+  });
   $("#peopleClose").onclick = closePeople;
   $("#peopleBackdrop").onclick = closePeople;
   $("#peopleInvite").onclick = shareCode;

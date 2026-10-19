@@ -104,6 +104,10 @@
     <main id="scroller">
       <div id="board">
         <svg id="ink" width="1" height="1" aria-hidden="true"></svg>
+        <div id="sel" hidden>
+          <i class="h" data-h="rot" title="Drag to rotate"></i>
+          <i class="h" data-h="tl"></i><i class="h" data-h="tr"></i><i class="h" data-h="bl"></i><i class="h" data-h="br"></i>
+        </div>
         <div id="cursors"></div>
       </div>
       <div class="empty" id="emptyState" hidden>
@@ -130,6 +134,18 @@
         <button class="btn small primary" id="bDone">Done</button>
       </div>
       <p class="drawhint">One finger draws · two fingers move and zoom</p>
+    </div>
+    <div class="selbar" id="selBar" hidden>
+      <button id="sOpen" data-for="note">Open</button>
+      <button id="sEdit" data-for="note">Edit</button>
+      <button id="sRotL" data-for="both" aria-label="Rotate left">⟲</button>
+      <button id="sRotR" data-for="both" aria-label="Rotate right">⟳</button>
+      <button id="sFlipX" data-for="both" aria-label="Flip left-right">⇋</button>
+      <button id="sFlipY" data-for="both" aria-label="Flip upside down">⇵</button>
+      <button id="sReset" data-for="note">Reset</button>
+      <button id="sDelete" data-for="stroke" class="danger">Delete</button>
+      <button id="sDone" data-for="both" class="primary">Done</button>
+      <p class="selhint">Drag a corner to resize · top dot to rotate · two fingers to do both</p>
     </div>
     <button class="fab" id="fab" aria-label="Add a note">+</button>
   </section>
@@ -254,6 +270,7 @@
       <button class="btn small primary" id="replySend">Send</button>
     </div>
     <div class="sheet-actions wrap">
+      <button class="btn" id="detailEdit">Edit</button>
       <button class="btn danger" id="detailRemove">Remove</button>
       <button class="btn" id="detailPin">📌 Pin</button>
       <button class="btn" id="detailFront">To front</button>
@@ -373,6 +390,32 @@
       <button class="btn" id="tInvite">Invite 💌</button>
       <button class="btn" id="tClose">Close</button>
       <button class="btn primary" id="tStick">Stick it</button>
+    </div>
+  </section>
+
+  <!-- Edit an item -->
+  <div class="sheet-backdrop" id="editBackdrop" hidden></div>
+  <section class="sheet" id="edit" hidden aria-label="Edit">
+    <div class="grab"></div>
+    <h2 id="editTitle">Edit</h2>
+    <div data-kinds="text"><textarea id="eText" class="edit-area" maxlength="500"></textarea></div>
+    <div data-kinds="emoji"><input id="eEmoji" class="emoji-input big" maxlength="8" placeholder="Type any emoji"></div>
+    <div data-kinds="image">
+      <input id="eCap" class="caption-input" maxlength="80" placeholder="Caption (optional)">
+      <label class="btn small" for="ePhoto">Swap photo</label> <span class="muted" id="ePhotoName"></span>
+      <input type="file" id="ePhoto" accept="image/*" hidden>
+    </div>
+    <div data-kinds="countdown">
+      <input id="eCdTitle" class="caption-input" maxlength="60" placeholder="What are you counting down to?">
+      <div class="cd-row">
+        <label><span>Date</span><input type="date" id="eCdDate"></label>
+        <label><span>Time (optional)</span><input type="time" id="eCdTime"></label>
+      </div>
+    </div>
+    <div data-kinds="text drawing voice countdown"><h3>Color</h3><div class="swatches small" id="eSwatches"></div></div>
+    <div class="sheet-actions">
+      <button class="btn" id="eCancel">Cancel</button>
+      <button class="btn primary" id="eSave">Save</button>
     </div>
   </section>
 
