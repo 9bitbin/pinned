@@ -111,8 +111,16 @@ function createSupabaseApi() {
     async savePushSub(sub) {
       must(await sb.from("push_subs").upsert({ endpoint: sub.endpoint, p256dh: sub.keys.p256dh, auth: sub.keys.auth, user_id: session.user.id }));
     },
-    async notify(boardId, kind) {
-      try { await sb.functions.invoke("notify", { body: { board_id: boardId, kind } }); } catch (e) { console.warn("notify failed", e); }
+    async notify(boardId, kind, test = false) {
+      try {
+        const { data, error } = await sb.functions.invoke("notify", { body: { board_id: boardId, kind, test } });
+        if (error) {
+          let detail = error.message;
+          try { const b = await error.context.json(); detail = b.error || detail; } catch { /* no body */ }
+          return { error: detail };
+        }
+        return data;
+      } catch (e) { console.warn("notify failed", e); return { error: e.message }; }
     },
     pushReady: () => !!CONFIG.vapidPublicKey && !CONFIG.vapidPublicKey.includes("YOUR-"),
   };
@@ -169,7 +177,7 @@ function createDemoApi() {
     async mediaUrls(paths) { const d = db(); return Object.fromEntries(paths.map((p) => [p, d.media[p]])); },
     subscribe(boardId, h) { handlers = h; },
     async savePushSub() {},
-    async notify() {},
+    async notify() { return { sent: 1, devices: 1, failures: [] }; },
     pushReady: () => true,
     meId,
   };
@@ -825,7 +833,7 @@ function renderNotifStatus() {
   if (sup === "unsupported") { st.textContent = "Not supported in this browser"; btn.hidden = true; return; }
   if (!api.pushReady()) { st.textContent = "Not set up yet (see SETUP.md)"; btn.hidden = true; return; }
   const p = Notification.permission;
-  if (p === "granted") { st.textContent = "On"; btn.textContent = "Test"; }
+  if (p === "granted") { st.textContent = "On"; btn.textContent = "Send test"; }
   else if (p === "denied") {
     st.textContent = "Blocked";
     hint.textContent = isIOS ? "Turn them back on in iPhone Settings > Notifications > Stuck on You." : "Turn them back on in your phone's settings for this app (long-press the icon > App info > Notifications).";
@@ -835,11 +843,20 @@ function renderNotifStatus() {
 
 async function onNotifBtn() {
   if (Notification.permission === "granted") {
-    await localNotify("Notifications are working 🎉");
+    if (isDemo) return localNotify("Notifications are working 🎉");
+    const btn = $("#notifBtn"); busy(btn, true, "Sending…");
+    await refreshPushSubscription(true);
+    const r = await api.notify(state.board.id, "text", true);
+    busy(btn, false);
+    if (!r) toast("No answer from the server");
+    else if (r.error) toast("Server error: " + r.error, 6000);
+    else if (!r.devices) toast("This phone isn't registered yet. Turn notifications off and on in your phone settings, then try again.", 6000);
+    else if (r.sent) toast(`Test sent. It should pop up in a few seconds.`);
+    else toast("Push service refused it: " + (r.failures || []).join("; "), 8000);
     return;
   }
   const perm = await Notification.requestPermission();
-  if (perm === "granted") { await refreshPushSubscription(true); toast("Notifications on"); }
+  if (perm === "granted") { await refreshPushSubscription(true); toast("Notifications on. Tap Test to check."); }
   renderNotifStatus();
 }
 
@@ -848,10 +865,12 @@ async function refreshPushSubscription(force = false) {
     if (isDemo || notifSupport() !== "ok" || !api.pushReady()) return;
     if (Notification.permission !== "granted") return;
     const reg = await navigator.serviceWorker.ready;
+    const key = b64uToBytes(CONFIG.vapidPublicKey);
     let sub = await reg.pushManager.getSubscription();
-    if (!sub || force) {
-      sub = sub || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(CONFIG.vapidPublicKey) });
-    }
+    // if the keys were regenerated, the old subscription is useless: replace it
+    const old = sub && sub.options && sub.options.applicationServerKey ? new Uint8Array(sub.options.applicationServerKey) : null;
+    if (sub && old && (old.length !== key.length || old.some((b, i) => b !== key[i]))) { await sub.unsubscribe(); sub = null; }
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
     await api.savePushSub(sub.toJSON());
   } catch (e) { console.warn("push subscribe failed", e); if (force) toast("Couldn't turn on notifications: " + e.message); }
 }
