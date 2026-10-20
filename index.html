@@ -102,6 +102,7 @@
       <div class="wait-qr" id="waitQrWrap" hidden><canvas id="waitQR" width="170" height="170"></canvas><span class="muted small-note">Have your partner scan this, or tap Share invite to send a link.</span></div>
     </div>
     <div class="banner warn" id="demoBanner" hidden>Demo mode: notes stay on this device until Supabase is set up.</div>
+    <div class="banner conn" id="connBanner" hidden><span id="connText">Reconnecting…</span></div>
     <main id="scroller">
       <div id="bgLayer" aria-hidden="true"></div>
       <div id="board">
@@ -130,6 +131,10 @@
       <button id="dockChats" aria-label="Messages"><span class="ic">💬</span><span class="lb">Chats</span><i class="dot" id="chatDot" hidden></i></button>
       <button id="dockGames" aria-label="Games"><span class="ic">🎮</span><span class="lb">Games</span><i class="dot" id="gamesDot" hidden></i></button>
     </nav>
+    <div class="histbar" id="histBar" hidden>
+      <button id="histUndo" aria-label="Undo" title="Undo">↶</button>
+      <button id="histRedo" aria-label="Redo" title="Redo">↷</button>
+    </div>
     <div class="boardtools" id="boardTools">
       <button id="toolLoc" aria-label="Live location" title="Live location">📍<i class="dot live" id="locDot" hidden></i></button>
       <button id="toolFind" aria-label="Find someone" title="Find someone">👀</button>

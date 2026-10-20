@@ -118,11 +118,13 @@ const C8 = {
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v16";
+const APP_VERSION = "soy-v17";
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
 let hapticsOn;
 function haptic(ms = 12) { if (hapticsOn !== false && canVibrate) { try { navigator.vibrate(ms); } catch { /* ignore */ } } }
+// ---- Batch B: reliability (outbox, connection, undo/redo) ----
+const isNetworkError = (e) => { const m = (e && e.message || "").toLowerCase(); return !navigator.onLine || /network|failed to fetch|load failed|timeout|timed out|fetch|connection|offline/.test(m); };
 const isDemo = !CONFIG.supabaseUrl || CONFIG.supabaseUrl.includes("YOUR-");
 const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
@@ -335,7 +337,7 @@ function createSupabaseApi() {
         .on("postgres_changes", { event: "DELETE", schema: "public", table: "notes" }, (p) => h.onDelete(p.old.id))
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "board_members", filter: f }, () => h.onMembers())
         .on("postgres_changes", { event: "DELETE", schema: "public", table: "board_members" }, () => h.onMembers())
-        .subscribe();
+        .subscribe((status) => { try { h.onConn?.(status); } catch { /* ignore */ } });
       // the v2 tables get their own channel, so the board keeps working before the upgrade is run
       extras = sb.channel("extras-" + boardId)
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "reactions", filter: f }, (p) => h.onReaction(p.new, false))
@@ -798,6 +800,102 @@ function rain(emoji, count = 12) {
   }
 }
 
+// ================================================================ Batch B: connection, outbox, undo/redo
+let outbox = ls.get("pinned-outbox", []) || [];
+let flushing = false, realtimeDown = false, connHideT = 0;
+const saveOutbox = () => ls.set("pinned-outbox", outbox);
+
+function setConn(state_) {
+  // state_: "online" | "offline" | "reconnecting"
+  const banner = $("#connBanner"), txt = $("#connText");
+  if (!banner) return;
+  clearTimeout(connHideT);
+  if (state_ === "offline") { txt.textContent = outbox.length ? `Offline — ${outbox.length} waiting to send` : "You're offline"; banner.hidden = false; }
+  else if (state_ === "reconnecting") { txt.textContent = "Reconnecting…"; banner.hidden = false; }
+  else { // online
+    if (outbox.length) { txt.textContent = "Back online — sending…"; banner.hidden = false; }
+    else connHideT = setTimeout(() => (banner.hidden = true), 1200);
+  }
+}
+function updateConn() {
+  if (!state.board) return;
+  if (!navigator.onLine) setConn("offline");
+  else if (realtimeDown) setConn("reconnecting");
+  else setConn("online");
+}
+
+// Try to send everything queued while offline, in order. Stops on the first network failure.
+async function flushOutbox() {
+  if (flushing || !outbox.length || !state.board || !navigator.onLine) return;
+  flushing = true;
+  try {
+    while (navigator.onLine) {
+      const item = outbox.find((it) => it.row.board_id === state.board.id);   // only this board's queue
+      if (!item) break;
+      try {
+        if (item.kind === "note") {
+          const saved = await api.addNote(item.row);
+          removeNoteEl(item.tempId);
+          state.notes.delete(item.tempId);
+          await upsertNote(saved);
+          api.notify(state.board.id, "note", { note_id: saved.id });
+        } else if (item.kind === "msg") {
+          const saved = await api.sendMessage(item.row);
+          state.msgs = state.msgs.filter((x) => x.id !== item.tempId);
+          onMessageEvent(saved);
+          api.notify(state.board.id, "message", item.row.to_id ? { to: item.row.to_id } : {});
+        }
+        outbox = outbox.filter((x) => x !== item); saveOutbox();
+      } catch (e) {
+        if (isNetworkError(e)) break;          // still offline — leave it queued
+        outbox = outbox.filter((x) => x !== item); saveOutbox();   // a real rejection (bad data): drop it so it can't wedge the queue
+        toast("One queued item couldn't be sent and was dropped");
+      }
+    }
+  } finally { flushing = false; updateConn(); renderPendingCount(); if (!outbox.length && navigator.onLine) setConn("online"); }
+}
+function queueNote(row, tempId) { outbox.push({ kind: "note", row, tempId, at: Date.now() }); saveOutbox(); renderPendingCount(); }
+function queueMsg(row, tempId) { outbox.push({ kind: "msg", row, tempId, at: Date.now() }); saveOutbox(); renderPendingCount(); }
+function renderPendingCount() { if (!$("#connBanner").hidden) updateConn(); }
+
+// ---- undo / redo (session-local, best-effort on a shared board) ----
+const hist = { undo: [], redo: [] };
+function pushHist(action) { hist.undo.push(action); if (hist.undo.length > 40) hist.undo.shift(); hist.redo.length = 0; renderHistBar(); }
+function renderHistBar() {
+  const bar = $("#histBar"); if (!bar) return;
+  const any = hist.undo.length || hist.redo.length;
+  bar.hidden = !any || !state.board;
+  $("#undoBtn").disabled = !hist.undo.length;
+  $("#redoBtn").disabled = !hist.redo.length;
+}
+async function doUndo() {
+  const a = hist.undo.pop(); if (!a) return;
+  renderHistBar();
+  try { await a.undo(); hist.redo.push(a); haptic(10); toast(`Undid: ${a.label}`, 1800); }
+  catch (e) { toast("Couldn't undo that"); }
+  renderHistBar();
+}
+async function doRedo() {
+  const a = hist.redo.pop(); if (!a) return;
+  renderHistBar();
+  try { await a.redo(); hist.undo.push(a); haptic(10); toast(`Redid: ${a.label}`, 1800); }
+  catch (e) { toast("Couldn't redo that"); }
+  renderHistBar();
+}
+
+// realtime connection status, with backoff resubscribe
+let reconnectT = 0, reconnectTries = 0;
+function onConnStatus(status) {
+  if (status === "SUBSCRIBED") { realtimeDown = false; reconnectTries = 0; clearTimeout(reconnectT); updateConn(); flushOutbox(); }
+  else if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) { realtimeDown = true; updateConn(); scheduleResub(); }
+}
+function scheduleResub() {
+  clearTimeout(reconnectT);
+  if (!navigator.onLine || !state.board) return;
+  const delay = Math.min(30000, 1500 * Math.pow(2, reconnectTries++));
+  reconnectT = setTimeout(() => { if (state.board && navigator.onLine) { api.subscribe(state.board.id, boardHandlers()); refreshReads(); } }, delay);
+}
+
 // ================================================================ boot
 async function boot() {
   hapticsOn = ls.get("pinned-haptics", true);
@@ -952,6 +1050,7 @@ const boardHandlers = () => ({
   onScore: onScoreEvent,
   onTtt: onTttEvent,
   onC8: onC8Event,
+  onConn: onConnStatus,
 });
 
 // Phones pause backgrounded web apps and drop their live connection.
@@ -1006,15 +1105,19 @@ async function openBoard(board) {
     tickNotes();
     expireCursors();
     if (document.visibilityState === "visible" && ++n % 4 === 0) api.touchSeen(state.board.id);
-    if (document.visibilityState === "visible") resync().catch(() => {});
+    if (document.visibilityState === "visible") { resync().catch(() => {}); refreshReads(); }
+    flushOutbox();
   }, 30000);
+  renderHistBar();
+  updateConn();
+  flushOutbox();
 }
 
 async function resync() {
   if (!state.board) return;
   const rows = await api.listNotes(state.board.id);
   const ids = new Set(rows.map((r) => r.id));
-  for (const id of [...state.notes.keys()]) if (!ids.has(id)) removeNoteEl(id);
+  for (const id of [...state.notes.keys()]) if (!ids.has(id) && !state.notes.get(id)?._pending) removeNoteEl(id);
   await loadUrls(rows);
   await loadExtras();
   for (const r of rows) upsertNote(r);
@@ -1490,6 +1593,7 @@ function startNoteDrag() {
     return;
   }
   gest.type = "note"; gest.ox = n.x; gest.oy = n.y;
+  n._dragFrom = { x: n.x, y: n.y, z: n.z };
   state.dragId = n.id;
   el.classList.add("dragging");
   el.style.zIndex = "2147483000";
@@ -1510,8 +1614,22 @@ async function endNoteDrag(g) {
   el.classList.remove("dragging");
   n.z = Date.now();
   placeNote(el, n);
-  try { await api.updateNote(n.id, { x: n.x, y: n.y, z: n.z }); } catch { toast("Couldn't save the move"); }
+  const from = n._dragFrom; delete n._dragFrom;
+  const to = { x: n.x, y: n.y, z: n.z };
+  const moved = from && (Math.abs(from.x - to.x) > 1 || Math.abs(from.y - to.y) > 1);
+  try {
+    await api.updateNote(n.id, to);
+    if (moved) pushHist({ label: "move", undo: () => moveNoteTo(n.id, from), redo: () => moveNoteTo(n.id, to) });
+  } catch (e) {
+    if (isNetworkError(e)) { updateConn(); toast("Offline — reconnect to save where you moved it", 3000); }
+    else toast("Couldn't save the move");
+  }
   setTimeout(() => { if (state.dragId === n.id) state.dragId = null; }, 600);
+}
+async function moveNoteTo(id, pos) {
+  const n = state.notes.get(id); if (!n) return;
+  Object.assign(n, pos); const el = noteEl(id); if (el) placeNote(el, n);
+  await api.updateNote(id, pos);
 }
 
 // ================================================================ select · resize · rotate · flip
@@ -1743,9 +1861,11 @@ async function saveEdit() {
       state.urls[patch.media_path] = URL.createObjectURL(editPhoto);
     }
     if (Object.keys(patch).length) {
+      const before = {}; for (const k of Object.keys(patch)) before[k] = n[k];
       await api.updateNote(n.id, patch);
       await upsertNote({ ...n, ...patch });
       if (patch.media_path && oldPath) api.deleteMedia(oldPath);
+      if (!patch.media_path) pushHist({ label: "edit", undo: () => editNoteTo(n.id, before), redo: () => editNoteTo(n.id, patch) });
     }
     closeSheet("edit");
     toast("Saved");
@@ -1997,6 +2117,7 @@ function decorate(el, n) {
   const who = memberById(n.author_id);
   el.style.setProperty("--who", BRIGHT[who?.color] || BRIGHT.c1);
   el.classList.toggle("pinned", !!n.pinned);
+  el.classList.toggle("pending", !!n._pending);
   const sched = isScheduled(n);
   el.classList.toggle("scheduled", sched);
   el.querySelector(".badges")?.remove();
@@ -2271,13 +2392,28 @@ function onReplyEvent(row) {
   if (detailId === row.note_id) renderReplies();
 }
 
+async function editNoteTo(id, fields) {
+  const n = state.notes.get(id); if (!n) return;
+  Object.assign(n, fields); await upsertNote({ ...n }); await api.updateNote(id, fields);
+}
 async function removeDetail() {
   const n = state.notes.get(detailId); if (!n) return;
   if (!confirm("Remove this from the board for both of you?")) return;
   closeSheet("detail");
+  const row = noteRowFor(n);
   removeNoteEl(n.id);
-  try { await api.deleteNote(n); } catch (e) { toast("Couldn't remove it"); resync(); }
+  try {
+    await api.deleteNote(n);
+    let liveId = n.id;
+    // media notes can't be cleanly re-created from the client, so only offer undo for simple notes
+    if (!n.media_path) pushHist({
+      label: "delete",
+      undo: async () => { const saved = await api.addNote(row); liveId = saved.id; await upsertNote(saved); },
+      redo: async () => { const cur = state.notes.get(liveId); removeNoteEl(liveId); state.notes.delete(liveId); if (cur) await api.deleteNote(cur); },
+    });
+  } catch (e) { toast("Couldn't remove it"); resync(); }
 }
+const noteRowFor = (n) => { const { id, created_at, updated_at, seen_at, _pending, _dragFrom, notified_at, ...rest } = n; return rest; };
 async function frontDetail() {
   const n = state.notes.get(detailId); if (!n) return;
   n.z = Date.now(); const el = noteEl(n.id); if (el) placeNote(el, n);
@@ -2434,6 +2570,12 @@ async function sendCompose() {
     if (saved.media_path && localUrl) state.urls[saved.media_path] = localUrl;  // show our own upload right away
     await upsertNote(saved);
     haptic(15);
+    if (!saved.media_path && !showAt) {
+      let liveId = saved.id;
+      pushHist({ label: "new note",
+        undo: async () => { const cur = state.notes.get(liveId); removeNoteEl(liveId); state.notes.delete(liveId); if (cur) await api.deleteNote(cur); },
+        redo: async () => { const re = await api.addNote(noteRowFor(saved)); liveId = re.id; await upsertNote(re); } });
+    }
     closeSheet("composer");
     if (showAt) toast(`Scheduled for ${fmtWhen(showAt)} ⏰ Only you can see it until then.`, 4000);
     else api.notify(state.board.id, "note", { note_id: saved.id });
@@ -2441,7 +2583,16 @@ async function sendCompose() {
   } catch (e) {
     console.error(e);
     const msg = e.message || "";
-    if (/mime|type/i.test(msg) && compose.tab === "voice") needsUpgrade();
+    if (isNetworkError(e) && row && !row.media_path) {
+      // offline: save it locally and send on reconnect
+      const tempId = uid();
+      await upsertNote({ ...row, id: tempId, _pending: true, created_at: new Date().toISOString() });
+      queueNote(row, tempId);
+      closeSheet("composer");
+      updateConn();
+      toast("Offline — saved and will send when you're back ⏳", 3500);
+    }
+    else if (/mime|type/i.test(msg) && compose.tab === "voice") needsUpgrade();
     else if (/violates check constraint|column .* does not exist|schema cache/i.test(msg)) toast(compose.tab === "link" ? "Music cards need upgrade-v6.sql in Supabase" : "This needs the latest database update (see SETUP)", 4500);
     else toast("Couldn't stick that note", 7000, { label: "Retry", fn: () => sendCompose() });
   } finally { busy(btn, false); $("#composerSend").textContent = compose.sched ? "Schedule it" : "Stick it"; }
@@ -2867,6 +3018,8 @@ function resetBoardState() {
   together.pad?.reset(); together.open = false;
   for (const s of ["detail", "composer", "settings", "ping", "question", "together", "chats", "edit", "games", "ttt", "c8"]) { $("#" + s).hidden = true; $("#" + s + "Backdrop").hidden = true; }
   $("#qDot").hidden = true; $("#doodleDot").hidden = true;
+  hist.undo.length = 0; hist.redo.length = 0; renderHistBar();
+  $("#connBanner").hidden = true;
   $("#codeInput").value = ""; setError($("#pairError"));
 }
 
@@ -2942,12 +3095,21 @@ const threadOf = (m) => (!m.to_id ? "group" : m.sender_id === state.me?.id ? m.t
 async function loadChats() {
   try {
     const [msgs, reads] = await Promise.all([api.listMessages(state.board.id), api.listReads(state.board.id)]);
-    state.msgs = msgs;
+    const pending = state.msgs.filter((m) => m._pending);   // keep offline-queued messages until they send
+    state.msgs = [...msgs, ...pending];
     state.reads = new Map(reads.map((r) => [readKey(r.user_id, r.peer), r.read_at]));
     await loadUrls(msgs);
     updateChatDot();
     if (!$("#chats").hidden) chat.peer ? renderThread() : renderThreadList();
   } catch { /* messages arrive with upgrade-v6.sql */ }
+}
+async function refreshReads() {
+  if (!state.board) return;
+  try {
+    const reads = await api.listReads(state.board.id);
+    state.reads = new Map(reads.map((r) => [readKey(r.user_id, r.peer), r.read_at]));
+    if (!$("#chats").hidden && chat.peer) renderThread();
+  } catch { /* ignore */ }
 }
 
 function unreadIn(peer) {
@@ -3020,7 +3182,7 @@ function renderThread() {
     }
     lastTime = t;
     const el = document.createElement("div");
-    el.className = "msg" + (m.sender_id === state.me.id ? " mine" : "");
+    el.className = "msg" + (m.sender_id === state.me.id ? " mine" : "") + (m._pending ? " pending" : "");
     if (chat.peer === "group" && m.sender_id !== state.me.id) { const by = document.createElement("span"); by.className = "by"; by.textContent = memberById(m.sender_id)?.name || "Someone"; el.appendChild(by); }
     if (m.media_path) { const img = document.createElement("img"); img.alt = "Photo"; img.src = state.urls[m.media_path] || ""; el.appendChild(img); }
     if (m.body) el.appendChild(document.createTextNode(m.body));
@@ -3069,7 +3231,16 @@ async function sendChat(photo = null) {
     api.notify(state.board.id, "message", peer === "group" ? {} : { to: peer });
   } catch (e) {
     console.warn(e);
-    if (/relation|schema cache|does not exist/i.test(e.message || "")) toast("Messages need upgrade-v6.sql in Supabase", 4000);
+    const row = { board_id: state.board.id, sender_id: state.me.id, to_id: peer === "group" ? null : peer, body: body || null };
+    if (isNetworkError(e) && !photo && body) {
+      const tempId = uid();
+      $("#msgInput").value = "";
+      onMessageEvent({ ...row, id: tempId, _pending: true, created_at: new Date().toISOString() });
+      queueMsg(row, tempId);
+      updateConn();
+      toast("Offline — your message will send when you're back ⏳", 3000);
+    }
+    else if (/relation|schema cache|does not exist/i.test(e.message || "")) toast("Messages need upgrade-v6.sql in Supabase", 4000);
     else toast("Couldn't send that message", 7000, { label: "Retry", fn: () => sendChat(photo) });
   }
   busy(btn, false);
@@ -4711,8 +4882,19 @@ function wireStatic() {
   // iPhone home-screen apps don't always fire visibilitychange when reopened; these catch the rest
   window.addEventListener("pageshow", () => onResume());
   window.addEventListener("focus", () => onResume());
-  window.addEventListener("online", () => { hiddenAt = hiddenAt || 1; onResume(true); });
+  window.addEventListener("online", () => { hiddenAt = hiddenAt || 1; realtimeDown = false; updateConn(); onResume(true); flushOutbox(); });
+  window.addEventListener("offline", () => updateConn());
   window.addEventListener("pagehide", () => { hiddenAt = Date.now(); markSeen(); });
+  // undo / redo
+  $("#undoBtn").onclick = doUndo;
+  $("#redoBtn").onclick = doRedo;
+  window.addEventListener("keydown", (e) => {
+    if (!state.board || $("#boardScreen").hidden) return;
+    if (e.target.matches && e.target.matches("input, textarea, [contenteditable]")) return;
+    const z = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z";
+    if (z && e.shiftKey) { e.preventDefault(); doRedo(); }
+    else if (z) { e.preventDefault(); doUndo(); }
+  });
 }
 
 boot();
