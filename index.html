@@ -96,9 +96,10 @@
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
       </button>
     </header>
-    <div class="banner" id="waitBanner" hidden>
+    <div class="banner wait" id="waitBanner" hidden>
       <span>Waiting for your person. Share code <b id="waitCode"></b></span>
-      <button class="btn small" id="waitShare">Share</button>
+      <span class="wait-btns"><button class="btn small" id="waitQrBtn">QR</button><button class="btn small" id="waitShare">Share invite</button></span>
+      <div class="wait-qr" id="waitQrWrap" hidden><canvas id="waitQR" width="170" height="170"></canvas><span class="muted small-note">Have your partner scan this, or tap Share invite to send a link.</span></div>
     </div>
     <div class="banner warn" id="demoBanner" hidden>Demo mode: notes stay on this device until Supabase is set up.</div>
     <main id="scroller">
@@ -113,6 +114,13 @@
       </div>
       <div class="empty" id="emptyState" hidden>
         <div class="empty-note">Tap <b>+</b> to stick your first note</div>
+      </div>
+      <div id="boardSkeleton" aria-hidden="true" hidden>
+        <div class="sk-note" style="top:12%;left:14%;transform:rotate(-3deg)"></div>
+        <div class="sk-note" style="top:22%;left:52%;transform:rotate(2deg)"></div>
+        <div class="sk-note sk-sm" style="top:44%;left:24%;transform:rotate(-1deg)"></div>
+        <div class="sk-note" style="top:58%;left:56%;transform:rotate(3deg)"></div>
+        <div class="sk-note sk-sm" style="top:72%;left:18%;transform:rotate(-2deg)"></div>
       </div>
     </main>
     <nav class="dock" aria-label="Extras">
@@ -338,6 +346,12 @@
       <p class="muted small-note">New notes always notify you. Choose the rest:</p>
     </div>
 
+    <h3>Feel</h3>
+    <div class="setting-row" id="vibeRow">
+      <span>Vibrate on taps and sends</span>
+      <button class="switch" id="vibeSwitch" type="button" role="switch" aria-checked="true" aria-label="Vibration"></button>
+    </div>
+
     <h3>Pairing code</h3>
     <div class="setting-row">
       <span class="code" id="settingsCode"></span>
@@ -374,6 +388,7 @@
     <h3>On this board</h3>
     <ul class="members" id="memberList"></ul>
 
+    <p class="muted small-note version" id="appVersion"></p>
     <div class="sheet-actions">
       <button class="btn primary" id="settingsClose">Done</button>
     </div>

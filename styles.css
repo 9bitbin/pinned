@@ -11,7 +11,7 @@
   --topbar-ink: #fff7ea;
   --surface: #fffaf2;
   --surface-ink: #3b2a1a;
-  --muted: #8b7560;
+  --muted: #7c6650;
   --line: #ead9c3;
   --accent: #c2410c;
   --accent-ink: #fff;
@@ -34,7 +34,7 @@
   --topbar-ink: #5b4b7a;
   --surface: #ffffff;
   --surface-ink: #3f345a;
-  --muted: #9a8fb3;
+  --muted: #6f6391;
   --line: #ece4fa;
   --accent: #b86bd8;
   --accent-ink: #fff;
@@ -842,3 +842,30 @@ body.gaming { overflow: hidden; }
 .pcard:not(:disabled):active { transform: translateY(-3px); }
 .pcard:not(.dim):not(.back):not(:disabled) { cursor: pointer; }
 .c8-hand .pcard:not(.dim):not(:disabled) { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ============ Batch A: polish & trust ============ */
+/* reduced motion: respect the OS setting everywhere */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
+}
+/* actionable toast */
+.toast { display: inline-flex; align-items: center; gap: 12px; }
+.toast-action { border: 0; background: rgba(255,255,255,.18); color: #fff; font: inherit; font-weight: 800; font-size: 14px; padding: 6px 12px; border-radius: 10px; flex: none; }
+.toast-action:active { background: rgba(255,255,255,.3); }
+/* board loading skeleton */
+#boardSkeleton { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+.sk-note { position: absolute; width: 120px; height: 120px; border-radius: 4px; background: var(--surface); opacity: .5;
+  box-shadow: var(--note-shadow); overflow: hidden; }
+.sk-note.sk-sm { width: 92px; height: 92px; }
+.sk-note::after { content: ""; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,.55) 50%, transparent 80%); transform: translateX(-100%); animation: shimmer 1.3s infinite; }
+@keyframes shimmer { to { transform: translateX(100%); } }
+/* wait banner: QR + invite */
+.banner.wait { flex-wrap: wrap; }
+.wait-btns { display: flex; gap: 6px; }
+.wait-qr { flex-basis: 100%; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 0 4px; }
+.wait-qr canvas { background: #fff; border-radius: 10px; padding: 8px; box-shadow: 0 4px 12px -6px rgba(0,0,0,.4); }
+.wait-qr .small-note { text-align: center; max-width: 240px; }
+/* settings version line */
+.version { text-align: center; opacity: .7; margin-top: 10px; }
+#vibeRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+#vibeRow > span { font-weight: 700; }

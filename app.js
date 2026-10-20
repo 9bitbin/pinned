@@ -117,6 +117,12 @@ const C8 = {
 };
 
 const $ = (s) => document.querySelector(s);
+// ---- Batch A: small platform helpers ----
+const APP_VERSION = "soy-v16";
+const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
+const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
+let hapticsOn;
+function haptic(ms = 12) { if (hapticsOn !== false && canVibrate) { try { navigator.vibrate(ms); } catch { /* ignore */ } } }
 const isDemo = !CONFIG.supabaseUrl || CONFIG.supabaseUrl.includes("YOUR-");
 const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
@@ -723,8 +729,14 @@ let live = null;
 
 // ================================================================ ui helpers
 let toastTimer;
-function toast(msg, ms = 2600) {
-  const t = $("#toast"); t.textContent = msg; t.hidden = false;
+function toast(msg, ms = 2600, action = null) {
+  const t = $("#toast"); t.innerHTML = ""; t.hidden = false;
+  t.appendChild(document.createTextNode(msg));
+  if (action && action.label && typeof action.fn === "function") {
+    const b = document.createElement("button"); b.className = "toast-action"; b.textContent = action.label;
+    b.onclick = () => { t.hidden = true; clearTimeout(toastTimer); action.fn(); };
+    t.appendChild(b);
+  }
   clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), ms);
 }
 function show(id) { for (const s of ["#login", "#linked", "#welcome", "#pair", "#boardScreen"]) $(s).hidden = s !== id; }
@@ -772,6 +784,7 @@ function timeAgo(iso) {
 
 // floating emoji burst
 function rain(emoji, count = 12) {
+  if (prefersReducedMotion()) return;
   const fx = $("#fx");
   for (let i = 0; i < count; i++) {
     const s = document.createElement("span");
@@ -787,7 +800,9 @@ function rain(emoji, count = 12) {
 
 // ================================================================ boot
 async function boot() {
+  hapticsOn = ls.get("pinned-haptics", true);
   applyTheme(ls.get("soy-theme", "cork"));
+  handleJoinLink();
   if ("serviceWorker" in navigator && location.protocol !== "file:") {
     navigator.serviceWorker.register("sw.js").catch((e) => console.warn("SW failed", e));
   }
@@ -880,7 +895,31 @@ async function onWelcome() {
   } catch (e) { setError($("#welcomeError"), e.message); }
   busy(btn, false);
 }
-function showPair() { show("#pair"); }
+let pendingJoinCode = null;
+function handleJoinLink() {
+  try {
+    const c = new URLSearchParams(location.search).get("join");
+    if (c) { pendingJoinCode = c.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8); history.replaceState(null, "", location.pathname); }
+  } catch { /* ignore */ }
+}
+const inviteUrl = (code) => location.origin + location.pathname + "?join=" + (code || "").replace(/[^A-Za-z0-9]/gi, "").toUpperCase();
+async function renderInviteQR(code) {
+  const cv = $("#waitQR"), wrap = $("#waitQrWrap"); if (!cv || cv.dataset.tried) return;
+  cv.dataset.tried = "1";
+  try {
+    const m = await import("https://cdn.jsdelivr.net/npm/qrcode@1.5.4/+esm");
+    await (m.default || m).toCanvas(cv, inviteUrl(code), { width: 170, margin: 1, color: { dark: "#2d2416", light: "#ffffff" } });
+    cv.dataset.ok = "1";
+  } catch { if (wrap) { wrap.hidden = true; } $("#waitQrBtn").textContent = "Copy link"; }
+}
+function showPair() {
+  show("#pair");
+  if (pendingJoinCode) {
+    const inp = $("#codeInput"); inp.value = fmtCode(pendingJoinCode);
+    setTimeout(() => { inp.scrollIntoView({ block: "center" }); inp.focus(); }, 200);
+    toast("Code filled in — tap Join board");
+  }
+}
 async function onCreateBoard() {
   const btn = $("#createBoard"); busy(btn, true, "Creating…"); setError($("#pairError"));
   try { await openBoard(await api.createBoard()); } catch (e) { setError($("#pairError"), e.message); }
@@ -940,9 +979,11 @@ function onResume(force = false) {
 async function openBoard(board) {
   state.board = board;
   show("#boardScreen");
+  const sk = $("#boardSkeleton"); if (sk) sk.hidden = false;
   await refreshMembers();
   await resync();
   initView();
+  if (sk) sk.hidden = true;
   applyBackground();
   loadChats();
   loadBgRequests();
@@ -1026,6 +1067,7 @@ async function refreshMembers() {
   const waiting = state.members.length < 2;
   $("#waitBanner").hidden = !waiting;
   $("#waitCode").textContent = fmtCode(state.board.code);
+  if (waiting) renderInviteQR(state.board.code);
   renderMemberList();
   for (const n of state.notes.values()) { const el = noteEl(n.id); if (el) decorate(el, n); }
 }
@@ -2253,7 +2295,7 @@ async function pinDetail() {
 }
 
 // ---------------------------------------------------------------- composer
-const compose = { tab: "text", color: "c1", emoji: "❤️", photo: null, padColor: "c1", cdColor: "c5", sched: false };
+const compose = { tab: ls.get("pinned-compose-tab", "text"), color: ls.get("pinned-note-color", "c1"), emoji: "❤️", photo: null, padColor: ls.get("pinned-pen-color", "c1"), cdColor: "c5", sched: false };
 
 function openComposer() {
   deselect();
@@ -2274,6 +2316,7 @@ function openComposer() {
 function setTab(tab) {
   if (compose.tab === "voice" && tab !== "voice" && rec.mr?.state === "recording") stopRec();
   compose.tab = tab;
+  ls.set("pinned-compose-tab", tab);
   document.querySelectorAll("#composerTabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   document.querySelectorAll("#composer .pane").forEach((p) => (p.hidden = p.dataset.pane !== tab));
 }
@@ -2390,6 +2433,7 @@ async function sendCompose() {
     const saved = await api.addNote(row);
     if (saved.media_path && localUrl) state.urls[saved.media_path] = localUrl;  // show our own upload right away
     await upsertNote(saved);
+    haptic(15);
     closeSheet("composer");
     if (showAt) toast(`Scheduled for ${fmtWhen(showAt)} ⏰ Only you can see it until then.`, 4000);
     else api.notify(state.board.id, "note", { note_id: saved.id });
@@ -2399,7 +2443,7 @@ async function sendCompose() {
     const msg = e.message || "";
     if (/mime|type/i.test(msg) && compose.tab === "voice") needsUpgrade();
     else if (/violates check constraint|column .* does not exist|schema cache/i.test(msg)) toast(compose.tab === "link" ? "Music cards need upgrade-v6.sql in Supabase" : "This needs the latest database update (see SETUP)", 4500);
-    else toast(msg || "Couldn't send that");
+    else toast("Couldn't stick that note", 7000, { label: "Retry", fn: () => sendCompose() });
   } finally { busy(btn, false); $("#composerSend").textContent = compose.sched ? "Schedule it" : "Stick it"; }
 }
 
@@ -2875,7 +2919,8 @@ async function leaveBoard() {
 
 async function deleteBoard() {
   const os = others();
-  if (!confirm(`Delete this board for ${os.length ? `everyone (${os.length + 1} people)` : "good"}? Every note, photo, voice note and answer on it will be erased. This can't be undone.`)) return;
+  const n = state.notes.size;
+  if (!confirm(`Delete this board for ${os.length ? `everyone (${os.length + 1} people)` : "good"}?\n\n${n} note${n === 1 ? "" : "s"} plus all photos, voice notes, drawings, messages and game scores will be erased. This can't be undone.`)) return;
   if (!confirm("Last check: delete everything and start over?")) return;
   const btn = $("#deleteBoardBtn"); busy(btn, true, "Deleting…");
   leaving = true;
@@ -3019,11 +3064,13 @@ async function sendChat(photo = null) {
     }
     const saved = await api.sendMessage(row);
     $("#msgInput").value = "";
+    haptic(10);
     onMessageEvent(saved);
     api.notify(state.board.id, "message", peer === "group" ? {} : { to: peer });
   } catch (e) {
     console.warn(e);
-    /relation|schema cache|does not exist/i.test(e.message || "") ? toast("Messages need upgrade-v6.sql in Supabase", 4000) : toast("Couldn't send that");
+    if (/relation|schema cache|does not exist/i.test(e.message || "")) toast("Messages need upgrade-v6.sql in Supabase", 4000);
+    else toast("Couldn't send that message", 7000, { label: "Retry", fn: () => sendChat(photo) });
   }
   busy(btn, false);
 }
@@ -3339,6 +3386,9 @@ function openSettings() {
   renderAccount();
   renderBoardActions();
   renderBgSettings();
+  $("#vibeSwitch").setAttribute("aria-checked", String(hapticsOn !== false));
+  $("#vibeRow").hidden = !canVibrate;
+  $("#appVersion").textContent = `Pinned · ${APP_VERSION}${isStandalone() ? " · installed" : ""}`;
   openSheet("settings");
 }
 
@@ -4351,11 +4401,21 @@ function renderMemberList() {
 
 async function shareCode() {
   const code = fmtCode(state.board?.code);
-  const text = `Join my board on Pinned with code ${code}`;
+  const url = inviteUrl(state.board?.code);
+  const text = `Join my board on Pinned 💌 Tap the link, or use code ${code}`;
   try {
-    if (navigator.share) await navigator.share({ title: "Pinned", text, url: location.href.split("#")[0] });
-    else { await navigator.clipboard.writeText(code); toast("Code copied"); }
+    if (navigator.share) await navigator.share({ title: "Pinned", text, url });
+    else { await navigator.clipboard.writeText(`${text}\n${url}`); toast("Invite link copied"); }
   } catch { /* user cancelled */ }
+}
+function toggleWaitQr() {
+  const wrap = $("#waitQrWrap");
+  if (!wrap || $("#waitQR")?.dataset.ok !== "1") { // QR unavailable (offline / blocked) → copy the link instead
+    const url = inviteUrl(state.board?.code);
+    navigator.clipboard?.writeText(url).then(() => toast("Invite link copied")).catch(() => toast(url, 6000));
+    return;
+  }
+  wrap.hidden = !wrap.hidden;
 }
 
 // ---------------------------------------------------------------- notifications
@@ -4381,7 +4441,14 @@ function renderNotifStatus() {
   if (sup === "unsupported") { st.textContent = "Not supported in this browser"; btn.hidden = true; return; }
   if (!api.pushReady()) { st.textContent = "Not set up yet (see SETUP.md)"; btn.hidden = true; return; }
   const p = Notification.permission;
-  if (p === "granted") { st.textContent = "On"; btn.textContent = "Send test"; $("#notifReset").hidden = isDemo; }
+  if (p === "granted") {
+    st.textContent = "On"; btn.textContent = "Send test"; $("#notifReset").hidden = false;
+    // health check: is this device actually registered to receive push?
+    if (!isDemo) navigator.serviceWorker?.ready
+      .then((reg) => reg.pushManager.getSubscription())
+      .then((sub) => { if (Notification.permission !== "granted") return; st.textContent = sub ? "On · this phone is registered ✓" : "On, but this phone isn't registered — tap Reset"; })
+      .catch(() => {});
+  }
   else if (p === "denied") {
     st.textContent = "Blocked";
     hint.textContent = isIOS ? "Turn them back on in iPhone Settings > Notifications > Pinned." : "Turn them back on in your phone's settings for this app (long-press the icon > App info > Notifications).";
@@ -4479,9 +4546,9 @@ function wireStatic() {
   $("#composerBackdrop").onclick = () => { resetRec(); closeSheet("composer"); };
   $("#composerSend").onclick = sendCompose;
   document.querySelectorAll("#composerTabs button").forEach((b) => (b.onclick = () => setTab(b.dataset.tab)));
-  swatchRow($("#textSwatches"), compose.color, (c) => { compose.color = c; paintPaper($("#textPreview"), c); });
+  swatchRow($("#textSwatches"), compose.color, (c) => { compose.color = c; ls.set("pinned-note-color", c); paintPaper($("#textPreview"), c); });
   paintPaper($("#textPreview"), compose.color);
-  swatchRow($("#padSwatches"), compose.padColor, (c) => { compose.padColor = c; paintPaper($("#padWrap"), c); });
+  swatchRow($("#padSwatches"), compose.padColor, (c) => { compose.padColor = c; ls.set("pinned-pen-color", c); paintPaper($("#padWrap"), c); });
   paintPaper($("#padWrap"), compose.padColor);
   swatchRow($("#cdSwatches"), compose.cdColor, (c) => { compose.cdColor = c; updateCdPreview(); });
   ["#cdTitle", "#cdDate", "#cdTime"].forEach((s) => $(s).addEventListener("input", updateCdPreview));
@@ -4550,8 +4617,10 @@ function wireStatic() {
   $("#settingsBackdrop").onclick = () => closeSheet("settings");
   $("#shareCode").onclick = shareCode;
   $("#waitShare").onclick = shareCode;
+  $("#waitQrBtn").onclick = toggleWaitQr;
   $("#notifBtn").onclick = onNotifBtn;
   $("#notifReset").onclick = resetPush;
+  $("#vibeSwitch").onclick = () => { hapticsOn = hapticsOn === false; ls.set("pinned-haptics", hapticsOn); $("#vibeSwitch").setAttribute("aria-checked", String(hapticsOn)); if (hapticsOn) haptic(20); };
   $("#saveName").onclick = async () => {
     const name = $("#settingsName").value.trim(); if (!name) return;
     try { await api.updateProfile({ name }); state.me.name = name; await refreshMembers(); toast("Saved"); } catch (e) { toast(e.message); }

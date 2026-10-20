@@ -304,3 +304,61 @@ Important notes:
 - It only works **while Pinned is open** on each person's phone. Phones (especially iPhone) stop web apps from reading location in the background, so this isn't 24/7 tracking like Find My — that would need a real native app.
 - Locations are **live only** — they're sent phone-to-phone through the live channel and never saved in the database.
 - Your choice is remembered per board, so if you leave it on it comes back on next time you open that board (your phone may ask permission again).
+
+---
+
+## Upgrade to v8: Phase 3, Round 2 (Block Drop, Type Race, Crazy 8s)
+
+1. Supabase > SQL Editor > paste `supabase/upgrade-v8.sql` > **Run** (v2–v7 first).
+2. Supabase > Edge Functions > notify > paste the new `supabase/notify/index.ts` > **Deploy** (page should say `"version":6`).
+3. On GitHub, upload `app.js`, `index.html`, `styles.css`, `sw.js`, and add the three new files to the **games** folder: `block-drop.html`, `type-race.html` (plus the existing `bridge.js`). Crazy 8s is built into the app itself.
+4. Close and reopen the app twice on every phone.
+
+| Game | How |
+|---|---|
+| Block Drop | Tetris-style. Buttons or swipes; clear lines. Solo or race (everyone gets the same pieces) |
+| Type Race | Type the passage fast and clean. Solo or race (same text for all). Score is net WPM; pasting is blocked |
+| Crazy 8s | **vs Computer** (easy/hard) or **Challenge** someone. Match the suit or rank of the top card; 8s are wild (you pick the next suit); first to empty their hand wins. Live or turn-by-turn; cards are dealt server-side so nobody can see your hand |
+
+New mute: **Crazy 8s**. Without step 1, the arcade games still play solo but scores and Crazy 8s challenges aren't saved.
+
+**Also in this round:** `SPEAKING-GAME-PROMPT.md` — a full build spec for a future multilanguage speaking-contest game (not built yet, because it leans on phone speech recognition that's unreliable on iPhone; the spec designs around that).
+
+---
+
+## Upgrade to v9: Polyglot (multilanguage speaking game)
+
+1. Supabase > SQL Editor > paste `supabase/upgrade-v9.sql` > **Run** (v2–v8 first). It just lets the scoreboard store Polyglot scores — no new tables.
+2. Supabase > Edge Functions > notify > paste the new `supabase/notify/index.ts` > **Deploy** (page should say `"version":7`).
+3. On GitHub, add `games/polyglot.html` to the games folder, and upload `app.js` and `sw.js`.
+4. Close and reopen the app twice on every phone.
+
+| Thing | How |
+|---|---|
+| Play | 🎮 Games > Polyglot. Pick a language, say each phrase out loud, 5 rounds. Solo or race (same phrases for everyone) |
+| Languages | English, Spanish, Mandarin, Nepali, French, Hindi |
+| Voice scoring | On Android/Chrome the phone listens and scores how close you got, plus a speed bonus |
+| iPhone | iPhones can't reliably score by voice, so Polyglot runs in **practice mode** there — hear the phrase with 🔊 Listen, then rate yourself (Nailed it / Close / Missed). Scores still count |
+| Fair play | Each round is capped; the race invite uses the existing "Race invites" mute |
+
+Full future plan (turn-based contests, a paid rock-solid iPhone scoring option) is in `SPEAKING-GAME-PROMPT.md`.
+
+---
+
+## Batch A: Polish & trust (front-end only)
+
+No database or function changes. Upload `app.js`, `index.html`, `styles.css`, `sw.js` to GitHub, then close and reopen the app twice on every phone.
+
+What changed:
+- **Reduced motion** — animations and emoji rain now respect your phone's "Reduce Motion" setting.
+- **Haptics** — a gentle buzz when you stick a note, send a message, or win. Toggle it in Settings > Feel (Android; iPhone web has no vibration).
+- **Failed-send retry** — if a note or message can't send, you get a toast with a one-tap **Retry** instead of it silently vanishing.
+- **Invite link + QR** — the waiting banner now has **Share invite** (sends a tap-to-join link with the code built in) and a **QR** button to scan. Opening a `?join=CODE` link prefills the code automatically.
+- **Loading skeleton** — a shimmer of placeholder notes while a board loads, instead of a blank screen.
+- **Remembers your last** composer tab, note color and pen color.
+- **Notification health check** — Settings now shows whether this phone is actually registered for push ("On · this phone is registered ✓" vs "tap Reset"), and Reset is always available when notifications are on.
+- **App version** shown at the bottom of Settings, so it's obvious when a phone is on an old cached build.
+- **Contrast** — darkened the muted text in the cork and pastel themes for readability.
+- **Safer delete** — deleting a board now spells out how many notes and what else will be erased.
+
+Note: the QR code loads a tiny library from the same CDN the app already uses; if it can't load, the QR button falls back to copying the invite link.
