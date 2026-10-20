@@ -3349,6 +3349,7 @@ const GAME_LIST = [
   { id: "plane", name: "Paper Plane", icon: "✈️", file: "games/paper-plane.html", blurb: "Hold to climb, let go to dive. Dodge pins, grab hearts." },
   { id: "blocks", name: "Block Drop", icon: "🟦", file: "games/block-drop.html", blurb: "Stack falling blocks and clear lines. A race gets the same pieces." },
   { id: "typerace", name: "Type Race", icon: "⌨️", file: "games/type-race.html", blurb: "Type the passage fast and clean. Everyone gets the same text." },
+  { id: "speak", name: "Polyglot", icon: "🗣️", file: "games/polyglot.html", blurb: "Say phrases in another language. Voice-scored (or practice mode on iPhone)." },
 ];
 const gameById = (id) => GAME_LIST.find((g) => g.id === id);
 const RACE_WAIT = 20000, RACE_MAX = 4 * 60000, RACE_STALE = 20000;
