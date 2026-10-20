@@ -821,6 +821,10 @@ function onResume(force = false) {
   api.getBoard?.(state.board.id).then((b) => b && onBoardEvent(b)).catch(() => {});
   markThreadRead();
   clearBadge();
+  // phones drop the geolocation watch when backgrounded; restart it if we're meant to be sharing
+  if (geo.on && geo.watch == null && !geo.denied && state.board) {
+    geo.watch = navigator.geolocation.watchPosition(onGeoOk, onGeoErr, { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 });
+  }
 }
 async function openBoard(board) {
   state.board = board;
@@ -836,6 +840,10 @@ async function openBoard(board) {
   api.touchSeen(board.id);
   loadTtt();
   setTimeout(() => raceSend("ask"), 1500);
+  // restore live-location sharing if it was on for this board
+  geo.on = false; geo.me = null; geo.watch = null; geo.denied = false;
+  if (ls.get(geoKey(), false)) startGeo();
+  updateLocDot();
   refreshPushSubscription();
   refreshQuestionDot();
   clearBadge();
@@ -972,9 +980,131 @@ function renderPeople() {
   }
 }
 
+// ================================================================ live location (opt-in, both ways)
+// Each person shares their OWN location and can see anyone else who is sharing.
+// It's broadcast over the live presence channel only — never saved to the database.
+const geo = { on: false, watch: null, me: null, lastSent: 0, denied: false };
+const geoKey = () => "pinned-geo-" + (state.board?.id || "");
+
+function haversine(a, b) {
+  const R = 6371000, toR = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * toR, dLng = (b.lng - a.lng) * toR;
+  const la1 = a.lat * toR, la2 = b.lat * toR;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+function bearing(a, b) {
+  const toR = Math.PI / 180;
+  const y = Math.sin((b.lng - a.lng) * toR) * Math.cos(b.lat * toR);
+  const x = Math.cos(a.lat * toR) * Math.sin(b.lat * toR) - Math.sin(a.lat * toR) * Math.cos(b.lat * toR) * Math.cos((b.lng - a.lng) * toR);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+const COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+const compassOf = (deg) => COMPASS[Math.round(deg / 45) % 8];
+function fmtDist(m) {
+  const ft = m * 3.28084;
+  if (ft < 528) return `${Math.round(ft / 10) * 10} ft`;            // under ~0.1 mi: feet
+  const mi = m / 1609.344;
+  return mi < 10 ? `${mi.toFixed(1)} mi` : `${Math.round(mi)} mi`;
+}
+function fmtAcc(m) { return m == null ? "" : m < 1609 ? `±${Math.round(m * 3.28084)} ft` : `±${(m / 1609.344).toFixed(1)} mi`; }
+
+function startGeo() {
+  if (!("geolocation" in navigator)) { toast("This device can't share location."); return; }
+  geo.on = true; geo.denied = false;
+  try { ls.set(geoKey(), true); } catch { /* ignore */ }
+  renderLoc(); updateLocDot();
+  geo.watch = navigator.geolocation.watchPosition(onGeoOk, onGeoErr, { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 });
+}
+function stopGeo(silent = false) {
+  geo.on = false; geo.me = null;
+  if (geo.watch != null) { try { navigator.geolocation.clearWatch(geo.watch); } catch { /* ignore */ } geo.watch = null; }
+  try { ls.set(geoKey(), false); } catch { /* ignore */ }
+  live?.track({ loc: null });            // clear it for everyone right away
+  if (!silent) renderLoc();
+  updateLocDot();
+}
+function onGeoOk(pos) {
+  const c = pos.coords;
+  geo.me = { lat: c.latitude, lng: c.longitude, acc: c.accuracy, at: Date.now() };
+  const now = Date.now();
+  // send at most every 5s (presence updates are cheap but no need to spam)
+  if (now - geo.lastSent > 5000 || !geo.lastSent) { geo.lastSent = now; live?.track({ loc: geo.me }); }
+  renderLoc();
+}
+function onGeoErr(err) {
+  if (err && err.code === 1) {            // permission denied
+    geo.denied = true; stopGeo(true);
+    toast("Location permission was blocked. Turn it on for this site in your phone's settings, then try again.", 5000);
+  } else toast("Couldn't get your location. Make sure location is on.", 4000);
+  renderLoc();
+}
+
+function toggleGeo() {
+  if (geo.on) stopGeo(); else startGeo();
+}
+
+function openLoc() {
+  closePeople();
+  renderLoc();
+  $("#locPanel").hidden = false; $("#locBackdrop").hidden = false;
+}
+function closeLoc() { $("#locPanel").hidden = true; $("#locBackdrop").hidden = true; }
+
+function sharers() {
+  // everyone (incl. me) who currently has a location on the board
+  const out = [];
+  if (geo.on && geo.me) out.push({ id: state.me.id, loc: geo.me, me: true });
+  for (const m of others()) { const p = state.presence[m.id]; if (p && p.loc && isOnline(m.id)) out.push({ id: m.id, loc: p.loc, me: false }); }
+  return out;
+}
+
+function updateLocDot() {
+  const anyone = sharers().length > 0;
+  const d = $("#locDot"); if (d) d.hidden = !anyone;
+  const btn = $("#toolLoc"); if (btn) btn.setAttribute("aria-pressed", String(geo.on));
+}
+
+function renderLoc() {
+  updateLocDot();
+  if ($("#locPanel").hidden) return;
+  const sw = $("#locSwitch");
+  sw.setAttribute("aria-checked", String(geo.on));
+  $("#locMyState").textContent = geo.on
+    ? (geo.me ? `On · updated ${timeAgo(new Date(geo.me.at).toISOString())}` : "On · getting your location…")
+    : (geo.denied ? "Blocked in your phone's settings" : "Off");
+  const list = sharers().filter((s) => !s.me);
+  $("#locCount").textContent = geo.on ? `${list.length} sharing with you` : "";
+  const ul = $("#locList"); ul.innerHTML = "";
+  if (!geo.on) return;
+  if (!list.length) {
+    const li = document.createElement("li"); li.className = "loc-empty";
+    li.textContent = others().length ? "Nobody else is sharing right now. They'll show up here when they turn it on." : "Invite someone to the board first.";
+    ul.appendChild(li); return;
+  }
+  for (const s of list) {
+    const m = memberById(s.id) || { name: "Someone", color: "c1" };
+    const li = document.createElement("li");
+    li.appendChild(chipEl({ ...m, id: s.id }));
+    const info = document.createElement("div"); info.className = "info";
+    info.appendChild(Object.assign(document.createElement("div"), { className: "nm", textContent: m.name }));
+    const st = document.createElement("div"); st.className = "st";
+    if (geo.me) {
+      const dist = haversine(geo.me, s.loc), dir = compassOf(bearing(geo.me, s.loc));
+      st.textContent = `${fmtDist(dist)} ${dir} · ${fmtAcc(s.loc.acc)} · ${timeAgo(new Date(s.loc.at).toISOString())}`;
+    } else st.textContent = `${fmtAcc(s.loc.acc)} · ${timeAgo(new Date(s.loc.at).toISOString())}`;
+    info.appendChild(st);
+    li.appendChild(info);
+    const a = document.createElement("a"); a.className = "btn small"; a.textContent = "Map";
+    a.href = `https://www.google.com/maps?q=${s.loc.lat},${s.loc.lng}`; a.target = "_blank"; a.rel = "noopener";
+    li.appendChild(a);
+    ul.appendChild(li);
+  }
+}
+
 // ================================================================ endless canvas
 // world coords: notes keep x/y forever. screen = world * s + t
-const MIN_S = 0.25, MAX_S = 3;
+const MIN_S = 0.08, MAX_S = 3;   // 8% lets you see a big area of the board at once
 let viewRaf = 0, viewSaveT = 0, viewSendT = 0;
 function vp() { return $("#scroller").getBoundingClientRect(); }
 function toWorld(cx, cy) { const r = vp(), v = state.view; return { x: (cx - r.left - v.tx) / v.s, y: (cy - r.top - v.ty) / v.s }; }
@@ -2418,6 +2548,7 @@ function onPresence(map) {
   }
   renderPresence();
   renderChips();
+  renderLoc();
 }
 
 function renderPresence() {
@@ -2576,6 +2707,8 @@ function resetBoardState() {
   state.msgs = []; state.reads = new Map(); state.bgReqs = []; state.playing = null; chat.peer = null;
   $("#chatDot").hidden = true; $("#gearDot").hidden = true; clearBgLayer();
   resetGames();
+  if (geo.watch != null) { try { navigator.geolocation.clearWatch(geo.watch); } catch { /* ignore */ } }
+  geo.on = false; geo.me = null; geo.watch = null; geo.denied = false; closeLoc(); $("#locDot").hidden = true;
   together.pad?.reset(); together.open = false;
   for (const s of ["detail", "composer", "settings", "ping", "question", "together", "chats", "edit", "games", "ttt"]) { $("#" + s).hidden = true; $("#" + s + "Backdrop").hidden = true; }
   $("#qDot").hidden = true; $("#doodleDot").hidden = true;
@@ -4119,6 +4252,11 @@ function wireStatic() {
   $("#peopleClose").onclick = closePeople;
   $("#peopleBackdrop").onclick = closePeople;
   $("#peopleInvite").onclick = shareCode;
+  // live location
+  $("#toolLoc").onclick = openLoc;
+  $("#locClose").onclick = closeLoc;
+  $("#locBackdrop").onclick = closeLoc;
+  $("#locSwitch").onclick = toggleGeo;
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && pollTimer) { const p = ls.get(PENDING); if (p) startPolling(p.nonce); }
     if (document.visibilityState === "visible") onResume(true);

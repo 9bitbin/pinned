@@ -123,6 +123,7 @@
       <button id="dockGames" aria-label="Games"><span class="ic">🎮</span><span class="lb">Games</span><i class="dot" id="gamesDot" hidden></i></button>
     </nav>
     <div class="boardtools" id="boardTools">
+      <button id="toolLoc" aria-label="Live location" title="Live location">📍<i class="dot live" id="locDot" hidden></i></button>
       <button id="toolFind" aria-label="Find someone" title="Find someone">👀</button>
       <button id="toolHome" aria-label="Back to the newest notes" title="Home">🏠</button>
       <button id="toolDraw" aria-label="Draw on the board" title="Draw on the board">✏️</button>
@@ -159,6 +160,22 @@
     <div class="people-head"><b>On this board</b><span id="peopleCount"></span><button class="iconbtn" id="peopleClose" aria-label="Close">✕</button></div>
     <ul id="peopleList"></ul>
     <button class="btn small" id="peopleInvite">Invite someone (code <span id="peopleCode"></span>)</button>
+  </aside>
+
+  <!-- Live location (opt-in, both ways) -->
+  <div class="people-backdrop" id="locBackdrop" hidden></div>
+  <aside class="people loc" id="locPanel" hidden aria-label="Live location">
+    <div class="people-head"><b>📍 Live location</b><span id="locCount"></span><button class="iconbtn" id="locClose" aria-label="Close">✕</button></div>
+    <div class="loc-toggle">
+      <div>
+        <div class="lt-title">Share my live location</div>
+        <div class="lt-sub" id="locMyState">Off</div>
+      </div>
+      <button class="switch" id="locSwitch" type="button" role="switch" aria-checked="false" aria-label="Share my live location"></button>
+    </div>
+    <p class="loc-note" id="locHint">When it's on, everyone here can see where you are — and you see them. Works only while Pinned is open. Turn it off any time.</p>
+    <ul id="locList"></ul>
+    <p class="loc-foot">Locations are live only. Nothing is saved.</p>
   </aside>
 
   <!-- Composer -->

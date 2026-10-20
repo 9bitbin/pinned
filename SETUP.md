@@ -285,3 +285,22 @@ Notes: Spotify plays 30-second previews unless you're logged in to Spotify in th
 | Tic-tac-toe | **vs Computer** (Easy or Hard) or **Challenge** someone. Take your turns whenever, live or hours apart. Anyone on the board can watch. Your win record shows on the card |
 
 New mutes in Settings: Race invites, Someone beats your best score, Tic-tac-toe. Without step 1, solo games still work, but scores and tic-tac-toe challenges aren't saved.
+
+---
+
+## Live location (opt-in, both ways)
+
+No database or notify changes. Upload `app.js`, `index.html`, `styles.css` and `sw.js` to GitHub, then close and reopen the app twice on every phone.
+
+| Thing | How it works |
+|---|---|
+| Open it | 📍 button on the right (above 👀). Slides in from the right as its own panel, separate from the board |
+| Turn on | Flip **Share my live location**. Your phone asks permission once; allow it. It uses high-accuracy GPS |
+| See others | Everyone who's sharing shows up with how far and which way they are from you (e.g. "1.9 mi NE"), their GPS accuracy, when it last updated, and a **Map** button |
+| Turn off | Flip it off any time — your location clears for everyone right away |
+
+Important notes:
+- It's **both ways**: if you can see someone, they can see you. There's no hidden mode.
+- It only works **while Pinned is open** on each person's phone. Phones (especially iPhone) stop web apps from reading location in the background, so this isn't 24/7 tracking like Find My — that would need a real native app.
+- Locations are **live only** — they're sent phone-to-phone through the live channel and never saved in the database.
+- Your choice is remembered per board, so if you leave it on it comes back on next time you open that board (your phone may ask permission again).
