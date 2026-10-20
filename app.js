@@ -118,7 +118,7 @@ const C8 = {
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v17";
+const APP_VERSION = "soy-v19";
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
 let hapticsOn;
@@ -213,7 +213,8 @@ function createSupabaseApi() {
     async me() {
       if (!session) return null;
       // "muted" arrives with the v2 database upgrade; fall back if it isn't there yet
-      let res = await sb.from("profiles").select("id,name,color,muted").eq("id", myId());
+      let res = await sb.from("profiles").select("id,name,color,muted,avatar_path,bio").eq("id", myId());
+      if (res.error) res = await sb.from("profiles").select("id,name,color,muted").eq("id", myId());
       if (res.error) res = await sb.from("profiles").select("id,name,color").eq("id", myId());
       const rows = must(res);
       return rows[0] || null;
@@ -258,7 +259,9 @@ function createSupabaseApi() {
       if (res.error) res = await sb.from("board_members").select("user_id,joined_at").eq("board_id", boardId);
       const rows = must(res) || [];
       if (!rows.length) return [];
-      const profs = must(await sb.from("profiles").select("id,name,color").in("id", rows.map((r) => r.user_id)));
+      let pres = await sb.from("profiles").select("id,name,color,avatar_path,bio").in("id", rows.map((r) => r.user_id));
+      if (pres.error) pres = await sb.from("profiles").select("id,name,color").in("id", rows.map((r) => r.user_id));
+      const profs = must(pres);
       const byId = Object.fromEntries(rows.map((r) => [r.user_id, r]));
       return profs.map((p) => ({ ...p, last_seen: byId[p.id]?.last_seen || null, joined_at: byId[p.id]?.joined_at }))
         .sort((x, y) => (x.joined_at < y.joined_at ? -1 : 1));
@@ -301,6 +304,11 @@ function createSupabaseApi() {
     async uploadMedia(boardId, blob, ext) {
       const path = `${boardId}/${uid()}.${ext}`;
       must(await bucket().upload(path, blob, { contentType: (blob.type || "").split(";")[0], upsert: false }));
+      return path;
+    },
+    async uploadAvatar(blob) {
+      const path = `avatars/${myId()}-${Date.now()}.jpg`;
+      must(await bucket().upload(path, blob, { contentType: "image/jpeg", upsert: true }));
       return path;
     },
     async mediaUrls(paths) {
@@ -578,6 +586,10 @@ function createDemoApi() {
       const path = `${boardId}/${uid()}.${ext}`; const d = db(); d.media[path] = dataUrl; save(d); return path;
     },
     async mediaUrls(paths) { const d = db(); return Object.fromEntries(paths.map((p) => [p, d.media[p]])); },
+    async uploadAvatar(blob) {
+      const dataUrl = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(blob); });
+      const path = `avatars/${meId()}-${Date.now()}.jpg`; const d = db(); d.media[path] = dataUrl; save(d); return path;
+    },
     async listReactions(boardId) { return db().reactions.filter((r) => r.board_id === boardId); },
     async addReaction(r) { const d = db(); d.reactions.push(r); save(d); emit({ type: "reaction", row: r, del: false }); },
     async removeReaction(noteId, emoji) {
@@ -1156,9 +1168,15 @@ async function loadUrls(rows) {
   if (paths.length) Object.assign(state.urls, await api.mediaUrls(paths));
 }
 
+async function ensureAvatars(members) {
+  const paths = members.map((m) => m.avatar_path).filter((p) => p && !state.urls[p]);
+  if (!paths.length) return;
+  try { const urls = await api.mediaUrls(paths); Object.assign(state.urls, urls); } catch { /* ignore */ }
+}
 async function refreshMembers() {
   if (!state.board) return;
   state.members = await api.members(state.board.id);
+  await ensureAvatars(state.members);
   if (state.me && !state.members.some((m) => m.id === state.me.id)) {
     // removed from the board, or it was deleted
     if (leaving) return;
@@ -1185,7 +1203,10 @@ function isActive(id) { const c = state.cursors.get(id); return isOnline(id) && 
 
 function chipEl(m) {
   const c = document.createElement("span");
-  c.className = "chip"; c.style.background = BRIGHT[m.color] || BRIGHT.c1; c.textContent = (m.name || "?").slice(0, 1).toUpperCase();
+  c.className = "chip"; c.style.background = BRIGHT[m.color] || BRIGHT.c1;
+  const av = m.avatar_path && state.urls[m.avatar_path];
+  if (av) { c.classList.add("has-av"); c.style.backgroundImage = `url("${av}")`; c.textContent = ""; }
+  else c.textContent = (m.name || "?").slice(0, 1).toUpperCase();
   c.title = m.name;
   const mood = latestMood(m.id);
   if (mood) { const i = document.createElement("i"); i.className = "mood"; i.textContent = mood; c.appendChild(i); }
@@ -1203,7 +1224,7 @@ function renderChips() {
   if (!$("#people").hidden) renderPeople();
 }
 
-function openPeople() { renderPeople(); $("#people").hidden = false; $("#peopleBackdrop").hidden = false; refreshMembers().catch(() => {}); }
+function openPeople() { renderPeople(); renderVoiceJoin(); $("#people").hidden = false; $("#peopleBackdrop").hidden = false; refreshMembers().catch(() => {}); }
 function closePeople() { $("#people").hidden = true; $("#peopleBackdrop").hidden = true; }
 
 function renderPeople() {
@@ -1224,7 +1245,9 @@ function renderPeople() {
     else if (isOnline(m.id)) { txt = "Online"; st.classList.add("online"); }
     else txt = m.last_seen ? `Last seen ${timeAgo(m.last_seen)}` : "Offline";
     st.appendChild(document.createTextNode(txt));
-    info.append(nm, st); li.appendChild(info);
+    info.append(nm, st);
+    if (m.bio) { const b = document.createElement("div"); b.className = "bio"; b.textContent = m.bio; info.appendChild(b); }
+    li.appendChild(info);
     if (m.id !== state.me?.id) {
       const b = document.createElement("button"); b.className = "btn small"; b.textContent = "Find";
       b.disabled = !state.views[m.id];
@@ -2833,6 +2856,7 @@ function onLiveMessage(m) {
   if (m.t === "cur") return onCursor(m);
   if (m.t === "typing") return onTyping(m);
   if (m.t === "view") { if (m.u !== state.me?.id) state.views[m.u] = { cx: m.cx, cy: m.cy, s: m.s, at: Date.now() }; return; }
+  if (m.t === "vjoin" || m.t === "vleave" || m.t === "rtc") return onVoiceMsg(m);
   if (m.t === "ink") return onRemoteInk(m);
   if (m.t === "inkx") { const s = state.strokes.get(m.id); if (s?._live) removeInk(m.id); return; }
   const p = ensureTogetherPad();
@@ -2850,11 +2874,16 @@ function onPresence(map) {
   for (const m of others()) {
     const was = prev[m.id]?.doodling, now = state.presence[m.id]?.doodling;
     if (now && !was && !together.open) toast(`${m.name} is drawing together. Tap 🎨 Together to join.`, 4000);
-    if (!isOnline(m.id)) { document.querySelector(`#cursors .cursor[data-u="${CSS.escape(m.id)}"]`)?.remove(); }
+    const wasV = prev[m.id]?.voice, nowV = state.presence[m.id]?.voice;
+    if (nowV && !wasV && !voice.on) toast(`${m.name} started a voice chat. Open the people panel to join.`, 4000);
+    if (voice.on && wasV && !nowV) { const p = voice.peers.get(m.id); if (p) { closePeer(p); voice.peers.delete(m.id); renderVoiceBar(); } }   // they left voice
+    if (!isOnline(m.id)) { document.querySelector(`#cursors .cursor[data-u="${CSS.escape(m.id)}"]`)?.remove(); const p = voice.peers.get(m.id); if (p) { closePeer(p); voice.peers.delete(m.id); renderVoiceBar(); } }
   }
   renderPresence();
   renderChips();
   renderLoc();
+  renderVoiceJoin();
+  renderVoiceBar();
 }
 
 function renderPresence() {
@@ -3019,6 +3048,7 @@ function resetBoardState() {
   for (const s of ["detail", "composer", "settings", "ping", "question", "together", "chats", "edit", "games", "ttt", "c8"]) { $("#" + s).hidden = true; $("#" + s + "Backdrop").hidden = true; }
   $("#qDot").hidden = true; $("#doodleDot").hidden = true;
   hist.undo.length = 0; hist.redo.length = 0; renderHistBar();
+  if (voice.on) leaveVoice();
   $("#connBanner").hidden = true;
   $("#codeInput").value = ""; setError($("#pairError"));
 }
@@ -3560,6 +3590,13 @@ function openSettings() {
   $("#vibeSwitch").setAttribute("aria-checked", String(hapticsOn !== false));
   $("#vibeRow").hidden = !canVibrate;
   $("#appVersion").textContent = `Pinned · ${APP_VERSION}${isStandalone() ? " · installed" : ""}`;
+  // avatar + bio
+  const av = state.me?.avatar_path && state.urls[state.me.avatar_path];
+  const ap = $("#avatarPreview");
+  if (av) { ap.style.backgroundImage = `url("${av}")`; ap.textContent = ""; }
+  else { ap.style.backgroundImage = ""; ap.style.background = BRIGHT[state.me?.color] || BRIGHT.c1; ap.textContent = (state.me?.name || "?").slice(0, 1).toUpperCase(); }
+  $("#settingsBio").value = state.me?.bio || "";
+  $("#bioCount").textContent = `${(state.me?.bio || "").length}/300`;
   openSheet("settings");
 }
 
@@ -4500,6 +4537,207 @@ function c8CpuTurn() {
   }, 700);
 }
 
+// ================================================================ Spatial voice chat (WebRTC mesh + Web Audio)
+const ICE = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:global.stun.twilio.com:3478" }];
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+// read-only voice diagnostics (handy for "why won't it connect?")
+if (typeof window !== "undefined") window.voiceStatus = () => ({ on: voice.on, muted: voice.muted, micEnabled: voice.mic?.getAudioTracks?.()[0]?.enabled, peers: [...voice.peers.values()].map((p) => ({ id: p.id, state: p.pc.connectionState, ice: p.pc.iceConnectionState, stream: !!p.stream, panner: !!p.panner })) });
+const voice = { on: false, ctx: null, mic: null, master: null, convolver: null, wetGain: null, peers: new Map(), muted: false, posT: 0, speakT: 0, raf: 0 };
+const myVoiceId = () => state.me?.id || "";
+
+function hallImpulse(ctx, seconds = 1.8, decay = 2.6) {
+  const rate = ctx.sampleRate, len = Math.floor(rate * seconds);
+  const buf = ctx.createBuffer(2, len, rate);
+  for (let ch = 0; ch < 2; ch++) { const d = buf.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay); }
+  return buf;
+}
+
+async function joinVoice() {
+  if (voice.on) return;
+  try {
+    voice.mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
+  } catch (e) { toast(e && e.name === "NotAllowedError" ? "Microphone blocked — allow it in your phone's settings" : "Couldn't get the microphone"); return; }
+  const AC = window.AudioContext || window.webkitAudioContext;
+  voice.ctx = new AC();
+  if (voice.ctx.state === "suspended") await voice.ctx.resume();
+  voice.master = voice.ctx.createGain(); voice.master.gain.value = 1; voice.master.connect(voice.ctx.destination);
+  voice.convolver = voice.ctx.createConvolver(); voice.convolver.buffer = hallImpulse(voice.ctx);
+  voice.wetGain = voice.ctx.createGain(); voice.wetGain.gain.value = 0.18;   // gentle hall, not too intense
+  voice.convolver.connect(voice.wetGain); voice.wetGain.connect(voice.master);
+  try { const L = voice.ctx.listener; if (L.positionX) { L.positionX.value = 0; L.positionY.value = 0; L.positionZ.value = 0; } } catch { /* ignore */ }
+  voice.on = true; voice.muted = false;
+  live?.track?.({ voice: true, vmuted: false });
+  live?.send({ t: "vjoin", u: myVoiceId() });
+  // connect to anyone already in voice (from presence)
+  for (const m of others()) if (state.presence[m.id]?.voice) ensurePeer(m.id);
+  showVoiceBar();
+  startVoiceLoop();
+  haptic(15);
+}
+function leaveVoice() {
+  if (!voice.on) return;
+  voice.on = false;
+  live?.send({ t: "vleave", u: myVoiceId() });
+  live?.track?.({ voice: false, vmuted: false });
+  for (const [, p] of voice.peers) closePeer(p);
+  voice.peers.clear();
+  voice.mic?.getTracks().forEach((t) => t.stop()); voice.mic = null;
+  cancelAnimationFrame(voice.raf); voice.raf = 0;
+  try { voice.ctx?.close(); } catch { /* ignore */ }
+  voice.ctx = null;
+  $("#voiceBar").hidden = true;
+  renderVoiceJoin();
+}
+function toggleVoiceMute() {
+  if (!voice.on) return;
+  voice.muted = !voice.muted;
+  voice.mic?.getAudioTracks().forEach((t) => (t.enabled = !voice.muted));
+  live?.track?.({ voice: true, vmuted: voice.muted });
+  renderVoiceBar();
+  haptic(10);
+}
+
+function ensurePeer(id) {
+  if (!voice.on || id === myVoiceId() || voice.peers.has(id)) return voice.peers.get(id);
+  const polite = myVoiceId() < id;             // smaller id is the polite peer (perfect negotiation)
+  const pc = new RTCPeerConnection({ iceServers: ICE });
+  const p = { id, pc, polite, makingOffer: false, ignoreOffer: false, stream: null, audioEl: null, src: null, panner: null, dry: null, analyser: null, level: 0 };
+  voice.peers.set(id, p);
+  for (const track of voice.mic.getTracks()) pc.addTrack(track, voice.mic);
+  pc.onicecandidate = ({ candidate }) => { if (candidate) live?.send({ t: "rtc", to: id, u: myVoiceId(), kind: "ice", data: candidate.toJSON ? candidate.toJSON() : { candidate: candidate.candidate, sdpMid: candidate.sdpMid, sdpMLineIndex: candidate.sdpMLineIndex } }); };
+  pc.onnegotiationneeded = async () => {
+    try { p.makingOffer = true; await pc.setLocalDescription(); const d = pc.localDescription; live?.send({ t: "rtc", to: id, u: myVoiceId(), kind: "desc", data: { type: d.type, sdp: d.sdp } }); }
+    catch (e) { console.warn("voice offer", e); } finally { p.makingOffer = false; }
+  };
+  pc.ontrack = ({ streams }) => { p.stream = streams[0]; wirePeerAudio(p); };
+  pc.onconnectionstatechange = () => { if (["failed", "closed", "disconnected"].includes(pc.connectionState)) renderVoiceBar(); else if (pc.connectionState === "connected") renderVoiceBar(); };
+  renderVoiceBar();
+  return p;
+}
+function wirePeerAudio(p) {
+  if (!voice.ctx || !p.stream) return;
+  // Chrome needs the stream attached to an <audio> element too, or Web Audio gets silence
+  p.audioEl = new Audio(); p.audioEl.srcObject = p.stream; p.audioEl.muted = true; p.audioEl.play().catch(() => {});
+  p.src = voice.ctx.createMediaStreamSource(p.stream);
+  p.panner = voice.ctx.createPanner();
+  Object.assign(p.panner, { panningModel: "HRTF", distanceModel: "inverse", refDistance: 1, maxDistance: 14, rolloffFactor: 1.1 });
+  p.dry = voice.ctx.createGain(); p.dry.gain.value = 1;
+  p.src.connect(p.panner);
+  p.panner.connect(p.dry); p.dry.connect(voice.master);     // dry (spatial)
+  p.panner.connect(voice.convolver);                         // wet send (shared hall)
+  p.analyser = voice.ctx.createAnalyser(); p.analyser.fftSize = 256; p.src.connect(p.analyser);
+  positionPeer(p);
+  renderVoiceBar();
+}
+function closePeer(p) {
+  try { p.pc.close(); } catch { /* ignore */ }
+  try { p.src?.disconnect(); p.panner?.disconnect(); p.dry?.disconnect(); p.analyser?.disconnect(); } catch { /* ignore */ }
+  if (p.audioEl) { p.audioEl.srcObject = null; p.audioEl = null; }
+}
+
+// spatial: a peer's position comes from where they are on the board relative to me
+function positionPeer(p) {
+  if (!p.panner) return;
+  const mine = myViewCenter(), theirs = state.views[p.id];
+  if (!theirs) { setPanner(p.panner, 0, 0); return; }
+  const k = 1 / 140;                                  // board units -> audio units
+  setPanner(p.panner, clamp((theirs.cx - mine.cx) * k, -9, 9), clamp((theirs.cy - mine.cy) * k, -9, 9));
+}
+function setPanner(panner, x, y) {
+  const z = -1.2;   // slightly in front so there's always a little presence
+  if (panner.positionX) { panner.positionX.value = x; panner.positionY.value = y; panner.positionZ.value = z; }
+  else panner.setPosition(x, y, z);
+}
+function myViewCenter() {
+  const r = vp(), v = state.view;
+  return { cx: (r.width / 2 - v.tx) / v.s, cy: (r.height / 2 - v.ty) / v.s };
+}
+
+function startVoiceLoop() {
+  const tick = () => {
+    if (!voice.on) return;
+    const now = performance.now();
+    if (now - voice.posT > 180) { voice.posT = now; for (const [, p] of voice.peers) positionPeer(p); }
+    if (now - voice.speakT > 120) { voice.speakT = now; updateSpeaking(); }
+    voice.raf = requestAnimationFrame(tick);
+  };
+  voice.raf = requestAnimationFrame(tick);
+}
+const _buf = new Uint8Array(256);
+function levelOf(analyser) {
+  if (!analyser) return 0;
+  analyser.getByteTimeDomainData(_buf);
+  let sum = 0; for (let i = 0; i < _buf.length; i++) { const v = (_buf[i] - 128) / 128; sum += v * v; }
+  return Math.sqrt(sum / _buf.length);
+}
+function updateSpeaking() {
+  const bar = $("#voiceWho"); if (!bar) return;
+  for (const [, p] of voice.peers) {
+    p.level = p.level * 0.6 + levelOf(p.analyser) * 0.4;
+    const el = bar.querySelector(`[data-vu="${CSS.escape(p.id)}"]`);
+    if (el) el.classList.toggle("speaking", p.level > 0.045);
+  }
+}
+
+function onVoiceMsg(m) {
+  if (!m.u || m.u === myVoiceId()) return;
+  if (m.t === "vjoin") { renderVoiceJoin(); if (voice.on) ensurePeer(m.u); return; }
+  if (m.t === "vleave") { const p = voice.peers.get(m.u); if (p) { closePeer(p); voice.peers.delete(m.u); renderVoiceBar(); } renderVoiceJoin(); return; }
+  if (m.t === "rtc") {
+    if (m.to !== myVoiceId() || !voice.on) return;
+    const p = ensurePeer(m.u); if (!p) return;
+    handleRtc(p, m.kind, m.data);
+  }
+}
+async function handleRtc(p, kind, data) {
+  const pc = p.pc;
+  try {
+    if (kind === "desc") {
+      const offerCollision = data.type === "offer" && (p.makingOffer || pc.signalingState !== "stable");
+      p.ignoreOffer = !p.polite && offerCollision;
+      if (p.ignoreOffer) return;
+      await pc.setRemoteDescription(data);
+      if (data.type === "offer") { await pc.setLocalDescription(); const d = pc.localDescription; live?.send({ t: "rtc", to: p.id, u: myVoiceId(), kind: "desc", data: { type: d.type, sdp: d.sdp } }); }
+    } else if (kind === "ice") {
+      try { await pc.addIceCandidate(data); } catch (e) { if (!p.ignoreOffer) console.warn("ice", e); }
+    }
+  } catch (e) { console.warn("voice rtc", e); }
+}
+
+// ---- voice UI ----
+function voiceSupported() { return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.RTCPeerConnection); }
+function renderVoiceJoin() {
+  const btn = $("#voiceJoinBtn"); if (!btn) return;
+  const inVoice = others().filter((m) => state.presence[m.id]?.voice);
+  if (!voiceSupported()) { btn.hidden = true; return; }
+  btn.hidden = false;
+  btn.textContent = voice.on ? "🎙️ In voice — tap to leave" : (inVoice.length ? `🎙️ Join voice (${inVoice.length} in)` : "🎙️ Start voice chat");
+  btn.classList.toggle("live", voice.on || inVoice.length > 0);
+}
+function showVoiceBar() { $("#voiceBar").hidden = false; renderVoiceBar(); }
+function renderVoiceBar() {
+  const bar = $("#voiceBar"); if (!bar || !voice.on) { if (bar) bar.hidden = !voice.on; return; }
+  bar.hidden = false;
+  $("#voiceMute").textContent = voice.muted ? "🔇" : "🎙️";
+  $("#voiceMute").setAttribute("aria-pressed", String(voice.muted));
+  const who = $("#voiceWho"); who.innerHTML = "";
+  // me
+  who.appendChild(voiceAvatar(state.me, voice.muted, true));
+  for (const [id, p] of voice.peers) {
+    const m = memberById(id) || { id, name: "Friend", color: "c1" };
+    const connected = p.pc && p.pc.connectionState === "connected";
+    const chip = voiceAvatar(m, state.presence[id]?.vmuted, false, !connected);
+    who.appendChild(chip);
+  }
+}
+function voiceAvatar(m, muted, isMe, connecting) {
+  const w = document.createElement("span"); w.className = "vu" + (connecting ? " connecting" : ""); w.dataset.vu = m.id;
+  const c = chipEl({ ...m }); c.classList.remove("more"); w.appendChild(c);
+  if (muted) { const mm = document.createElement("i"); mm.className = "vmute"; mm.textContent = "🔇"; w.appendChild(mm); }
+  const label = document.createElement("small"); label.textContent = isMe ? "You" : (m.name || "").split(" ")[0]; w.appendChild(label);
+  return w;
+}
+
 function renderMutes() {
   const box = $("#muteList");
   box.querySelectorAll(".mute-row").forEach((r) => r.remove());
@@ -4796,6 +5034,25 @@ function wireStatic() {
     const name = $("#settingsName").value.trim(); if (!name) return;
     try { await api.updateProfile({ name }); state.me.name = name; await refreshMembers(); toast("Saved"); } catch (e) { toast(e.message); }
   };
+  $("#avatarEdit").onclick = () => $("#avatarInput").click();
+  $("#avatarInput").addEventListener("change", async (e) => {
+    const f = e.target.files && e.target.files[0]; e.target.value = ""; if (!f) return;
+    try {
+      const blob = await compressImage(f, 256, 0.85);
+      const path = await api.uploadAvatar(blob);
+      await api.updateProfile({ avatar_path: path });
+      const urls = await api.mediaUrls([path]); Object.assign(state.urls, urls);
+      state.me.avatar_path = path;
+      const ap = $("#avatarPreview"); ap.style.backgroundImage = `url("${state.urls[path]}")`; ap.textContent = "";
+      await refreshMembers(); haptic(12); toast("Picture updated");
+    } catch (err) { toast(err.message || "Couldn't update your picture"); }
+  });
+  $("#settingsBio").addEventListener("input", (e) => { $("#bioCount").textContent = `${e.target.value.length}/300`; });
+  $("#saveBio").onclick = async () => {
+    const bio = $("#settingsBio").value.trim() || null;
+    try { await api.updateProfile({ bio }); state.me.bio = bio; await refreshMembers(); toast("Bio saved"); }
+    catch (e) { /relation|column|schema cache/i.test(e.message || "") ? toast("Bios need upgrade-v10.sql in Supabase", 4000) : toast(e.message); }
+  };
 
   window.addEventListener("resize", () => { if (state.board) layoutBoard(); });
   wireCanvas();
@@ -4868,6 +5125,10 @@ function wireStatic() {
   $("#peopleClose").onclick = closePeople;
   $("#peopleBackdrop").onclick = closePeople;
   $("#peopleInvite").onclick = shareCode;
+  // voice chat
+  $("#voiceJoinBtn").onclick = () => (voice.on ? leaveVoice() : joinVoice());
+  $("#voiceMute").onclick = toggleVoiceMute;
+  $("#voiceLeave").onclick = leaveVoice;
   // live location
   $("#toolLoc").onclick = openLoc;
   $("#locClose").onclick = closeLoc;

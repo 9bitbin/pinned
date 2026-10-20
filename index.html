@@ -172,8 +172,16 @@
   <aside class="people" id="people" hidden aria-label="People on this board">
     <div class="people-head"><b>On this board</b><span id="peopleCount"></span><button class="iconbtn" id="peopleClose" aria-label="Close">✕</button></div>
     <ul id="peopleList"></ul>
+    <button class="btn small voice-join" id="voiceJoinBtn" hidden>🎙️ Start voice chat</button>
     <button class="btn small" id="peopleInvite">Invite someone (code <span id="peopleCode"></span>)</button>
   </aside>
+
+  <!-- Voice chat bar -->
+  <div class="voice-bar" id="voiceBar" hidden>
+    <button class="voice-mute" id="voiceMute" aria-label="Mute" aria-pressed="false">🎙️</button>
+    <div class="voice-who" id="voiceWho"></div>
+    <button class="voice-leave" id="voiceLeave" aria-label="Leave voice">Leave</button>
+  </div>
 
   <!-- Live location (opt-in, both ways) -->
   <div class="people-backdrop" id="locBackdrop" hidden></div>
@@ -376,11 +384,21 @@
     </div>
 
     <h3>You</h3>
-    <div class="setting-row">
-      <input id="settingsName" maxlength="30">
-      <button class="btn small" id="saveName">Save</button>
+    <div class="you-row">
+      <button class="avatar-edit" id="avatarEdit" aria-label="Change your picture"><span id="avatarPreview" class="avatar-preview"></span><span class="avatar-cam">📷</span></button>
+      <input type="file" id="avatarInput" accept="image/*" hidden>
+      <div class="you-fields">
+        <div class="setting-row">
+          <input id="settingsName" maxlength="30" placeholder="Your name">
+          <button class="btn small" id="saveName">Save</button>
+        </div>
+        <div class="swatches small" id="settingsSwatches"></div>
+      </div>
     </div>
-    <div class="swatches small" id="settingsSwatches"></div>
+    <div class="bio-row">
+      <textarea id="settingsBio" maxlength="300" rows="2" placeholder="Add a short bio… (optional)"></textarea>
+      <div class="bio-foot"><span class="muted small-note" id="bioCount"></span><button class="btn small" id="saveBio">Save bio</button></div>
+    </div>
 
     <h3>Account</h3>
     <p class="muted" id="acctStatus"></p>
