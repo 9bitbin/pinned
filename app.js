@@ -58,6 +58,64 @@ const QUESTIONS = [
   "What's something you want me to know today?",
 ];
 
+// Crazy 8s rules engine (used by demo mode + the vs-computer AI; the real server
+// runs the same rules in SQL). A game object: {deck,hand_x,hand_o,discard,top,suit,
+// turn,status,winner,x_count,o_count,draw_count,last_note}.
+const C8 = {
+  RANKS: ["A", "2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K"],
+  SUITS: ["H", "D", "C", "S"],
+  suitOf: (c) => c[1],
+  rankOf: (c) => c[0],
+  shuffle(arr) { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; },
+  fullDeck() { const d = []; for (const r of C8.RANKS) for (const s of C8.SUITS) d.push(r + s); return d; },
+  playable(card, top, suit) { return !!card && (C8.suitOf(card) === suit || C8.rankOf(card) === C8.rankOf(top) || C8.rankOf(card) === "8"); },
+  hasPlay(hand, top, suit) { return hand.some((c) => C8.playable(c, top, suit)); },
+  deal() {
+    const deck = C8.shuffle(C8.fullDeck());
+    const hand_x = deck.splice(0, 7), hand_o = deck.splice(0, 7);
+    let top; while (true) { top = deck.shift(); if (C8.rankOf(top) !== "8" || !deck.length) break; deck.push(top); }
+    return { deck, hand_x, hand_o, discard: [top], top, suit: C8.suitOf(top), turn: "x", status: "active", winner: null,
+      x_count: 7, o_count: 7, draw_count: deck.length, last_note: null };
+  },
+  play(g, mark, card, suit) {
+    if (g.status !== "active") return { err: "This game is not being played" };
+    if (g.turn !== mark) return { err: "Not your turn yet" };
+    const hand = mark === "x" ? g.hand_x : g.hand_o;
+    const i = hand.indexOf(card);
+    if (i < 0) return { err: "That card is not in your hand" };
+    if (!C8.playable(card, g.top, g.suit)) return { err: "That card does not match" };
+    let newSuit;
+    if (C8.rankOf(card) === "8") { if (!C8.SUITS.includes(suit)) return { err: "Pick a suit for your 8" }; newSuit = suit; }
+    else newSuit = C8.suitOf(card);
+    hand.splice(i, 1); g.discard.unshift(card); g.top = card; g.suit = newSuit;
+    g[mark === "x" ? "x_count" : "o_count"] = hand.length;
+    if (!hand.length) { g.status = "done"; g.winner = mark; g.last_note = `${card} — went out`; }
+    else { g.turn = mark === "x" ? "o" : "x"; g.last_note = `played ${card}${C8.rankOf(card) === "8" ? " → " + newSuit : ""}`; }
+    return { ok: true };
+  },
+  draw(g, mark) {
+    if (g.status !== "active") return { err: "This game is not being played" };
+    if (g.turn !== mark) return { err: "Not your turn yet" };
+    const hand = mark === "x" ? g.hand_x : g.hand_o;
+    if (!g.deck.length && g.discard.length > 1) { g.deck = C8.shuffle(g.discard.slice(1)); g.discard = [g.discard[0]]; }
+    if (!g.deck.length) { g.turn = mark === "x" ? "o" : "x"; g.draw_count = 0; g.last_note = "no cards to draw — passed"; return { ok: true, passed: true }; }
+    const card = g.deck.shift(); hand.push(card);
+    const keep = C8.playable(card, g.top, g.suit);
+    g[mark === "x" ? "x_count" : "o_count"] = hand.length; g.draw_count = g.deck.length;
+    if (!keep) g.turn = mark === "x" ? "o" : "x";
+    g.last_note = keep ? "drew a card" : "drew a card — passed";
+    return { ok: true, drew: card, keep };
+  },
+  view(g, mark) {
+    const hand = (mark === "x" ? g.hand_x : mark === "o" ? g.hand_o : []).slice().sort((a, b) => (C8.suitOf(a).localeCompare(C8.suitOf(b)) || C8.RANKS.indexOf(C8.rankOf(a)) - C8.RANKS.indexOf(C8.rankOf(b))));
+    return { status: g.status, mark, your_turn: !!mark && g.turn === mark && g.status === "active", turn: g.turn,
+      top: g.top, suit: g.suit, your_count: mark === "x" ? g.x_count : g.o_count, opp_count: mark === "x" ? g.o_count : g.x_count,
+      x_count: g.x_count, o_count: g.o_count, draw_count: g.draw_count, winner: g.winner, last_note: g.last_note,
+      can_pass: !!mark && g.turn === mark && g.status === "active" && !C8.hasPlay(mark === "x" ? g.hand_x : g.hand_o, g.top, g.suit) && g.draw_count === 0,
+      hand };
+  },
+};
+
 const $ = (s) => document.querySelector(s);
 const isDemo = !CONFIG.supabaseUrl || CONFIG.supabaseUrl.includes("YOUR-");
 const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
@@ -300,8 +358,21 @@ function createSupabaseApi() {
       gamesCh = sb.channel("games-" + boardId)
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "game_scores", filter: f }, (p) => h.onScore(p.new))
         .on("postgres_changes", { event: "*", schema: "public", table: "ttt_games", filter: f }, (p) => h.onTtt(p.new))
+        .on("postgres_changes", { event: "*", schema: "public", table: "crazy8_games", filter: f }, (p) => h.onC8(p.new))
         .subscribe();
     },
+    // ---- Crazy 8s (v8) ----
+    async c8List(boardId) { return must(await sb.from("crazy8_games").select("*").eq("board_id", boardId).order("updated_at", { ascending: false }).limit(80)); },
+    async c8Challenge(boardId, oId) {
+      const { data, error } = await sb.from("crazy8_games").insert({ board_id: boardId, x_id: myId(), o_id: oId }).select().single();
+      if (error) throw new Error(/duplicate|unique/i.test(error.message) ? "You already have a game going with them" : error.message);
+      return data;
+    },
+    async c8View(id) { return must(await sb.rpc("crazy8_view", { p_game: id })); },
+    async c8Respond(id, accept) { return must(await sb.rpc("crazy8_respond", { p_game: id, p_accept: accept })); },
+    async c8Play(id, card, suit) { return must(await sb.rpc("crazy8_play", { p_game: id, p_card: card, p_suit: suit || null })); },
+    async c8Draw(id) { return must(await sb.rpc("crazy8_draw", { p_game: id })); },
+    async c8Quit(id) { return must(await sb.rpc("crazy8_quit", { p_game: id })); },
     // ---- games (v7) ----
     async gameBoard(boardId, game) { return must(await sb.rpc("game_board", { p_board: boardId, p_game: game })) || { best: [], recent: [] }; },
     async saveScore(boardId, game, score, mode, roundId) {
@@ -359,7 +430,7 @@ function createSupabaseApi() {
 // Demo backend: localStorage + BroadcastChannel. Each browser tab is its own "person".
 function createDemoApi() {
   const KEY = "soy-demo-db";
-  const blank = () => ({ profiles: {}, boards: {}, members: [], notes: [], media: {}, reactions: [], replies: [], answers: [], pings: [], strokes: [], messages: [], reads: [], bgreqs: [], scores: [], ttt: [] });
+  const blank = () => ({ profiles: {}, boards: {}, members: [], notes: [], media: {}, reactions: [], replies: [], answers: [], pings: [], strokes: [], messages: [], reads: [], bgreqs: [], scores: [], ttt: [], c8: [] });
   const canSee = (m) => !m.to_id || m.sender_id === meId() || m.to_id === meId();
   const db = () => ({ ...blank(), ...ls.get(KEY, {}) });
   const save = (d) => ls.set(KEY, d);
@@ -388,11 +459,15 @@ function createDemoApi() {
     if (m.type === "board") handlers.onBoard(m.row);
     if (m.type === "score") handlers.onScore(m.row);
     if (m.type === "ttt") handlers.onTtt(m.row);
+    if (m.type === "c8") handlers.onC8(m.row);
   };
   // tic-tac-toe rules, same as the database functions
   const TTT_LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
   const tttWinner = (c) => { for (const [a, b, e] of TTT_LINES) if (c[a] !== "-" && c[a] === c[b] && c[a] === c[e]) return c[a]; return c.includes("-") ? null : "draw"; };
   const tttSave = (d, g) => { g.updated_at = new Date().toISOString(); save(d); emit({ type: "ttt", row: g }); return { ...g }; };
+  const c8Mark = (g) => (g.x_id === meId() ? "x" : g.o_id === meId() ? "o" : null);
+  const c8Public = (g) => ({ id: g.id, board_id: g.board_id, x_id: g.x_id, o_id: g.o_id, status: g.status, turn: g.turn, top_card: g.top, suit: g.suit, x_count: g.x_count, o_count: g.o_count, draw_count: g.draw_count, winner: g.winner, last_note: g.last_note, updated_at: g.updated_at });
+  const c8Save = (d, g) => { g.updated_at = new Date().toISOString(); save(d); emit({ type: "c8", row: c8Public(g) }); };
   const code = () => Array.from({ length: 8 }, () => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 32)]).join("");
 
   return {
@@ -578,6 +653,41 @@ function createDemoApi() {
       if (g.status === "invited") g.status = "cancelled";
       else if (g.status === "active") { g.status = "done"; g.winner = meId() === g.x_id ? "O" : "X"; }
       return tttSave(d, g);
+    },
+    // ---- Crazy 8s (demo) ----
+    async c8List(boardId) { return db().c8.filter((g) => g.board_id === boardId).sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1)).map(c8Public); },
+    async c8Challenge(boardId, oId) {
+      const d = db();
+      if (d.c8.some((g) => g.board_id === boardId && ["invited", "active"].includes(g.status) && [g.x_id, g.o_id].includes(oId) && [g.x_id, g.o_id].includes(meId()))) throw new Error("You already have a game going with them");
+      const g = { id: uid(), board_id: boardId, x_id: meId(), o_id: oId, status: "invited", turn: "x", top: null, suit: null, deck: [], hand_x: [], hand_o: [], discard: [], x_count: 0, o_count: 0, draw_count: 0, winner: null, last_note: null, created_at: new Date().toISOString() };
+      d.c8.push(g); c8Save(d, g); return c8Public(g);
+    },
+    async c8View(id) { const g = db().c8.find((x) => x.id === id); if (!g) throw new Error("Game not found"); return C8.view(g, c8Mark(g)); },
+    async c8Respond(id, accept) {
+      const d = db(), g = d.c8.find((x) => x.id === id);
+      if (!g) throw new Error("Game not found");
+      if (g.o_id !== meId()) throw new Error("Only the person challenged can answer");
+      if (g.status !== "invited") throw new Error("This challenge was already answered");
+      if (!accept) { g.status = "declined"; c8Save(d, g); return C8.view(g, c8Mark(g)); }
+      Object.assign(g, C8.deal()); c8Save(d, g); return C8.view(g, c8Mark(g));
+    },
+    async c8Play(id, card, suit) {
+      const d = db(), g = d.c8.find((x) => x.id === id); if (!g) throw new Error("Game not found");
+      const mark = c8Mark(g); if (!mark) throw new Error("You are watching this game, not playing");
+      const r = C8.play(g, mark, card, suit); if (r.err) throw new Error(r.err);
+      c8Save(d, g); return C8.view(g, mark);
+    },
+    async c8Draw(id) {
+      const d = db(), g = d.c8.find((x) => x.id === id); if (!g) throw new Error("Game not found");
+      const mark = c8Mark(g); if (!mark) throw new Error("You are watching this game, not playing");
+      const r = C8.draw(g, mark); if (r.err) throw new Error(r.err);
+      c8Save(d, g); return C8.view(g, mark);
+    },
+    async c8Quit(id) {
+      const d = db(), g = d.c8.find((x) => x.id === id); if (!g || ![g.x_id, g.o_id].includes(meId())) throw new Error("Not your game");
+      if (g.status === "invited") g.status = "cancelled";
+      else if (g.status === "active") { g.status = "done"; g.winner = meId() === g.x_id ? "o" : "x"; }
+      c8Save(d, g); return C8.view(g, c8Mark(g));
     },
     meId,
   };
@@ -802,6 +912,7 @@ const boardHandlers = () => ({
   onBoard: onBoardEvent,
   onScore: onScoreEvent,
   onTtt: onTttEvent,
+  onC8: onC8Event,
 });
 
 // Phones pause backgrounded web apps and drop their live connection.
@@ -816,7 +927,7 @@ function onResume(force = false) {
   resync().catch(() => {});
   refreshMembers().catch(() => {});
   refreshQuestionDot();
-  loadChats(); loadBgRequests(); loadTtt();
+  loadChats(); loadBgRequests(); loadTtt(); loadC8();
   if (!games.race) raceSend("ask");
   api.getBoard?.(state.board.id).then((b) => b && onBoardEvent(b)).catch(() => {});
   markThreadRead();
@@ -838,7 +949,7 @@ async function openBoard(board) {
   api.subscribe(board.id, boardHandlers());
   live = api.live(board.id, state.me, { onMessage: onLiveMessage, onPresence: onPresence });
   api.touchSeen(board.id);
-  loadTtt();
+  loadTtt(); loadC8();
   setTimeout(() => raceSend("ask"), 1500);
   // restore live-location sharing if it was on for this board
   geo.on = false; geo.me = null; geo.watch = null; geo.denied = false;
@@ -2710,7 +2821,7 @@ function resetBoardState() {
   if (geo.watch != null) { try { navigator.geolocation.clearWatch(geo.watch); } catch { /* ignore */ } }
   geo.on = false; geo.me = null; geo.watch = null; geo.denied = false; closeLoc(); $("#locDot").hidden = true;
   together.pad?.reset(); together.open = false;
-  for (const s of ["detail", "composer", "settings", "ping", "question", "together", "chats", "edit", "games", "ttt"]) { $("#" + s).hidden = true; $("#" + s + "Backdrop").hidden = true; }
+  for (const s of ["detail", "composer", "settings", "ping", "question", "together", "chats", "edit", "games", "ttt", "c8"]) { $("#" + s).hidden = true; $("#" + s + "Backdrop").hidden = true; }
   $("#qDot").hidden = true; $("#doodleDot").hidden = true;
   $("#codeInput").value = ""; setError($("#pairError"));
 }
@@ -3236,10 +3347,12 @@ const GAME_LIST = [
   { id: "kestrel", name: "Neon Kestrel", icon: "🦅", file: "games/neon-kestrel.html", blurb: "Himal's synthwave flyer. Tap to flap through the neon towers." },
   { id: "pindrop", name: "Pin Drop", icon: "📌", file: "games/pin-drop.html", blurb: "Drop the swinging pin on a sliding bullseye. 10 drops." },
   { id: "plane", name: "Paper Plane", icon: "✈️", file: "games/paper-plane.html", blurb: "Hold to climb, let go to dive. Dodge pins, grab hearts." },
+  { id: "blocks", name: "Block Drop", icon: "🟦", file: "games/block-drop.html", blurb: "Stack falling blocks and clear lines. A race gets the same pieces." },
+  { id: "typerace", name: "Type Race", icon: "⌨️", file: "games/type-race.html", blurb: "Type the passage fast and clean. Everyone gets the same text." },
 ];
 const gameById = (id) => GAME_LIST.find((g) => g.id === id);
 const RACE_WAIT = 20000, RACE_MAX = 4 * 60000, RACE_STALE = 20000;
-const games = { boards: {}, v7: true, v7Warned: false, ttt: [], boardGame: null, race: null, play: null, tttId: null, cpu: null, cpuLevel: "easy", picking: false, timer: null };
+const games = { boards: {}, v7: true, v8: true, v7Warned: false, ttt: [], c8: [], boardGame: null, race: null, play: null, tttId: null, cpu: null, cpuLevel: "easy", picking: false, timer: null, c8Id: null, c8View: null, c8cpu: null, c8pick: false, c8sel: null };
 const colorOf = (id) => BRIGHT[memberById(id)?.color] || BRIGHT.c1;
 const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const fmtSecs = (ms) => `0:${pad2(Math.max(0, Math.ceil(ms / 1000)))}`;
@@ -3253,6 +3366,7 @@ function resetGames() {
   if (games.play) closeGameOverlay(true);
   clearInterval(games.timer); games.timer = null;
   games.race = null; games.boards = {}; games.ttt = []; games.tttId = null; games.cpu = null; games.boardGame = null;
+  games.c8 = []; games.c8Id = null; games.c8View = null; games.c8cpu = null; games.c8sel = null;
   const d = $("#gamesDot"); if (d) d.hidden = true;
 }
 
@@ -3293,9 +3407,9 @@ function openGames() {
   games.boardGame = null; games.picking = false;
   renderGames(); openSheet("games");
   loadAllGameBoards().then(renderGamesIfOpen);
-  loadTtt();
+  loadTtt(); loadC8();
 }
-function renderGamesIfOpen() { if (!$("#games").hidden) renderGames(); if (!$("#ttt").hidden) renderTtt(); updateGamesDot(); }
+function renderGamesIfOpen() { if (!$("#games").hidden) renderGames(); if (!$("#ttt").hidden) renderTtt(); if (!$("#c8").hidden && games.c8View) renderC8(); updateGamesDot(); }
 
 function renderGames() {
   $("#gamesV7").hidden = games.v7;
@@ -3332,6 +3446,7 @@ function renderGames() {
     list.appendChild(card);
   }
   renderTttCard();
+  renderC8Card();
 }
 
 function renderRaceBanner() {
@@ -3382,7 +3497,8 @@ function renderScoreboard() {
 
 function updateGamesDot() {
   const me = state.me?.id, r = games.race;
-  const myTurn = games.ttt.some((g) => (g.status === "active" && ((g.turn === "X" && g.x_id === me) || (g.turn === "O" && g.o_id === me))) || (g.status === "invited" && g.o_id === me));
+  const myTurn = games.ttt.some((g) => (g.status === "active" && ((g.turn === "X" && g.x_id === me) || (g.turn === "O" && g.o_id === me))) || (g.status === "invited" && g.o_id === me))
+    || games.c8.some((g) => (g.status === "active" && ((g.turn === "x" && g.x_id === me) || (g.turn === "o" && g.o_id === me))) || (g.status === "invited" && g.o_id === me));
   const lobby = r && r.phase === "lobby" && !r.joined;
   const d = $("#gamesDot");
   d.hidden = !(myTurn || lobby);
@@ -3912,6 +4028,256 @@ function cpuTurn() {
   }, 450);
 }
 
+// ---------------------------------------------------------------- Crazy 8s
+const SUIT_SYM = { H: "♥", D: "♦", C: "♣", S: "♠" };
+const SUIT_NAME = { H: "Hearts", D: "Diamonds", C: "Clubs", S: "Spades" };
+const rankLabel = (r) => (r === "T" ? "10" : r);
+function cardFace(card, { onClick, dim, small } = {}) {
+  const el = mk("button", "pcard" + (dim ? " dim" : "") + (small ? " sm" : ""));
+  if (!card) { el.classList.add("back"); el.disabled = true; return el; }
+  const s = card[1], red = s === "H" || s === "D";
+  el.classList.add(red ? "red" : "blk");
+  el.innerHTML = `<span class="r">${rankLabel(card[0])}</span><span class="s">${SUIT_SYM[s]}</span>`;
+  if (onClick) el.onclick = onClick; else el.disabled = true;
+  el.setAttribute("aria-label", `${rankLabel(card[0])} of ${SUIT_NAME[s]}`);
+  return el;
+}
+
+async function loadC8() {
+  if (!state.board) return;
+  try { games.c8 = await api.c8List(state.board.id); games.v7 = true; }
+  catch (e) { if (v7Missing(e) || /crazy8/i.test(e.message)) games.v8 = false; }
+  renderGamesIfOpen();
+}
+function upsertC8(row) {
+  const i = games.c8.findIndex((g) => g.id === row.id);
+  if (i >= 0) games.c8[i] = { ...games.c8[i], ...row }; else games.c8.unshift(row);
+  games.c8.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+}
+async function onC8Event(row) {
+  if (!row || row.board_id !== state.board?.id) return;
+  const prev = games.c8.find((g) => g.id === row.id);
+  upsertC8(row);
+  const me = state.me.id, opp = row.x_id === me ? row.o_id : row.x_id, name = memberById(opp)?.name || "Someone";
+  const mine = row.x_id === me || row.o_id === me;
+  const watching = !$("#c8").hidden && games.c8Id === row.id;
+  if (mine && !watching) {
+    if (row.status === "invited" && row.o_id === me && !prev) toast(`🃏 ${name} challenged you to Crazy 8s. Tap 🎮 Games.`, 5000);
+    else if (row.status === "declined" && row.x_id === me && prev?.status !== "declined") toast(`${name} passed on Crazy 8s`);
+  }
+  if (watching) { try { games.c8View = await api.c8View(row.id); } catch (e) {} renderC8(); }
+  renderGamesIfOpen();
+}
+
+const c8Mark = (g) => (g.x_id === state.me.id ? "x" : g.o_id === state.me.id ? "o" : null);
+function c8StatusText(g) {
+  const me = state.me.id, mark = c8Mark(g);
+  const nm = (id) => (id === me ? "You" : (memberById(id)?.name || "Someone"));
+  const opp = mark === "x" ? g.o_id : g.x_id;
+  if (!mark) {
+    if (g.status === "active") return `${nm(g.turn === "x" ? g.x_id : g.o_id)} to play`;
+    if (g.status === "done") return g.winner ? `${nm(g.winner === "x" ? g.x_id : g.o_id)} won` : "Over";
+    return g.status === "invited" ? "Waiting to start" : "";
+  }
+  if (g.status === "invited") return g.o_id === me ? `${nm(g.x_id)} challenged you` : `Waiting for ${nm(opp)}`;
+  if (g.status === "active") return g.turn === mark ? "Your move" : `${nm(opp)}'s move`;
+  if (g.status === "declined") return "Declined";
+  if (g.status === "cancelled") return "Called off";
+  if (g.status === "done") return g.winner === mark ? "You won! 🎉" : `${nm(opp)} won`;
+  return "";
+}
+
+function renderC8Card() {
+  const card = $("#c8Card"); card.innerHTML = "";
+  const top = mk("div", "gc-top");
+  top.appendChild(mk("span", "gc-ic", "🃏"));
+  const t = mk("div"); t.appendChild(mk("b", null, "Crazy 8s")); t.appendChild(mk("small", null, "Match suit or rank. 8s are wild. First to empty their hand wins.")); top.appendChild(t);
+  card.appendChild(top);
+  const me = state.me.id, rec = {};
+  for (const g of games.c8) {
+    if (g.status !== "done" || !g.winner) continue;
+    const mark = c8Mark(g); if (!mark) continue;
+    const opp = mark === "x" ? g.o_id : g.x_id, r = rec[opp] || (rec[opp] = { w: 0, l: 0 });
+    if (g.winner === mark) r.w++; else r.l++;
+  }
+  const recs = Object.entries(rec).map(([id, r]) => `vs ${memberById(id)?.name || "someone"} ${r.w}–${r.l}`);
+  card.appendChild(mk("div", "gc-best", recs.length ? `Your record: ${recs.join(" · ")}` : "No games yet."));
+  const acts = mk("div", "gc-actions");
+  const cpu = mk("button", "btn small", "vs Computer"); cpu.onclick = () => openC8Cpu();
+  const ch = mk("button", "btn small primary", "Challenge");
+  ch.disabled = !others().length || games.v8 === false;
+  ch.onclick = () => { if (others().length === 1) c8Challenge(others()[0].id); else { games.c8pick = !games.c8pick; renderGames(); } };
+  acts.append(cpu, ch); card.appendChild(acts);
+  if (games.c8pick && others().length > 1) {
+    const pick = mk("div", "ttt-pick");
+    for (const m of others()) { const b = mk("button", "btn small"); b.appendChild(chipEl(m)); b.appendChild(document.createTextNode(m.name)); b.onclick = () => { games.c8pick = false; c8Challenge(m.id); }; pick.appendChild(b); }
+    card.appendChild(pick);
+  }
+  const open = games.c8.filter((g) => g.status === "invited" || g.status === "active").slice(0, 12);
+  if (open.length) {
+    const ul = mk("ul", "ttt-list");
+    for (const g of open) {
+      const li = mk("li"); const mine = !!c8Mark(g);
+      const who = mine ? `vs ${memberById(g.x_id === me ? g.o_id : g.x_id)?.name || "someone"}` : `${memberById(g.x_id)?.name || "?"} vs ${memberById(g.o_id)?.name || "?"}`;
+      li.appendChild(mk("span", "nm", who));
+      const st = c8StatusText(g);
+      li.appendChild(mk("small", (st === "Your move" || st.endsWith("challenged you")) ? "hot" : null, st));
+      const b = mk("button", "btn small", mine ? "Open" : "Watch"); b.onclick = () => openC8(g.id);
+      li.appendChild(b); ul.appendChild(li);
+    }
+    card.appendChild(ul);
+  }
+}
+
+async function c8Challenge(oppId) {
+  try {
+    const g = await api.c8Challenge(state.board.id, oppId);
+    upsertC8(g); api.notify(state.board.id, "c8", { game_id: g.id });
+    openC8(g.id);
+  } catch (e) { if (v7Missing(e)) needsV7(); else toast(e.message); }
+}
+async function openC8(id) {
+  games.c8Id = id; games.c8cpu = null; games.c8sel = null;
+  try { games.c8View = await api.c8View(id); } catch (e) { toast(e.message); return; }
+  closeSheet("games"); renderC8(); openSheet("c8");
+}
+function openC8Cpu() {
+  const g = { x_id: "me", o_id: "cpu", ...C8.deal() };
+  games.c8cpu = g; games.c8Id = "cpu"; games.c8sel = null;
+  games.c8View = C8.view(g, "x");
+  closeSheet("games"); renderC8(); openSheet("c8");
+}
+function closeC8() { closeSheet("c8"); games.c8Id = null; games.c8cpu = null; games.c8View = null; renderGames(); openSheet("games"); }
+
+function renderC8() {
+  const v = games.c8View; if (!v) return;
+  const cpu = games.c8Id === "cpu";
+  const g = cpu ? null : games.c8.find((x) => x.id === games.c8Id);
+  const nm = (id) => (id === state.me.id ? "You" : (memberById(id)?.name || "Someone"));
+  const oppName = cpu ? "Computer" : (g ? nm(g.x_id === state.me.id ? g.o_id : g.x_id) : "Opponent");
+  $("#c8Title").textContent = `You 🃏 vs ${oppName}`;
+  // status
+  let status = v.last_note ? v.last_note[0].toUpperCase() + v.last_note.slice(1) : "";
+  if (cpu) status = v.status === "done" ? (v.winner === "x" ? "You won! 🎉" : "Computer won") : (v.your_turn ? "Your move" : "Computer thinking…");
+  else status = c8StatusText(g);
+  $("#c8Status").textContent = status;
+  $("#c8Status").classList.toggle("hot", status === "Your move");
+  // opponent cards (face-down count)
+  const opp = $("#c8Opp"); opp.innerHTML = "";
+  opp.appendChild(mk("span", "c8-count", `${oppName}: ${v.opp_count ?? "?"} cards`));
+  const fan = mk("div", "c8-fan");
+  for (let i = 0; i < Math.min(v.opp_count || 0, 12); i++) fan.appendChild(cardFace(null, {}));
+  opp.appendChild(fan);
+  // discard + suit + draw
+  const mid = $("#c8Mid"); mid.innerHTML = "";
+  const pile = mk("div", "c8-pile");
+  pile.appendChild(cardFace(v.top, {}));
+  const suitBadge = mk("div", "c8-suit " + (v.suit === "H" || v.suit === "D" ? "red" : "blk"), SUIT_SYM[v.suit] || "");
+  if (v.top && v.top[0] === "8") suitBadge.classList.add("wild");
+  pile.appendChild(suitBadge);
+  mid.appendChild(pile);
+  const drawBtn = mk("button", "c8-draw", `Draw\n(${v.draw_count})`);
+  drawBtn.disabled = !v.your_turn;
+  drawBtn.onclick = c8DrawUi;
+  mid.appendChild(drawBtn);
+  // your hand
+  const hand = $("#c8Hand"); hand.innerHTML = "";
+  for (const c of v.hand) {
+    const ok = v.your_turn && C8.playable(c, v.top, v.suit);
+    hand.appendChild(cardFace(c, { onClick: ok ? () => c8PlayUi(c) : null, dim: v.your_turn && !ok }));
+  }
+  if (!v.hand.length && v.status !== "done") hand.appendChild(mk("div", "c8-empty", "No cards"));
+  // suit chooser
+  $("#c8Suits").hidden = !games.c8sel;
+  // actions
+  const invitedToMe = !cpu && g && g.status === "invited" && g.o_id === state.me.id;
+  $("#c8Accept").hidden = !invitedToMe; $("#c8Decline").hidden = !invitedToMe;
+  $("#c8Pass").hidden = !v.can_pass;
+  const mark = cpu ? "x" : c8Mark(g);
+  $("#c8Quit").hidden = cpu || !mark || !(g.status === "invited" || g.status === "active") || invitedToMe;
+  $("#c8Quit").textContent = g && g.status === "invited" ? "Call off" : "Resign";
+  $("#c8Rematch").hidden = cpu ? v.status !== "done" : !(mark && ["done", "declined", "cancelled"].includes(g.status));
+  $("#c8Level").hidden = !cpu;
+  $("#c8Level").querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.level === games.cpuLevel)));
+  updateGamesDot();
+}
+
+function c8PlayUi(card) {
+  if (card[0] === "8") { games.c8sel = card; renderSuitChooser(); $("#c8Suits").hidden = false; return; }
+  c8Commit(card, null);
+}
+function renderSuitChooser() {
+  const box = $("#c8Suits"); box.querySelectorAll(".c8-suitpick").forEach((e) => e.remove());
+  for (const s of ["H", "D", "C", "S"]) {
+    const b = mk("button", "c8-suitpick " + (s === "H" || s === "D" ? "red" : "blk"), SUIT_SYM[s]);
+    b.onclick = () => { const c = games.c8sel; games.c8sel = null; $("#c8Suits").hidden = true; c8Commit(c, s); };
+    box.appendChild(b);
+  }
+}
+async function c8Commit(card, suit) {
+  if (games.c8Id === "cpu") {
+    const g = games.c8cpu, r = C8.play(g, "x", card, suit);
+    if (r.err) { toast(r.err); return; }
+    games.c8View = C8.view(g, "x"); renderC8();
+    if (g.status === "done" && g.winner === "x") rain("🎉", 10);
+    if (g.status === "active") c8CpuTurn();
+    return;
+  }
+  const g = games.c8.find((x) => x.id === games.c8Id);
+  try { games.c8View = await api.c8Play(games.c8Id, card, suit); upsertC8(await api.c8List(state.board.id).then((l) => l.find((x) => x.id === games.c8Id) || g)); api.notify(state.board.id, "c8", { game_id: games.c8Id }); if (games.c8View.status === "done" && games.c8View.winner === games.c8View.mark) rain("🎉", 10); }
+  catch (e) { toast(e.message); try { games.c8View = await api.c8View(games.c8Id); } catch (_) {} }
+  renderC8();
+}
+async function c8DrawUi() {
+  if (games.c8Id === "cpu") {
+    const g = games.c8cpu; C8.draw(g, "x"); games.c8View = C8.view(g, "x"); renderC8();
+    if (g.status === "active" && g.turn === "o") c8CpuTurn();
+    return;
+  }
+  try { games.c8View = await api.c8Draw(games.c8Id); api.notify(state.board.id, "c8", { game_id: games.c8Id }); }
+  catch (e) { toast(e.message); }
+  renderC8();
+}
+async function c8RespondUi(accept) {
+  try { games.c8View = await api.c8Respond(games.c8Id, accept); api.notify(state.board.id, "c8", { game_id: games.c8Id }); }
+  catch (e) { toast(e.message); }
+  if (accept) renderC8(); else closeC8();
+}
+async function c8QuitUi() {
+  const g = games.c8.find((x) => x.id === games.c8Id);
+  if (g && g.status === "active" && !confirm("Resign this game? It counts as a loss.")) return;
+  try { games.c8View = await api.c8Quit(games.c8Id); if (games.c8View.status === "done") api.notify(state.board.id, "c8", { game_id: games.c8Id }); }
+  catch (e) { toast(e.message); }
+  renderC8();
+}
+function c8Rematch() {
+  if (games.c8Id === "cpu") { openC8Cpu(); return; }
+  const g = games.c8.find((x) => x.id === games.c8Id); if (!g) return;
+  c8Challenge(g.x_id === state.me.id ? g.o_id : g.x_id);
+}
+// computer: play a sensible card, else draw
+function c8CpuTurn() {
+  const g = games.c8cpu; games.c8View = C8.view(g, "x"); renderC8();
+  setTimeout(() => {
+    if (games.c8cpu !== g || g.status !== "active" || g.turn !== "o") return;
+    const hand = g.hand_o;
+    const plain = hand.filter((c) => c[0] !== "8" && C8.playable(c, g.top, g.suit));
+    const eights = hand.filter((c) => c[0] === "8");
+    let moved = false;
+    if (plain.length) { C8.play(g, "o", plain[Math.floor(Math.random() * plain.length)]); moved = true; }
+    else if (eights.length && (games.cpuLevel === "hard" || !C8.hasPlay(hand.filter((c) => c[0] !== "8"), g.top, g.suit))) {
+      const cnt = { H: 0, D: 0, C: 0, S: 0 }; for (const c of hand) if (c[0] !== "8") cnt[c[1]]++;
+      const best = ["H", "D", "C", "S"].sort((a, b) => cnt[b] - cnt[a])[0];
+      C8.play(g, "o", eights[0], best); moved = true;
+    } else {
+      const r = C8.draw(g, "o");
+      if (r.keep && r.drew) { if (r.drew[0] === "8") { const cnt = { H: 0, D: 0, C: 0, S: 0 }; for (const c of g.hand_o) if (c[0] !== "8") cnt[c[1]]++; C8.play(g, "o", r.drew, ["H", "D", "C", "S"].sort((a, b) => cnt[b] - cnt[a])[0]); } else C8.play(g, "o", r.drew); }
+    }
+    games.c8View = C8.view(g, "x"); renderC8();
+    if (g.status === "active" && g.turn === "o") c8CpuTurn();   // drew-and-passed? (shouldn't loop; turn would be x)
+  }, 700);
+}
+
 function renderMutes() {
   const box = $("#muteList");
   box.querySelectorAll(".mute-row").forEach((r) => r.remove());
@@ -4218,6 +4584,15 @@ function wireStatic() {
   $("#tttQuit").onclick = tttQuitUi;
   $("#tttRematch").onclick = tttRematch;
   $("#tttLevel").querySelectorAll("button").forEach((b) => (b.onclick = () => { games.cpuLevel = b.dataset.level; renderTtt(); }));
+  // crazy 8s
+  $("#c8Close").onclick = closeC8;
+  $("#c8Backdrop").onclick = closeC8;
+  $("#c8Accept").onclick = () => c8RespondUi(true);
+  $("#c8Decline").onclick = () => c8RespondUi(false);
+  $("#c8Pass").onclick = c8DrawUi;
+  $("#c8Quit").onclick = c8QuitUi;
+  $("#c8Rematch").onclick = c8Rematch;
+  $("#c8Level").querySelectorAll("button").forEach((b) => (b.onclick = () => { games.cpuLevel = b.dataset.level; renderC8(); }));
   $("#chatsClose").onclick = () => closeSheet("chats");
   $("#chatsBackdrop").onclick = () => closeSheet("chats");
   $("#chatBack").onclick = () => { chat.peer = null; $("#chatList").hidden = false; $("#chatThread").hidden = true; renderThreadList(); };

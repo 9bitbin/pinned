@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Type Race</title>
+<style>
+  :root { --ink:#1e2233; --bg:#f4f1ea; --accent:#3e63dd; --good:#30a46c; --bad:#e5484d; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; overflow:hidden; background:var(--bg); color:var(--ink);
+    -webkit-tap-highlight-color:transparent;
+    font-family: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #wrap { position:fixed; inset:0; display:flex; flex-direction:column; padding:14px 16px calc(env(safe-area-inset-bottom) + 14px); gap:12px; }
+  .hud { display:flex; gap:14px; justify-content:center; font-weight:800; font-size:15px; flex-wrap:wrap; }
+  .hud b { color:var(--accent); }
+  .track { height:34px; border-radius:17px; background:#e5ddcd; position:relative; overflow:hidden; flex:none; }
+  .track .me, .track .gh { position:absolute; top:0; height:100%; display:flex; align-items:center; transition:left .2s linear; }
+  .track .lane { position:absolute; left:8px; right:8px; top:50%; border-top:2px dashed rgba(0,0,0,.12); }
+  .track .racer { font-size:20px; transform:translateX(-50%); }
+  .track .tag { position:absolute; font-size:10px; font-weight:800; transform:translate(-50%,14px); white-space:nowrap; }
+  .passage { flex:1; overflow-y:auto; font-size:22px; line-height:1.7; font-weight:600; letter-spacing:.2px;
+    background:#fffdf7; border-radius:16px; padding:18px; box-shadow:0 8px 20px -12px rgba(0,0,0,.3); -webkit-user-select:none; user-select:none; }
+  .passage .done { color:var(--good); }
+  .passage .wrong { color:#fff; background:var(--bad); border-radius:3px; }
+  .passage .cur { background:var(--accent); color:#fff; border-radius:3px; animation:blink 1s step-end infinite; }
+  @keyframes blink { 50% { background:rgba(62,99,221,.45); } }
+  #inp { position:absolute; opacity:0; height:1px; width:1px; }
+  .tapline { text-align:center; font-size:13px; color:#8a8575; }
+  .panel { position:fixed; inset:0; display:grid; place-items:center; padding:24px; }
+  .card { background:#fffdf7; border-radius:18px; padding:22px; width:min(340px,100%); text-align:center; box-shadow:0 14px 30px -12px rgba(0,0,0,.4); }
+  .card h1 { margin:0 0 6px; font-size:28px; }
+  .card p { margin:6px 0; color:#6b6758; line-height:1.4; }
+  .big { font-size:44px; font-weight:900; color:var(--accent); margin:4px 0; }
+  .card button { font:inherit; font-weight:800; font-size:18px; border:0; border-radius:999px; padding:12px 26px; margin-top:12px; background:var(--accent); color:#fff; }
+  [hidden]{display:none!important;}
+</style>
+<script src="bridge.js"></script>
+</head>
+<body>
+<div id="wrap">
+  <div class="hud">
+    <div>WPM <b id="wpm">0</b></div>
+    <div>Accuracy <b id="acc">100%</b></div>
+    <div><b id="prog">0%</b></div>
+  </div>
+  <div class="track" id="track"><div class="lane"></div></div>
+  <div class="passage" id="passage" tabindex="0"></div>
+  <div class="tapline" id="tapline">Tap the text and start typing</div>
+</div>
+<input id="inp" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Type here">
+<div class="panel" id="startPanel">
+  <div class="card">
+    <h1>⌨️ Type Race</h1>
+    <p>Type the passage as fast and cleanly as you can. Everyone in a race gets the same text.</p>
+    <p>Your score is your <b>net WPM</b> — speed minus mistakes.</p>
+    <button id="startBtn">Start</button>
+  </div>
+</div>
+<div class="panel" id="overPanel" hidden>
+  <div class="card">
+    <h1>Finished! 🏁</h1>
+    <div class="big" id="finalScore">0</div>
+    <p id="finalSub"></p>
+    <button id="againBtn">Race again</button>
+    <p id="waitMsg" hidden>Waiting for everyone to finish…</p>
+  </div>
+</div>
+<script>
+(() => {
+  const PB = window.PB;
+  const $ = (id)=>document.getElementById(id);
+  const PASSAGES = [
+    "The quiet morning light slipped through the curtains and painted soft yellow lines across the floor.",
+    "A good note says more in one honest line than a long speech full of clever words ever could.",
+    "She packed the last box, looked around the empty room, and smiled at everything that came next.",
+    "Learning something every day is like adding one small brick to a wall that slowly becomes a home.",
+    "The best races are not the ones you win, but the ones where you surprise yourself near the end.",
+    "Rain tapped the window all night, steady and calm, like the city itself was finally taking a breath.",
+    "He wrote her name on a sticky note, pinned it to the board, and somehow the whole day felt lighter.",
+    "Keep your plans simple, your promises small, and your follow-through loud enough to be remembered.",
+    "Somewhere between the first cup of coffee and the last email, the afternoon quietly turned to gold.",
+    "Courage is mostly just showing up again tomorrow after a day that did not go the way you hoped.",
+  ];
+  let text="", typed="", wrongAt=-1, started=0, finished=false, correctCount=0, keystrokes=0, errorsTotal=0, phase="intro";
+
+  function pick() {
+    const r = PB.rng(PB.race ? PB.seed : (Math.random()*4294967296)>>>0);
+    return PASSAGES[Math.floor(r()*PASSAGES.length)];
+  }
+  function render() {
+    const box=$("passage"); box.innerHTML="";
+    for (let i=0;i<text.length;i++){
+      const sp=document.createElement("span"); sp.textContent=text[i];
+      if (i<typed.length) sp.className = typed[i]===text[i] ? "done" : "wrong";
+      else if (i===typed.length) sp.className="cur";
+      box.appendChild(sp);
+    }
+    // keep caret in view
+    const cur=box.querySelector(".cur"); if(cur) cur.scrollIntoView({block:"center"});
+  }
+  function stats() {
+    const mins=Math.max(1/60,(Date.now()-started)/60000);
+    const words=correctCount/5;
+    const wpm=Math.min(220,Math.max(0,Math.round(words/mins)));
+    const acc=keystrokes?Math.max(0,Math.round(100*(keystrokes-errorsTotal)/keystrokes)):100;
+    return {wpm,acc};
+  }
+  function update() {
+    // count correct prefix length
+    correctCount=0; for(let i=0;i<typed.length&&i<text.length;i++){ if(typed[i]===text[i]) correctCount++; }
+    const prog=Math.round(100*typed.length/text.length);
+    const {wpm,acc}=stats();
+    $("wpm").textContent=wpm; $("acc").textContent=acc+"%"; $("prog").textContent=prog+"%";
+    placeRacers(typed.length/text.length);
+    PB.state({ d: typed.length, score: wpm, alive: !finished });
+  }
+  function placeRacers(frac) {
+    const track=$("track"); track.querySelectorAll(".me,.gh").forEach(e=>e.remove());
+    const w=track.clientWidth-24;
+    const me=document.createElement("div"); me.className="me"; me.style.left=(8+w*Math.min(1,frac))+"px"; me.style.zIndex=3;
+    me.innerHTML=`<span class="racer">🏎️</span><span class="tag" style="color:${PB.color}">You</span>`; track.appendChild(me);
+    for (const g of PB.ghosts.values()) {
+      if (typeof g.d!=="number") continue;
+      const gf=Math.min(1,g.d/text.length);
+      const el=document.createElement("div"); el.className="gh"; el.style.left=(8+w*gf)+"px"; el.style.opacity=g.alive?.9:.5;
+      el.innerHTML=`<span class="racer">${g.alive?"🚗":"🏁"}</span><span class="tag" style="color:${g.color}">${g.name}</span>`;
+      track.appendChild(el);
+    }
+  }
+  function begin() {
+    text=pick(); typed=""; finished=false; correctCount=0; keystrokes=0; errorsTotal=0; started=0; phase="play";
+    $("startPanel").hidden=true; $("overPanel").hidden=true;
+    render(); update();
+    const inp=$("inp"); inp.value=""; inp.focus();
+    $("tapline").textContent="Type! (tap the text if the keyboard hides)";
+  }
+  function finish() {
+    finished=true; phase="over";
+    const {wpm,acc}=stats();
+    const score=wpm;
+    PB.send("over",{score});
+    const best=Math.max(score,+(localStorage.getItem("pinned.typerace.best")||0));
+    try{localStorage.setItem("pinned.typerace.best",best);}catch(e){}
+    $("finalScore").textContent=score+" WPM";
+    $("finalSub").textContent=`${acc}% accuracy`+(PB.race?"":` · best ${best} WPM`);
+    $("againBtn").hidden=PB.race; $("waitMsg").hidden=!PB.race;
+    $("overPanel").hidden=false;
+    update();
+  }
+
+  const inp=$("inp");
+  function onType() {
+    if (phase!=="play") return;
+    if (!started) started=Date.now();
+    const v=inp.value;
+    // detect new chars for keystroke/error counting
+    if (v.length>typed.length) {
+      for (let i=typed.length;i<v.length;i++){ keystrokes++; if(v[i]!==text[i]) errorsTotal++; }
+    }
+    typed=v.slice(0,text.length);
+    render(); update();
+    if (typed.length>=text.length && typed.split("").every((c,i)=>c===text[i])) finish();
+  }
+  inp.addEventListener("input", onType);
+  inp.addEventListener("paste", (e)=>e.preventDefault());
+  inp.addEventListener("drop", (e)=>e.preventDefault());
+  $("passage").addEventListener("pointerdown",()=>{ if(phase==="play") inp.focus(); });
+  // keep focus
+  inp.addEventListener("blur",()=>{ if(phase==="play") setTimeout(()=>inp.focus(),10); });
+
+  $("startBtn").onclick=()=>{ begin(); };
+  $("againBtn").onclick=()=>{ begin(); };
+  if (PB.race) { $("startPanel").hidden=true; PB.on("go", ()=>begin()); text=pick(); render(); }
+  else { text=pick(); render(); }
+
+  // redraw ghosts periodically during a race
+  setInterval(()=>{ if(phase==="play") placeRacers(typed.length/text.length); }, 300);
+  window.__wpm=()=>stats().wpm; window.__prog=()=>typed.length/text.length; window.__text=()=>text;
+})();
+</script>
+</body>
+</html>

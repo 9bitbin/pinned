@@ -495,6 +495,7 @@
       <div class="race-banner" id="raceBanner" hidden></div>
       <div id="gameList"></div>
       <div class="game-card" id="tttCard"></div>
+      <div class="game-card" id="c8Card"></div>
     </div>
     <div id="gameBoardView" hidden>
       <div class="thread-head">
@@ -527,6 +528,30 @@
       <button class="btn primary" id="tttRematch" hidden>Rematch</button>
       <button class="btn danger" id="tttQuit" hidden>Resign</button>
       <button class="btn" id="tttClose">Back</button>
+    </div>
+  </section>
+
+  <!-- Crazy 8s -->
+  <div class="sheet-backdrop" id="c8Backdrop" hidden></div>
+  <section class="sheet tall c8" id="c8" hidden aria-label="Crazy 8s">
+    <div class="grab"></div>
+    <h2 id="c8Title">Crazy 8s</h2>
+    <p class="ttt-status" id="c8Status"></p>
+    <div class="seg" id="c8Level" hidden>
+      <button data-level="easy" aria-pressed="true">Easy</button>
+      <button data-level="hard" aria-pressed="false">Hard</button>
+    </div>
+    <div class="c8-opp" id="c8Opp"></div>
+    <div class="c8-mid" id="c8Mid"></div>
+    <div class="c8-suits" id="c8Suits" hidden><span>Choose a suit:</span></div>
+    <div class="c8-hand" id="c8Hand"></div>
+    <div class="sheet-actions wrap">
+      <button class="btn primary" id="c8Accept" hidden>Accept</button>
+      <button class="btn" id="c8Decline" hidden>Not now</button>
+      <button class="btn" id="c8Pass" hidden>Pass</button>
+      <button class="btn primary" id="c8Rematch" hidden>Rematch</button>
+      <button class="btn danger" id="c8Quit" hidden>Resign</button>
+      <button class="btn" id="c8Close">Back</button>
     </div>
   </section>
 

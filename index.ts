@@ -139,7 +139,8 @@ if (typeof Deno !== "undefined" && Deno.serve) {
     mood_happy: "is feeling happy 😊", mood_chill: "is feeling chill 😌", mood_tired: "is feeling tired 😴",
     mood_stressed: "is feeling stressed 😣", mood_excited: "is feeling excited 🤩", mood_sad: "is feeling down 😢",
   };
-  const MUTABLE = ["reaction", "reply", "ping", "answer", "doodle", "message", "bgrequest", "bgreply"];
+  const MUTABLE = ["reaction", "reply", "ping", "answer", "doodle", "message", "bgrequest", "bgreply", "game", "lead", "ttt", "c8"];
+  const GAMES: Record<string, string> = { kestrel: "Neon Kestrel", pindrop: "Pin Drop", plane: "Paper Plane", hop: "Hop Lane", blocks: "Block Drop", typerace: "Type Race" };
   const q = (v: string) => encodeURIComponent(v);
   const getJson = async (path: string) => { const r = await admin(path); return r.ok ? await r.json() : []; };
 
@@ -232,7 +233,7 @@ if (typeof Deno !== "undefined" && Deno.serve) {
   Deno.serve(async (req) => {
     setCors(req);
     if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
-    if (req.method === "GET") return json({ ok: true, function: "notify", version: 4, vapidSet: !!(vapid.publicKey && vapid.privateKey) });
+    if (req.method === "GET") return json({ ok: true, function: "notify", version: 6, vapidSet: !!(vapid.publicKey && vapid.privateKey) });
     try {
       if (!vapid.publicKey || !vapid.privateKey) return json({ error: "VAPID secrets missing" }, 500);
       const body = await req.json().catch(() => ({}));
@@ -261,7 +262,7 @@ if (typeof Deno !== "undefined" && Deno.serve) {
       if (!others.length) return json({ sent: 0, devices: 0, note: "nobody else on the board yet" });
 
       // older app versions send the note kind ("text", "image"...) instead of a type
-      const type = ["reaction", "reply", "ping", "answer", "doodle", "message", "bgrequest", "bgreply"].includes(body.type) ? body.type : "note";
+      const type = ["reaction", "reply", "ping", "answer", "doodle", "message", "bgrequest", "bgreply", "game", "lead", "ttt", "c8"].includes(body.type) ? body.type : "note";
       const name = await nameOf(user.id);
       let text = `New note from ${name}`;
 
@@ -290,6 +291,39 @@ if (typeof Deno !== "undefined" && Deno.serve) {
         if (b?.created_by !== user.id || !others.includes(String(body.to))) return json({ error: "not allowed" }, 403);
         others = [String(body.to)];
         text = body.approved ? `${name} approved your background 🎉` : `${name} passed on your background idea`;
+      }
+      else if (type === "game") {
+        const g = GAMES[String(body.game)];
+        if (!g) return json({ error: "unknown game" }, 400);
+        text = `${name} started a ${g} race 🏁 Open Pinned to join`;
+      } else if (type === "lead") {
+        // "beat your score": only if the caller really has that score on this board
+        const g = GAMES[String(body.game)], score = Math.floor(Number(body.score));
+        if (!g || !others.includes(String(body.to)) || !(score >= 0)) return json({ error: "not allowed" }, 400);
+        const [row] = await getJson(`/rest/v1/game_scores?board_id=eq.${q(board_id)}&user_id=eq.${q(user.id)}&game=eq.${q(String(body.game))}&score=gte.${score}&select=id&limit=1`);
+        if (!row) return json({ error: "score not found" }, 400);
+        others = [String(body.to)];
+        text = `${name} beat your ${g} best with ${score} 🏆 Your move!`;
+      } else if (type === "c8") {
+        const [g] = await getJson(`/rest/v1/crazy8_games?id=eq.${q(String(body.game_id))}&board_id=eq.${q(board_id)}&select=x_id,o_id,status,turn,winner`);
+        if (!g || (g.x_id !== user.id && g.o_id !== user.id)) return json({ error: "not your game" }, 403);
+        const mine = g.x_id === user.id ? "x" : "o";
+        others = [mine === "x" ? g.o_id : g.x_id];
+        if (g.status === "invited") text = `${name} challenged you to Crazy 8s 🃏`;
+        else if (g.status === "active") { if (g.turn === mine) return json({ sent: 0 }); text = `Your move vs ${name} in Crazy 8s 🃏`; }
+        else if (g.status === "declined") text = `${name} passed on Crazy 8s`;
+        else if (g.status === "done") text = g.winner === mine ? `${name} won Crazy 8s 🃏 Rematch?` : `You won Crazy 8s vs ${name} 🎉`;
+        else return json({ sent: 0 });
+      } else if (type === "ttt") {
+        const [g] = await getJson(`/rest/v1/ttt_games?id=eq.${q(String(body.game_id))}&board_id=eq.${q(board_id)}&select=x_id,o_id,status,turn,winner`);
+        if (!g || (g.x_id !== user.id && g.o_id !== user.id)) return json({ error: "not your game" }, 403);
+        const mine = g.x_id === user.id ? "X" : "O";
+        others = [mine === "X" ? g.o_id : g.x_id];
+        if (g.status === "invited") text = `${name} challenged you to tic-tac-toe ❌⭕`;
+        else if (g.status === "active") { if (g.turn === mine) return json({ sent: 0 }); text = `Your move vs ${name} ❌⭕`; }
+        else if (g.status === "declined") text = `${name} passed on tic-tac-toe`;
+        else if (g.status === "done") text = g.winner === "draw" ? `Tic-tac-toe with ${name}: it's a draw 🤝` : g.winner === mine ? `${name} won at tic-tac-toe ❌⭕ Rematch?` : `You won at tic-tac-toe vs ${name} 🎉`;
+        else return json({ sent: 0 });
       }
       else if (type === "ping") {
         const p = PINGS[String(body.ping)];
