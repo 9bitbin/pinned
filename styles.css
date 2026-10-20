@@ -869,3 +869,17 @@ body.gaming { overflow: hidden; }
 .version { text-align: center; opacity: .7; margin-top: 10px; }
 #vibeRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 #vibeRow > span { font-weight: 700; }
+
+/* ============ Batch B: reliability UI ============ */
+.banner.conn { background: #3a3a44; color: #fff; justify-content: center; font-weight: 700; }
+.histbar { position: fixed; left: 14px; bottom: calc(env(safe-area-inset-bottom) + 92px); z-index: 6; display: flex; gap: 6px; }
+.histbar button { width: 42px; height: 42px; border-radius: 50%; border: 0; font-size: 20px; background: var(--surface); color: var(--surface-ink); box-shadow: 0 8px 18px -8px rgba(0,0,0,.5); }
+.histbar button:disabled { opacity: .35; }
+.histbar button:active:not(:disabled) { transform: scale(.94); }
+@media (min-width: 700px) { .histbar { left: calc(50vw - 300px); } }
+/* a note waiting in the offline outbox */
+.note.pending { opacity: .72; }
+.note.pending::after { content: "⏳"; position: absolute; top: -8px; right: -8px; font-size: 15px; background: var(--surface); border-radius: 50%; width: 22px; height: 22px; display: grid; place-items: center; box-shadow: 0 2px 5px rgba(0,0,0,.3); }
+/* a chat message waiting to send */
+.msg.pending { opacity: .72; }
+.msg.pending .msg-meta::after, .msg.pending::after { content: " ⏳"; }

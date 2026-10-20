@@ -362,3 +362,19 @@ What changed:
 - **Safer delete** — deleting a board now spells out how many notes and what else will be erased.
 
 Note: the QR code loads a tiny library from the same CDN the app already uses; if it can't load, the QR button falls back to copying the invite link.
+
+---
+
+## Batch B: Reliability & confidence (front-end + a monitoring helper)
+
+No schema or function changes. Upload `app.js`, `index.html`, `styles.css`, `sw.js` to GitHub, then reopen the app twice on every phone. `supabase/monitoring.sql` is optional read-only queries you can paste anytime.
+
+What changed:
+- **Offline queue** — if you're offline (or the send fails), a text note or message is saved with a ⏳ badge and sends itself when you're back. Nothing is lost.
+- **Connection banner** — a bar shows "You're offline / Reconnecting… / Back online — sending…".
+- **Auto-reconnect** — realtime resubscribes with backoff after a drop, and flushes anything queued.
+- **Board undo/redo** — ↶ ↷ buttons (and Ctrl/Cmd-Z / Shift-Z) undo a move, edit, delete or new note. Session-local, best-effort on a shared board.
+- **Read-receipt fix** — "seen" now re-syncs on reconnect, on resume, and every 30s, not only on live events.
+- **Usage monitoring** — `monitoring.sql` shows row counts, DB size, media storage used, orphaned files, and free-tier guideposts.
+
+Note: media notes (photos, voice, drawings) still need a connection; only text/emoji notes and text messages queue offline.
