@@ -917,3 +917,13 @@ body.gaming { overflow: hidden; }
 .vu small { font-size: 10px; color: #cfd2da; max-width: 46px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vu .vmute { position: absolute; top: -4px; right: 2px; font-size: 11px; }
 
+
+/* delete my account */
+.del-options { display: grid; gap: 10px; margin: 12px 0; }
+.del-opt { text-align: left; display: grid; gap: 4px; padding: 12px 14px; border: 1.5px solid var(--line); border-radius: 14px; background: transparent; font: inherit; color: inherit; }
+.del-opt span { font-size: 13px; opacity: 0.8; }
+.del-opt[aria-checked="true"] { border-color: var(--accent); background: var(--line); }
+.del-text { width: 100%; box-sizing: border-box; font: inherit; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: inherit; margin: 6px 0 12px; }
+.btn:disabled { opacity: 0.45; }
+#burnFx { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 200; }
+.former-stamp { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) rotate(-8deg); border: 2px solid #6b6259; color: #6b6259; padding: 2px 8px; border-radius: 6px; font-weight: 800; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; background: rgba(255,255,255,0.75); pointer-events: none; white-space: nowrap; }

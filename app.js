@@ -118,7 +118,7 @@ const C8 = {
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v23";
+const APP_VERSION = "soy-v24";
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
 let hapticsOn;
@@ -200,6 +200,15 @@ function createSupabaseApi() {
     async linkEmail(email) {
       const { error } = await sb.auth.updateUser({ email }, { emailRedirectTo: location.origin + location.pathname });
       if (error) throw new Error(error.message);
+    },
+    async deleteAccount(mode) {
+      const { data, error } = await sb.functions.invoke("delete-account", { body: { mode, confirm: "DELETE" } });
+      if (error) {
+        let detail = error.message;
+        try { const j = await error.context.clone().json(); detail = j.error || detail; } catch { /* no body */ }
+        throw new Error(detail);
+      }
+      if (!data?.ok) throw new Error(data?.error || "Couldn't delete right now");
     },
     async signOut() {
       try {
@@ -494,6 +503,26 @@ function createDemoApi() {
     async account() { return { email: "demo@example.com", pending: null, anonymous: false }; },
     async linkEmail() {},
     async signOut() { localStorage.removeItem("soy-demo-me" + who); },
+    async deleteAccount(mode) {
+      const d = db(), me = meId();
+      const mine = d.notes.filter((n) => n.author_id === me);
+      if (mode === "void") {
+        const gone = new Set(mine.map((n) => n.id));
+        for (const n of mine) if (n.media_path) delete d.media[n.media_path];
+        d.notes = d.notes.filter((n) => !gone.has(n.id));
+        d.replies = d.replies.filter((r) => !gone.has(r.note_id));
+        d.reactions = d.reactions.filter((r) => !gone.has(r.note_id));
+        d.messages = d.messages.filter((m) => m.sender_id !== me);
+      } else {
+        for (const n of mine) n.author_id = null;
+        for (const m of d.messages) if (m.sender_id === me) m.sender_id = null;
+      }
+      d.messages = d.messages.filter((m) => m.to_id !== me);
+      d.reactions = d.reactions.filter((r) => r.user_id !== me);
+      d.members = d.members.filter((m) => m.user_id !== me);
+      delete d.profiles[me];
+      save(d); emit({ type: "members" });
+    },
     async me() { return db().profiles[meId()] || null; },
     async signIn(name, color) { const d = db(); d.profiles[meId()] = { id: meId(), name, color, muted: [] }; save(d); return d.profiles[meId()]; },
     async updateProfile(patch) { const d = db(); Object.assign(d.profiles[meId()], patch); save(d); emit({ type: "members" }); },
@@ -2148,7 +2177,7 @@ function decorate(el, n) {
   const f = el.querySelector(".from");
   if (f) {
     f.classList.remove("seen");
-    if (n.author_id !== state.me?.id) f.textContent = who?.name || "";
+    if (n.author_id !== state.me?.id) f.textContent = who?.name || (n.author_id ? "" : "former member");
     else if (sched) f.textContent = "⏰ " + fmtWhen(n.show_at);
     else if (n.seen_at) { f.textContent = "✓ Seen"; f.classList.add("seen"); }
     else f.textContent = "";
@@ -2451,6 +2480,153 @@ async function pinDetail() {
   toast(n.pinned ? "Pinned. It stays on top and can't be dragged by accident." : "Unpinned");
   try { await api.updateNote(n.id, { pinned: n.pinned }); }
   catch (e) { n.pinned = !n.pinned; if (el) { placeNote(el, n); decorate(el, n); } renderDetailMeta(n); state.v2 ? toast("Couldn't pin it") : needsUpgrade(); }
+}
+
+// ---------------------------------------------------------------- delete my account
+// Two ways: "tombstone" keeps your notes as a memory; "void" burns everything you added.
+const delAcct = { mode: null };
+function setDelMode(mode) {
+  delAcct.mode = mode;
+  document.querySelectorAll(".del-opt").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.mode === mode)));
+  updateDelGo();
+}
+function updateDelGo() { $("#deleteAcctGo").disabled = !(delAcct.mode && $("#deleteAcctText").value.trim() === "DELETE"); }
+function openDeleteAccount() {
+  $("#deleteAcctText").value = "";
+  setDelMode(null);
+  openSheet("deleteAcct");
+}
+
+const BURN_COLORS = ["#fff3b0", "#ffd166", "#ffb347", "#ff6b35", "#e63946"];
+
+// Draws on a full-screen canvas for `duration` ms, calling frame(ageMs, ctx) each frame.
+function animateFx(duration, frame) {
+  return new Promise((resolve) => {
+    const c = $("#burnFx"), dpr = Math.min(2, devicePixelRatio || 1);
+    c.width = innerWidth * dpr; c.height = innerHeight * dpr;
+    c.hidden = false;
+    const ctx = c.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const t0 = performance.now();
+    const step = (now) => {
+      const t = now - t0;
+      ctx.clearRect(0, 0, innerWidth, innerHeight);
+      ctx.globalAlpha = 1;
+      frame(t, ctx);
+      if (t < duration) requestAnimationFrame(step);
+      else { ctx.clearRect(0, 0, innerWidth, innerHeight); c.hidden = true; resolve(); }
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+// "Burn it all": a blast ring, sparks flying out, embers rising, and each note catching fire, then whisked away.
+function playBurn(mine) {
+  const centers = mine.map((el) => {
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
+  });
+  const parts = [];
+  for (const c of centers) {
+    for (let i = 0; i < 40; i++) {
+      const a = Math.random() * Math.PI * 2, sp = 160 + Math.random() * 260;
+      parts.push({ kind: "shard", x: c.x, y: c.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, born: 0, life: 900 + Math.random() * 500, r: 2 + Math.random() * 3, col: BURN_COLORS[(Math.random() * 5) | 0] });
+    }
+    for (let i = 0; i < 26; i++) {
+      parts.push({ kind: "ember", x: c.x + (Math.random() - 0.5) * c.w * 0.9, y: c.y + (Math.random() - 0.5) * c.h * 0.6, vx: (Math.random() - 0.5) * 40, vy: -(60 + Math.random() * 120), born: Math.random() * 1600, life: 900 + Math.random() * 700, r: 1.5 + Math.random() * 2.5, col: BURN_COLORS[(Math.random() * 5) | 0] });
+    }
+  }
+  const rings = [];
+  centers.forEach((c) => { rings.push({ ...c, born: 0, life: 800, slow: false }); rings.push({ ...c, born: 250, life: 1000, slow: true }); });
+
+  const flames = mine.map((el, i) => {
+    const dx = (Math.random() - 0.5) * 220, dy = -(160 + Math.random() * 200), spin = (Math.random() - 0.5) * 160;
+    return el.animate([
+      { filter: "none", opacity: 1, translate: "0px 0px", rotate: "0deg", scale: "1", boxShadow: "0 0 0 rgba(255,120,30,0)" },
+      { filter: "brightness(1.4) sepia(1) saturate(3) hue-rotate(-25deg)", opacity: 1, translate: `${dx * 0.15}px ${dy * 0.1}px`, rotate: `${spin * 0.2}deg`, scale: "1.04", boxShadow: "0 0 26px 10px rgba(255,120,30,0.85)", offset: 0.4 },
+      { filter: "brightness(2.2) sepia(1) saturate(4) hue-rotate(-35deg) blur(4px)", opacity: 0, translate: `${dx}px ${dy}px`, rotate: `${spin}deg`, scale: "0.15", boxShadow: "0 0 40px 18px rgba(255,80,20,0)" },
+    ], { duration: 2300, delay: i * 40, easing: "cubic-bezier(.35,.1,.6,1)", fill: "forwards" });
+  });
+
+  const fx = animateFx(2300 + mine.length * 40 + 300, (t, ctx) => {
+    for (const r of rings) {
+      const a = t - r.born; if (a < 0 || a > r.life) continue;
+      const k = a / r.life;
+      ctx.globalAlpha = (1 - k) * 0.8;
+      ctx.strokeStyle = r.slow ? "#ffd7a1" : "#fff3b0";
+      ctx.lineWidth = (r.slow ? 2 : 5) * (1 - k) + 0.6;
+      ctx.beginPath(); ctx.arc(r.x, r.y, (r.slow ? 40 : 10) + k * (r.slow ? 360 : 520), 0, Math.PI * 2); ctx.stroke();
+    }
+    for (const p of parts) {
+      const age = t - p.born;
+      if (age < 0 || age > p.life) continue;
+      const s = age / 1000;
+      const x = p.x + p.vx * s;
+      const y = p.y + p.vy * s + (p.kind === "shard" ? 210 * s * s : 0);
+      ctx.globalAlpha = 1 - age / p.life;
+      ctx.fillStyle = p.col;
+      ctx.beginPath(); ctx.arc(x, y, p.r, 0, Math.PI * 2); ctx.fill();
+    }
+  });
+  return Promise.all([fx, ...flames.map((a) => a.finished.catch(() => {}))]);
+}
+
+// "Keep as a memory": notes turn to grey, get a "former member" stamp, and a soft ripple passes over them.
+function playTombstone(mine) {
+  const centers = mine.map((el) => {
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  const anims = mine.map((el, i) => {
+    el.dataset.tomb = "1";
+    const stamp = document.createElement("span");
+    stamp.className = "former-stamp";
+    stamp.textContent = "former member";
+    el.appendChild(stamp);
+    stamp.animate([{ opacity: 0, scale: "1.6" }, { opacity: 1, scale: "1" }], { duration: 500, delay: 500 + i * 60, fill: "forwards", easing: "ease-out" });
+    return el.animate([{ filter: "none" }, { filter: "grayscale(1) brightness(0.92)" }], { duration: 1000, delay: i * 60, fill: "forwards" });
+  });
+  const fx = animateFx(1700, (t, ctx) => {
+    for (const c of centers) {
+      const k = Math.min(1, t / 1200);
+      ctx.globalAlpha = (1 - k) * 0.5;
+      ctx.strokeStyle = "#cfd8e3";
+      ctx.lineWidth = 3 * (1 - k) + 0.6;
+      ctx.beginPath(); ctx.arc(c.x, c.y, 20 + k * 380, 0, Math.PI * 2); ctx.stroke();
+    }
+  });
+  return Promise.all([fx, ...anims.map((a) => a.finished.catch(() => {}))]);
+}
+
+function restoreNotes(mine) {
+  mine.forEach((el) => {
+    el.getAnimations().forEach((a) => a.cancel());
+    el.querySelectorAll(".former-stamp").forEach((s) => s.remove());
+    delete el.dataset.tomb;
+  });
+}
+
+async function startDeleteAccount() {
+  const mode = delAcct.mode;
+  if (!mode || $("#deleteAcctText").value.trim() !== "DELETE") return;
+  closeSheet("deleteAcct");
+  const me = state.me?.id;
+  const mine = [...document.querySelectorAll("#board .note")].filter((el) => state.notes.get(el.dataset.id)?.author_id === me);
+  try {
+    if (mine.length && !prefersReducedMotion()) {
+      await (mode === "void" ? playBurn(mine) : playTombstone(mine));
+    }
+    await api.deleteAccount(mode);
+  } catch (e) {
+    console.error(e);
+    restoreNotes(mine);
+    toast(`Couldn't delete right now: ${e.message}`, 6000);
+    return;
+  }
+  try { await api.signOut(); } catch { /* the account is already gone */ }
+  try { localStorage.removeItem("pinned-outbox"); } catch { /* ignore */ }   // queued sends belong to the deleted account
+  toast(mode === "void" ? "Burned. Everything you added is gone. 🔥" : "Your notes stay as memories. Goodbye 🤍", 3000);
+  setTimeout(() => location.reload(), 2200);
 }
 
 // ---------------------------------------------------------------- export your board
@@ -5094,6 +5270,12 @@ function wireStatic() {
   });
   $("#leaveBoardBtn").onclick = leaveBoard;
   $("#exportBoardBtn").onclick = exportBoard;
+  $("#deleteAcctBtn").onclick = openDeleteAccount;
+  document.querySelectorAll(".del-opt").forEach((b) => (b.onclick = () => setDelMode(b.dataset.mode)));
+  $("#deleteAcctText").oninput = updateDelGo;
+  $("#deleteAcctGo").onclick = startDeleteAccount;
+  $("#deleteAcctCancel").onclick = () => closeSheet("deleteAcct");
+  $("#deleteAcctBackdrop").onclick = () => closeSheet("deleteAcct");
   $("#deleteBoardBtn").onclick = deleteBoard;
   $("#openSettings").onclick = openSettings;
   $("#settingsClose").onclick = () => closeSheet("settings");
