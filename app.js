@@ -118,7 +118,7 @@ const C8 = {
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v25";
+const APP_VERSION = "soy-v26";
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
 let hapticsOn;
@@ -798,6 +798,58 @@ function applyTheme(id) {
   const meta = document.querySelector('meta[name="theme-color"]');
   meta.content = { cork: "#8a5e36", pastel: "#f5ecff", midnight: "#0e1014", dreamy: "#8d9cc4" }[id] || "#8a5e36";
   ls.set("soy-theme", id);
+}
+
+// ---- Theme schema (Phase 1 groundwork for custom themes; see roadmap section 5.2) ----
+const THEME_COLOR_KEYS = { bg: "--bg", surface: "--surface", surfaceInk: "--surface-ink", muted: "--muted", line: "--line", accent: "--accent", accentInk: "--accent-ink", danger: "--danger", planet: "--planet" };
+const THEME_HEX = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/;
+function validateTheme(input) {
+  const errors = [];
+  if (!input || typeof input !== "object") return { ok: false, errors: ["Theme must be an object"] };
+  const name = typeof input.name === "string" ? input.name.trim() : "";
+  if (name.length < 1 || name.length > 40) errors.push("Name must be 1 to 40 characters");
+  const t = input.tokens;
+  if (!t || typeof t !== "object") return { ok: false, errors: [...errors, "Missing tokens"] };
+  const out = { name, base: input.base === "light" ? "light" : "dark", tokens: {} };
+  for (const k of Object.keys(THEME_COLOR_KEYS)) {
+    if (t[k] === undefined) continue;
+    if (typeof t[k] !== "string" || !THEME_HEX.test(t[k])) errors.push(`${k} must be #rrggbb or #rrggbbaa`);
+    else out.tokens[k] = t[k];
+  }
+  if (t.gridSize !== undefined) {
+    if (typeof t.gridSize !== "number" || t.gridSize < 8 || t.gridSize > 64) errors.push("gridSize must be 8 to 64");
+    else out.tokens.gridSize = t.gridSize;
+  }
+  if (t.gridOpacity !== undefined) {
+    if (typeof t.gridOpacity !== "number" || t.gridOpacity < 0 || t.gridOpacity > 0.2) errors.push("gridOpacity must be 0 to 0.2");
+    else out.tokens.gridOpacity = t.gridOpacity;
+  }
+  if (t.radius !== undefined) {
+    if (!["s", "m", "l"].includes(t.radius)) errors.push("radius must be s, m or l");
+    else out.tokens.radius = t.radius;
+  }
+  if (t.shadow !== undefined) {
+    if (!["none", "soft", "strong"].includes(t.shadow)) errors.push("shadow must be none, soft or strong");
+    else out.tokens.shadow = t.shadow;
+  }
+  if (t.motion !== undefined) {
+    if (!["calm", "normal"].includes(t.motion)) errors.push("motion must be calm or normal");
+    else out.tokens.motion = t.motion;
+  }
+  if (Array.isArray(t.note)) {
+    if (t.note.length > 6 || t.note.some((c) => typeof c !== "string" || !THEME_HEX.test(c))) errors.push("note must be up to 6 hex colors");
+    else out.tokens.note = t.note.slice();
+  }
+  for (const k of Object.keys(t)) if (!(k in THEME_COLOR_KEYS) && !["gridSize", "gridOpacity", "radius", "shadow", "motion", "note"].includes(k) && !["bgPattern", "gridColor"].includes(k)) errors.push(`Unknown token: ${k}`);
+  return errors.length ? { ok: false, errors } : { ok: true, theme: out, errors: [] };
+}
+// Applies a validated custom theme as CSS variables on the root element.
+function applyCustomTokens(theme) {
+  const root = document.documentElement.style;
+  for (const [k, cssVar] of Object.entries(THEME_COLOR_KEYS)) if (theme.tokens[k]) root.setProperty(cssVar, theme.tokens[k]);
+  if (theme.tokens.note) theme.tokens.note.forEach((c, i) => root.setProperty(`--n${i + 1}`, c));
+  if (theme.tokens.gridSize) root.setProperty("--grid-size", `${theme.tokens.gridSize}px`);
+  if (theme.tokens.gridOpacity !== undefined) root.setProperty("--grid-opacity", String(theme.tokens.gridOpacity));
 }
 
 function memberById(id) { return state.members.find((m) => m.id === id); }

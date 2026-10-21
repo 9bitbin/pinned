@@ -1,3 +1,16 @@
+/* ============ Design tokens (shared by every theme; see roadmap section 2) ============ */
+:root {
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
+  --danger: #e0584f;
+  --radius-m: 16px;
+  --radius-l: 22px;
+  --glass: rgba(255, 255, 255, .12);
+  --ease-spring: cubic-bezier(.2, .9, .3, 1.15);
+  --dur-base: 240ms;
+  --grid-size: 28px;
+  --grid-opacity: .035;
+}
+
 /* ============ Themes ============ */
 :root, [data-theme="cork"] {
   --bg: #b98a5a;
