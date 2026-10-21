@@ -118,7 +118,7 @@ const C8 = {
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v29";
+const APP_VERSION = "soy-v30";
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
 let hapticsOn;
@@ -1771,7 +1771,7 @@ function wireCanvas() {
     if (e.shiftKey && !e.ctrlKey) { setView({ ...state.view, tx: state.view.tx - (e.deltaX || e.deltaY), ty: state.view.ty }); return; }
     zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)));
   }, { passive: false });
-  sc.addEventListener("contextmenu", (e) => e.preventDefault());
+  sc.addEventListener("contextmenu", (e) => { e.preventDefault(); const el = e.target.closest?.("#board .note"); if (el?.dataset.id) openNoteMenu(el.dataset.id); });
   sc.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") sendCursor(null); });
 }
 
@@ -1791,6 +1791,8 @@ function onDown(e) {
   if (!gest.noteId) gest.strokeId = hitOwnStroke(e);
   gest.selected = !!sel && (sel.id === gest.noteId || sel.id === gest.strokeId);
   if (gest.noteId && touch && !gest.selected) gest.hold = setTimeout(() => { if (gest?.type === "pending") startNoteDrag(); }, 280);
+  if (gest.noteId && touch) gest.press = setTimeout(() => openNoteMenu(gest.noteId), 560);
+  if (gest.noteId && e.button === 2) gest.type = "rightclick";
 }
 
 function onMove(e) {
@@ -1800,6 +1802,7 @@ function onMove(e) {
   if (pinch) return movePinch();
   if (!gest || gest.id !== e.pointerId) return;
   const dx = e.clientX - gest.sx, dy = e.clientY - gest.sy;
+  if (gest.press && Math.hypot(dx, dy) > 8) clearTimeout(gest.press);
   if (gest.type === "ink") return inkMove(e);
   if (gest.type === "resize" || gest.type === "rotate") return moveTransform(e);
   if (gest.type === "pending" && Math.hypot(dx, dy) > 7) {
@@ -1817,7 +1820,7 @@ function onUp(e) {
   pointers.delete(e.pointerId);
   if (pinch) { if (pointers.size < 2) { const p = pinch; pinch = null; gest = null; if (p.item) commitTransform(); } return; }
   if (!gest || gest.id !== e.pointerId) return;
-  clearTimeout(gest.hold);
+  clearTimeout(gest.hold); clearTimeout(gest.press);
   const g = gest; gest = null;
   $("#scroller").classList.remove("panning");
   if (g.type === "ink") inkEnd();
@@ -1827,7 +1830,45 @@ function onUp(e) {
     if (g.touch) swallowGhostClick();
     onTap(g);
   }
+  else if (g.type === "menu" && g.touch) swallowGhostClick();   // the note menu just opened under this finger
   if (g.touch) sendCursor(null);
+}
+
+// Long-press (touch) or right-click (mouse) on a note: a small action sheet.
+// It reuses the detail sheet's own buttons, so the rules for edit, pin and delete stay in one place.
+function openNoteMenu(id) {
+  const n = state.notes.get(id); if (!n) return;
+  if (gest && gest.noteId !== id) return;
+  if (gest && gest.type === "note") {
+    // a lifted drag that never moved: put the note back exactly where it was
+    const el = noteEl(id);
+    n.x = gest.ox; n.y = gest.oy; delete n._dragFrom; state.dragId = null;
+    el?.classList.remove("dragging");
+    if (el) placeNote(el, n);
+  }
+  if (gest) gest.type = "menu";
+  if (navigator.vibrate) navigator.vibrate(15);
+  const mine = canEdit(n);
+  const items = [
+    ["Open", () => openDetail(id)],
+    ["Reply", () => { openDetail(id); setTimeout(() => $("#replyInput")?.focus(), 250); }],
+  ];
+  if (mine) items.push(
+    ["Edit", () => { openDetail(id); $("#detailEdit")?.click(); }],
+    [n.pinned ? "Unpin" : "Pin", () => { openDetail(id); $("#detailPin")?.click(); }],
+    ["Delete", () => { openDetail(id); $("#detailRemove")?.click(); }],
+  );
+  const list = $("#nmList"); list.innerHTML = "";
+  for (const [label, fn] of items) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "more-row" + (label === "Delete" ? " danger-row" : "");
+    const t = document.createElement("span"); t.textContent = label;
+    const c = document.createElement("i"); c.setAttribute("aria-hidden", "true"); c.textContent = "›";
+    b.append(t, c);
+    b.onclick = () => { closeSheet("noteMenu"); fn(); };
+    list.appendChild(b);
+  }
+  openSheet("noteMenu");
 }
 
 // tap: select something you can edit; tap it again (or anything you can't edit) to open it
@@ -5560,6 +5601,8 @@ function wireStatic() {
   $("#dockMore").onclick = () => openSheet("more");
   $("#moreBackdrop").onclick = () => closeSheet("more");
   $("#moreClose").onclick = () => closeSheet("more");
+  $("#noteMenuBackdrop").onclick = () => closeSheet("noteMenu");
+  $("#nmClose").onclick = () => closeSheet("noteMenu");
   document.querySelectorAll("#more [data-proxy]").forEach((b) => b.onclick = () => { closeSheet("more"); $("#" + b.dataset.proxy).click(); });
   setInterval(() => { const d = $("#moreDot"); if (d) d.hidden = $("#qDot").hidden; }, 1500);
   $("#gamesClose").onclick = () => closeSheet("games");

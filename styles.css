@@ -1009,3 +1009,8 @@ body.gaming { overflow: hidden; }
 .grp-body > h3, .grp-body h3 { display: none; }
 .grp-sub { font-size: 14px; font-weight: 700; margin: 14px 0 6px; color: var(--surface-ink); }
 .grp-body .setting-row { padding: 8px 0; }
+
+/* ============ Phase 3: note long-press menu ============ */
+.sheet.nm { max-height: 70vh; }
+.more-row.danger-row { color: #d93025; }
+.board .note, #board .note { -webkit-touch-callout: none; }
