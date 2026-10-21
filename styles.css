@@ -1000,3 +1000,12 @@ body.gaming { overflow: hidden; }
 #dockProxies { display: none; }
 #more.sheet h2 { margin: 0 0 10px; }
 
+/* ============ Phase 3: grouped Settings ============ */
+.settings-head { position: sticky; top: 0; z-index: 2; background: var(--surface); padding: 2px 0 6px; }
+.settings-head h2 { margin: 0; }
+.grp { margin: 18px 0 0; }
+.grp-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 0 6px 6px; }
+.grp-body { background: color-mix(in srgb, var(--surface) 90%, var(--surface-ink) 10%); border-radius: var(--radius-m); padding: 6px 14px 14px; }
+.grp-body > h3, .grp-body h3 { display: none; }
+.grp-sub { font-size: 14px; font-weight: 700; margin: 14px 0 6px; color: var(--surface-ink); }
+.grp-body .setting-row { padding: 8px 0; }

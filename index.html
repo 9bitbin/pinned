@@ -377,90 +377,107 @@
   <div class="sheet-backdrop" id="settingsBackdrop" hidden></div>
   <section class="sheet tall" id="settings" hidden aria-label="Settings">
     <div class="grab"></div>
-    <h2>Settings</h2>
-
-    <h3>Theme</h3>
-    <div class="themes" id="themePicker"></div>
-
-    <h3>Background</h3>
-    <div class="seg" id="bgMode" hidden>
-      <button type="button" data-mode="shared">Shared for everyone</button>
-      <button type="button" data-mode="personal">Each person picks</button>
-    </div>
-    <p class="muted small-note" id="bgInfo"></p>
-    <div class="bg-colors" id="bgColors"></div>
-    <div class="bg-actions">
-      <label class="btn small" for="bgFile" id="bgFileLbl">Upload image, GIF or video</label>
-      <input type="file" id="bgFile" hidden>
-      <button class="btn small" id="bgClear">Use the theme</button>
-    </div>
-    <div class="bg-requests" id="bgRequests"></div>
-
-    <h3>Notifications</h3>
-    <div class="setting-row">
-      <p class="muted" id="notifStatus">Off</p>
-      <span class="notif-btns"><button class="btn small" id="notifReset" hidden>Reset</button><button class="btn small" id="notifBtn">Turn on</button></span>
-    </div>
-    <p class="hint" id="notifHint" hidden></p>
-    <div class="mutes" id="muteList">
-      <p class="muted small-note">New notes always notify you. Choose the rest:</p>
-    </div>
-
-    <h3>Feel</h3>
-    <div class="setting-row" id="vibeRow">
-      <span>Vibrate on taps and sends</span>
-      <button class="switch" id="vibeSwitch" type="button" role="switch" aria-checked="true" aria-label="Vibration"></button>
-    </div>
-
-    <h3>Pairing code</h3>
-    <div class="setting-row">
-      <span class="code" id="settingsCode"></span>
-      <button class="btn small" id="shareCode">Share</button>
-    </div>
-
-    <h3>Board</h3>
-    <div class="board-actions">
-      <button class="btn small" id="switchBoardBtn">Join a different board</button>
-      <div class="setting-row" id="switchRow" hidden>
-        <input id="switchCode" maxlength="9" placeholder="XXXX-XXXX" autocapitalize="characters" autocomplete="off" spellcheck="false">
-        <button class="btn small primary" id="switchGo">Join</button>
-      </div>
-      <button class="btn small" id="exportBoardBtn">Export this board (zip)</button>
-      <button class="btn small" id="leaveBoardBtn">Leave this board</button>
-      <button class="btn small danger" id="deleteBoardBtn">Delete board and start over</button>
-      <p class="hint" id="boardHint" hidden></p>
-    </div>
-
-    <h3>You</h3>
-    <div class="you-row">
-      <button class="avatar-edit" id="avatarEdit" aria-label="Change your picture"><span id="avatarPreview" class="avatar-preview"></span><span class="avatar-cam">📷</span></button>
-      <input type="file" id="avatarInput" accept="image/*" hidden>
-      <div class="you-fields">
-        <div class="setting-row">
-          <input id="settingsName" maxlength="30" placeholder="Your name">
-          <button class="btn small" id="saveName">Save</button>
+    <div class="settings-head"><h2>Settings</h2></div>
+    <div class="grp">
+      <div class="grp-title">Profile</div>
+      <div class="grp-body">
+      <div class="you-row">
+        <button class="avatar-edit" id="avatarEdit" aria-label="Change your picture"><span id="avatarPreview" class="avatar-preview"></span><span class="avatar-cam">📷</span></button>
+        <input type="file" id="avatarInput" accept="image/*" hidden>
+        <div class="you-fields">
+          <div class="setting-row">
+            <input id="settingsName" maxlength="30" placeholder="Your name">
+            <button class="btn small" id="saveName">Save</button>
+          </div>
+          <div class="swatches small" id="settingsSwatches"></div>
         </div>
-        <div class="swatches small" id="settingsSwatches"></div>
+      </div>
+      <div class="bio-row">
+        <textarea id="settingsBio" maxlength="300" rows="2" placeholder="Add a short bio… (optional)"></textarea>
+        <div class="bio-foot"><span class="muted small-note" id="bioCount"></span><button class="btn small" id="saveBio">Save bio</button></div>
+      </div>
       </div>
     </div>
-    <div class="bio-row">
-      <textarea id="settingsBio" maxlength="300" rows="2" placeholder="Add a short bio… (optional)"></textarea>
-      <div class="bio-foot"><span class="muted small-note" id="bioCount"></span><button class="btn small" id="saveBio">Save bio</button></div>
+    <div class="grp">
+      <div class="grp-title">Appearance</div>
+      <div class="grp-body">
+        <div class="grp-sub">Theme</div>
+      <div class="themes" id="themePicker"></div>
+        <div class="grp-sub">Background</div>
+      <div class="seg" id="bgMode" hidden>
+        <button type="button" data-mode="shared">Shared for everyone</button>
+        <button type="button" data-mode="personal">Each person picks</button>
+      </div>
+      <p class="muted small-note" id="bgInfo"></p>
+      <div class="bg-colors" id="bgColors"></div>
+      <div class="bg-actions">
+        <label class="btn small" for="bgFile" id="bgFileLbl">Upload image, GIF or video</label>
+        <input type="file" id="bgFile" hidden>
+        <button class="btn small" id="bgClear">Use the theme</button>
+      </div>
+      <div class="bg-requests" id="bgRequests"></div>
+        <div class="grp-sub">Feel</div>
+      <div class="setting-row" id="vibeRow">
+        <span>Vibrate on taps and sends</span>
+        <button class="switch" id="vibeSwitch" type="button" role="switch" aria-checked="true" aria-label="Vibration"></button>
+      </div>
+      </div>
     </div>
-
-    <h3>Account</h3>
-    <p class="muted" id="acctStatus"></p>
-    <div class="setting-row" id="acctLinkRow" hidden>
-      <input id="acctEmail" type="email" inputmode="email" autocomplete="email" autocapitalize="off" placeholder="you@example.com">
-      <button class="btn small" id="acctLinkBtn">Add email</button>
+    <div class="grp">
+      <div class="grp-title">Notifications</div>
+      <div class="grp-body">
+      <div class="setting-row">
+        <p class="muted" id="notifStatus">Off</p>
+        <span class="notif-btns"><button class="btn small" id="notifReset" hidden>Reset</button><button class="btn small" id="notifBtn">Turn on</button></span>
+      </div>
+      <p class="hint" id="notifHint" hidden></p>
+      <div class="mutes" id="muteList">
+        <p class="muted small-note">New notes always notify you. Choose the rest:</p>
+      </div>
+      </div>
     </div>
-    <button class="btn small danger" id="logoutBtn" hidden>Log out of this phone</button>
-    <p class="small-note privacy-link"><a href="privacy.html">Privacy and your data</a></p>
-
-    <h3>On this board</h3>
-    <ul class="members" id="memberList"></ul>
-
-    <p class="muted small-note version" id="appVersion"></p>
+    <div class="grp">
+      <div class="grp-title">Board</div>
+      <div class="grp-body">
+        <div class="grp-sub">Pairing code</div>
+      <div class="setting-row">
+        <span class="code" id="settingsCode"></span>
+        <button class="btn small" id="shareCode">Share</button>
+      </div>
+        <div class="grp-sub">Board</div>
+      <div class="board-actions">
+        <button class="btn small" id="switchBoardBtn">Join a different board</button>
+        <div class="setting-row" id="switchRow" hidden>
+          <input id="switchCode" maxlength="9" placeholder="XXXX-XXXX" autocapitalize="characters" autocomplete="off" spellcheck="false">
+          <button class="btn small primary" id="switchGo">Join</button>
+        </div>
+        <button class="btn small" id="exportBoardBtn">Export this board (zip)</button>
+        <button class="btn small" id="leaveBoardBtn">Leave this board</button>
+        <button class="btn small danger" id="deleteBoardBtn">Delete board and start over</button>
+        <p class="hint" id="boardHint" hidden></p>
+      </div>
+        <div class="grp-sub">On this board</div>
+      <ul class="members" id="memberList"></ul>
+      </div>
+    </div>
+    <div class="grp">
+      <div class="grp-title">Account</div>
+      <div class="grp-body">
+      <p class="muted" id="acctStatus"></p>
+      <div class="setting-row" id="acctLinkRow" hidden>
+        <input id="acctEmail" type="email" inputmode="email" autocomplete="email" autocapitalize="off" placeholder="you@example.com">
+        <button class="btn small" id="acctLinkBtn">Add email</button>
+      </div>
+      <button class="btn small danger" id="logoutBtn" hidden>Log out of this phone</button>
+      <p class="small-note privacy-link"><a href="privacy.html">Privacy and your data</a></p>
+      </div>
+    </div>
+    <div class="grp">
+      <div class="grp-title">About</div>
+      <div class="grp-body">
+      <p class="muted small-note version" id="appVersion"></p>
+      </div>
+    </div>
     <div class="sheet-actions">
       <button class="btn primary" id="settingsClose">Done</button>
     </div>
