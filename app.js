@@ -118,7 +118,7 @@ const C8 = {
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v19";
+const APP_VERSION = "soy-v20";
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
 let hapticsOn;
@@ -2454,11 +2454,39 @@ async function pinDetail() {
 }
 
 // ---------------------------------------------------------------- composer
-const compose = { tab: ls.get("pinned-compose-tab", "text"), color: ls.get("pinned-note-color", "c1"), emoji: "❤️", photo: null, padColor: ls.get("pinned-pen-color", "c1"), cdColor: "c5", sched: false };
+const compose = { tab: ls.get("pinned-compose-tab", "text"), color: ls.get("pinned-note-color", "c1"), emoji: "❤️", photo: null, padColor: ls.get("pinned-pen-color", "c1"), cdColor: "c5", sched: false, pingTo: new Set() };
+
+// @ ping picker: pick board members to ping when this note goes up
+function renderPingBox() {
+  const mates = others();
+  $("#pingBox").hidden = !mates.length || compose.sched;
+  const list = $("#pingList");
+  list.innerHTML = "";
+  for (const m of mates) {
+    const on = compose.pingTo.has(m.id);
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "ping-chip" + (on ? " on" : "");
+    b.setAttribute("aria-pressed", String(on));
+    b.textContent = m.name;
+    b.onclick = () => { on ? compose.pingTo.delete(m.id) : compose.pingTo.add(m.id); renderPingBox(); };
+    list.appendChild(b);
+  }
+  $("#pingCount").textContent = compose.pingTo.size ? `· ${compose.pingTo.size} selected` : "";
+}
+
+async function sendPings(noteId, ids) {
+  const names = ids.map((id) => memberById(id)?.name || "them").join(", ");
+  const r = await api.notify(state.board.id, "mention", { note_id: noteId, to: ids });
+  if (r?.error) return toast(`Ping didn't send: ${r.error}`, 5000);
+  if (r?.limited && !r?.pinged) return toast("You've used your 10 pings for today 📌", 4500);
+  const left = r?.remaining;
+  toast(`Pinged ${names} 📌${r?.limited ? " (daily limit reached)" : ""}${typeof left === "number" ? ` · ${left} left today` : ""}`, 4000);
+}
 
 function openComposer() {
   deselect();
   compose.photo = null;
+  compose.pingTo.clear(); $("#pingList").hidden = true; $("#pingToggle").setAttribute("aria-expanded", "false"); renderPingBox();
   $("#textInput").value = ""; $("#photoCaption").value = ""; $("#emojiCustom").value = "";
   $("#photoPreview").hidden = true; $("#photoHint").hidden = false; $("#photoInput").value = "";
   $("#cdTitle").value = ""; $("#cdDate").value = ""; $("#cdTime").value = "";
@@ -2484,6 +2512,8 @@ function setSched(on) {
   compose.sched = on;
   $("#schedToggle").setAttribute("aria-pressed", String(on));
   $("#schedRow").hidden = !on;
+  if (on) compose.pingTo.clear();   // pings go out only for notes stuck now
+  renderPingBox();
   if (on && !$("#schedAt").value) setQuick("morning");
   $("#composerSend").textContent = on ? "Schedule it" : "Stick it";
 }
@@ -2549,6 +2579,7 @@ async function sendCompose() {
     if (!state.v2 && !isDemo) return needsUpgrade();
   }
   if (showAt) base.show_at = showAt;
+  const pingIds = showAt ? [] : [...compose.pingTo];
   let row, localUrl = null;
   try {
     busy(btn, true, showAt ? "Scheduling…" : "Sticking…");
@@ -2601,7 +2632,9 @@ async function sendCompose() {
     }
     closeSheet("composer");
     if (showAt) toast(`Scheduled for ${fmtWhen(showAt)} ⏰ Only you can see it until then.`, 4000);
-    else api.notify(state.board.id, "note", { note_id: saved.id });
+    else api.notify(state.board.id, "note", { note_id: saved.id, exclude: pingIds });
+    if (pingIds.length) sendPings(saved.id, pingIds);
+    compose.pingTo.clear();
     if (compose.tab === "voice") resetRec(true);
   } catch (e) {
     console.error(e);
@@ -4954,6 +4987,11 @@ function wireStatic() {
   $("#composerCancel").onclick = () => { resetRec(); closeSheet("composer"); };
   $("#composerBackdrop").onclick = () => { resetRec(); closeSheet("composer"); };
   $("#composerSend").onclick = sendCompose;
+  $("#pingToggle").onclick = () => {
+    const open = $("#pingList").hidden;
+    $("#pingList").hidden = !open;
+    $("#pingToggle").setAttribute("aria-expanded", String(open));
+  };
   document.querySelectorAll("#composerTabs button").forEach((b) => (b.onclick = () => setTab(b.dataset.tab)));
   swatchRow($("#textSwatches"), compose.color, (c) => { compose.color = c; ls.set("pinned-note-color", c); paintPaper($("#textPreview"), c); });
   paintPaper($("#textPreview"), compose.color);
