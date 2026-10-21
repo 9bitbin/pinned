@@ -305,31 +305,6 @@
     </div>
   </section>
 
-  <!-- Delete my account: choose how your notes are handled -->
-  <div class="sheet-backdrop" id="deleteAcctBackdrop" hidden></div>
-  <section class="sheet" id="deleteAcct" hidden aria-label="Delete my account">
-    <h2>Delete my account</h2>
-    <p class="muted">This can't be undone. Choose what happens to the notes and photos you've added.</p>
-    <div class="del-options" role="radiogroup" aria-label="What happens to your notes">
-      <button type="button" class="del-opt" data-mode="tombstone" role="radio" aria-checked="false">
-        <b>Keep as a memory</b>
-        <span>Your notes and photos stay on the board, marked "former member." Your name and picture are removed from them.</span>
-      </button>
-      <button type="button" class="del-opt" data-mode="void" role="radio" aria-checked="false">
-        <b>Burn it all</b>
-        <span>Everything you added burns away and is gone for everyone, photos included.</span>
-      </button>
-    </div>
-    <p class="small-note">Removed in both cases: your sign-in, profile, bio, picture, game scores and unfinished games, and private messages between you and someone else. If you're the last person on a board, that board is removed too.</p>
-    <label class="small-note" for="deleteAcctText">Type DELETE to confirm</label>
-    <input id="deleteAcctText" class="del-text" autocomplete="off" placeholder="DELETE">
-    <div class="sheet-actions">
-      <button class="btn" id="deleteAcctCancel">Cancel</button>
-      <button class="btn danger" id="deleteAcctGo" disabled>Delete my account</button>
-    </div>
-  </section>
-  <canvas id="burnFx" hidden aria-hidden="true"></canvas>
-
   <!-- Note detail -->
   <div class="sheet-backdrop" id="detailBackdrop" hidden></div>
   <section class="sheet" id="detail" hidden aria-label="Note">
@@ -433,7 +408,6 @@
       <button class="btn small" id="acctLinkBtn">Add email</button>
     </div>
     <button class="btn small danger" id="logoutBtn" hidden>Log out of this phone</button>
-    <button class="btn small danger" id="deleteAcctBtn">Delete my account</button>
     <p class="small-note privacy-link"><a href="privacy.html">Privacy and your data</a></p>
 
     <h3>On this board</h3>
