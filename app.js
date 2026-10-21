@@ -118,7 +118,7 @@ const C8 = {
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v32";
+const APP_VERSION = "soy-v33";
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
 let hapticsOn;
@@ -223,6 +223,18 @@ function createSupabaseApi() {
       if (!session) throw new Error("Please sign in with your email first.");
       must(await sb.from("profiles").upsert({ id: myId(), name, color }));
       return { id: myId(), name, color, muted: [] };
+    },
+    // Custom themes live in the user_themes table (upgrade-v13). Columns: id uuid, owner_id, name, json, updated_at.
+    async listThemes() {
+      const { data, error } = await sb.from("user_themes").select("id,name,json,updated_at").eq("owner_id", myId());
+      if (error) throw new Error(error.message);
+      return data || [];
+    },
+    async upsertTheme(t) {
+      must(await sb.from("user_themes").upsert({ id: t.id, owner_id: myId(), name: t.name, json: { base: t.base, tokens: t.tokens }, updated_at: new Date(t.updatedAt).toISOString() }));
+    },
+    async deleteTheme(id) {
+      must(await sb.from("user_themes").delete().eq("id", id));
     },
     async updateProfile(patch) {
       must(await sb.from("profiles").update(patch).eq("id", myId()));
@@ -507,6 +519,9 @@ function createDemoApi() {
     async signOut() { localStorage.removeItem("soy-demo-me" + who); },
     async me() { return db().profiles[meId()] || null; },
     async signIn(name, color) { const d = db(); d.profiles[meId()] = { id: meId(), name, color, muted: [] }; save(d); return d.profiles[meId()]; },
+    async listThemes() { return []; },          // demo mode keeps themes on this device only
+    async upsertTheme() {},
+    async deleteTheme() {},
     async updateProfile(patch) { const d = db(); Object.assign(d.profiles[meId()], patch); save(d); emit({ type: "members" }); },
     async myBoards() {
       const d = db();
@@ -794,23 +809,43 @@ function swatchRow(container, selected, onPick, palette = "note") {
 }
 
 // Applies a built-in theme ("cork", ...) or a custom one ("custom:<id>") to this device.
+// Extra built-in themes (Phase 4d). They are painted from tokens, the same way custom themes are.
+const EXTRA_THEMES = [
+  { id: "light-minimal", name: "Light minimal", base: "light", tokens: { bg: "#f4f5f7", surface: "#ffffff", surfaceInk: "#1d2028", muted: "#666c7a", line: "#e3e6ec", accent: "#1d2028", accentInk: "#ffffff", planet: "#c9d6ff", note: ["#fff8d6", "#ffe3ea", "#e0efff", "#e4f7e8", "#eee6ff", "#ffeedb"], gridSize: 28, gridOpacity: 0.025, radius: "m", shadow: "soft", motion: "normal" } },
+  { id: "graphite", name: "Graphite", base: "dark", tokens: { bg: "#0b0c10", surface: "#15171d", surfaceInk: "#eceef3", muted: "#8e95a4", line: "#23262e", accent: "#eceef3", accentInk: "#0b0c10", planet: "#b9c7ff", note: ["#2a2a20", "#2c1f26", "#1c2430", "#1d2a22", "#241f33", "#2e241c"], gridSize: 32, gridOpacity: 0.03, radius: "m", shadow: "soft", motion: "normal" } },
+  { id: "sage", name: "Sage", base: "light", tokens: { bg: "#c9d4c1", surface: "#f6f8f2", surfaceInk: "#2f3a2c", muted: "#5f6e59", line: "#dfe6d7", accent: "#5b7552", accentInk: "#ffffff", planet: "#e3efd6", note: ["#f3efc8", "#dfeed8", "#d6e8e1", "#e8f0d0", "#ebe6d8", "#f1e3cf"], gridSize: 28, gridOpacity: 0.04, radius: "m", shadow: "soft", motion: "normal" } },
+  { id: "sunset", name: "Sunset", base: "dark", tokens: { bg: "#2a1a2e", surface: "#3a2440", surfaceInk: "#fbe9dc", muted: "#d7b4b4", line: "#4d3050", accent: "#ff8a5b", accentInk: "#2a1a2e", planet: "#ffb36b", note: ["#5a3346", "#5b3a2b", "#4a3b5c", "#5a4236", "#3f4d5c", "#5c3d52"], gridSize: 28, gridOpacity: 0.03, radius: "l", shadow: "strong", motion: "normal" } },
+  { id: "ocean", name: "Ocean", base: "dark", tokens: { bg: "#0b2a3a", surface: "#113a4f", surfaceInk: "#e4f6fb", muted: "#9cc8d6", line: "#1a4a60", accent: "#5fd3e6", accentInk: "#06202b", planet: "#7fe0f0", note: ["#21495a", "#2a4f5e", "#1f4b4a", "#26576b", "#2c4a66", "#2e5a55"], gridSize: 36, gridOpacity: 0.04, radius: "m", shadow: "soft", motion: "normal" } },
+  { id: "lavender", name: "Lavender night", base: "dark", tokens: { bg: "#231d3a", surface: "#2f2751", surfaceInk: "#efeaff", muted: "#b6aed9", line: "#3d3470", accent: "#c3b1ff", accentInk: "#231d3a", planet: "#e0b8ff", note: ["#3f3561", "#3a2f5a", "#33406a", "#4a3a6e", "#2f4a63", "#524275"], gridSize: 28, gridOpacity: 0.035, radius: "m", shadow: "soft", motion: "normal" } },
+];
+
+// Applies a theme. Ids: a built-in ("cork"...), an extra built-in ("sage"...), "custom:<id>", or "auto".
+// "auto" picks light-minimal or dark-minimal from the phone's light/dark setting.
 function applyTheme(id) {
-  const custom = String(id).startsWith("custom:") ? customById(String(id).slice(7)) : null;
+  let want = String(id);
+  if (want === "auto") want = matchMedia("(prefers-color-scheme: dark)").matches ? "graphite" : "light-minimal";
+  const custom = want.startsWith("custom:") ? customById(want.slice(7)) : null;
+  const extra = custom ? null : EXTRA_THEMES.find((t) => t.id === want) || null;
   clearPaint();
-  let resolved, metaColor;
-  if (custom) {
-    // a custom theme starts from the closest built-in CSS, then its saved colours are painted on top
-    document.documentElement.dataset.theme = custom.base === "light" ? "cork" : "midnight";
-    paintTheme(custom.tokens, custom.base);
-    resolved = id; metaColor = custom.tokens.bg || "#0e1014";
+  let stored, metaColor;
+  if (custom || extra) {
+    // these start from the closest built-in CSS, then their saved colours are painted on top
+    const src = custom || extra;
+    document.documentElement.dataset.theme = src.base === "light" ? "cork" : "midnight";
+    paintTheme(src.tokens, src.base);
+    metaColor = src.tokens.bg || "#0e1014";
+    stored = id === "auto" ? "auto" : String(id);
   } else {
-    resolved = ["cork", "pastel", "midnight", "dreamy"].includes(id) ? id : "cork";
+    const resolved = ["cork", "pastel", "midnight", "dreamy"].includes(want) ? want : "cork";
     document.documentElement.dataset.theme = resolved;
     metaColor = { cork: "#8a5e36", pastel: "#f5ecff", midnight: "#0e1014", dreamy: "#8d9cc4" }[resolved];
+    stored = id === "auto" ? "auto" : resolved;
   }
   document.querySelector('meta[name="theme-color"]').content = metaColor;
-  ls.set("soy-theme", resolved);
+  ls.set("soy-theme", stored);
 }
+// When the phone switches between light and dark, an "auto" theme follows it.
+try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (ls.get("soy-theme", "cork") === "auto") applyTheme("auto"); }); } catch { /* old browser: no auto switching */ }
 
 // ---- Theme schema (Phase 1 groundwork for custom themes; see roadmap section 5.2) ----
 const THEME_COLOR_KEYS = { bg: "--bg", surface: "--surface", surfaceInk: "--surface-ink", muted: "--muted", line: "--line", accent: "--accent", accentInk: "--accent-ink", danger: "--danger", planet: "--planet" };
@@ -912,6 +947,18 @@ function renderThemePicker() {
     const b = document.createElement("button"); b.className = "theme-card"; b.type = "button";
     b.setAttribute("aria-pressed", String(t.id === curId));
     b.innerHTML = `<div class="sw" style="background:${t.bg}">${t.notes.map((c) => `<i style="background:${c}"></i>`).join("")}</div><b>${t.name}</b>`;
+    b.onclick = () => pick(t.id, b);
+    tp.appendChild(b);
+  }
+  const autoCard = document.createElement("button"); autoCard.className = "theme-card"; autoCard.type = "button";
+  autoCard.setAttribute("aria-pressed", String(curId === "auto"));
+  autoCard.innerHTML = `<div class="sw auto-sw" aria-hidden="true"></div><b>Auto (day and night)</b>`;
+  autoCard.onclick = () => pick("auto", autoCard);
+  tp.appendChild(autoCard);
+  for (const t of EXTRA_THEMES) {
+    const b = document.createElement("button"); b.className = "theme-card"; b.type = "button";
+    b.setAttribute("aria-pressed", String(t.id === curId));
+    b.innerHTML = `<div class="sw" style="background:${t.tokens.bg}">${t.tokens.note.slice(0, 3).map((c) => `<i style="background:${c}"></i>`).join("")}</div><b>${t.name}</b>`;
     b.onclick = () => pick(t.id, b);
     tp.appendChild(b);
   }
@@ -1061,7 +1108,7 @@ function saveThemeFromBuilder() {
     if (i >= 0) list[i] = { id: tb.id, ...res.theme, updatedAt: now };
   } else {
     if (list.length >= CUSTOM_MAX) { $("#tbError").textContent = `You can keep up to ${CUSTOM_MAX} custom themes.`; $("#tbError").hidden = false; return; }
-    tb.id = "c" + now.toString(36) + Math.random().toString(36).slice(2, 6);
+    tb.id = newThemeId();
     list.push({ id: tb.id, ...res.theme, updatedAt: now });
   }
   saveCustomThemes(list);
@@ -1070,16 +1117,203 @@ function saveThemeFromBuilder() {
   renderThemePicker();
   rebuildAllNotes();
   toast("Theme saved");
+  syncThemes().catch(() => {});
 }
 
 function deleteThemeFromBuilder() {
   if (!tb.id) return;
   if (!confirm("Delete this theme? Boards using it go back to Cozy corkboard.")) return;
+  addTombstone(tb.id);                     // so the deletion also reaches your other devices
   saveCustomThemes(customThemes().filter((t) => t.id !== tb.id));
   if (ls.get("soy-theme", "cork") === `custom:${tb.id}`) applyTheme("cork");
   closeSheet("themeBuilder");
   renderThemePicker();
   rebuildAllNotes();
+  syncThemes().catch(() => {});
+}
+
+// ---- Phase 4b: ids, export, import, duplicate ----
+// Theme ids are UUIDs, because the database column is a uuid type.
+function newThemeId() {
+  if (window.crypto?.randomUUID) return crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => { const r = (Math.random() * 16) | 0; return (c === "x" ? r : (r & 3) | 8).toString(16); });
+}
+const isUuid = (s) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(s));
+const slug = (s) => (s || "theme").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "theme";
+
+// File format: { app: "pinned", kind: "themes", version: 1, themes: [{ name, base, tokens }] }.
+// Only the look is exported. Ids and times are made fresh on import.
+function exportThemes(list) {
+  if (!list.length) return toast("No custom themes to export yet");
+  const doc = { app: "pinned", kind: "themes", version: 1, exportedAt: new Date().toISOString(),
+    themes: list.map((t) => ({ name: t.name, base: t.base, tokens: t.tokens })) };
+  const url = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2)], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = list.length === 1 ? `${slug(list[0].name)}.theme.json` : "pinned-themes.json";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast(`Exported ${list.length} theme${list.length === 1 ? "" : "s"}`);
+}
+
+// Every theme in the file goes through validateTheme. Bad ones are skipped and listed in the console.
+async function importThemesFile(file) {
+  if (!file) return;
+  if (file.size > 200 * 1024) return toast("That file is too big to be a theme file");
+  let data;
+  try { data = JSON.parse(await file.text()); } catch { return toast("That file isn't valid JSON"); }
+  const raw = Array.isArray(data?.themes) ? data.themes : (data && data.tokens ? [data] : []);
+  if (!raw.length) return toast("No themes found in that file");
+  const list = customThemes();
+  const names = new Set(list.map((t) => t.name));
+  let added = 0; const skipped = [];
+  for (const item of raw) {
+    const res = validateTheme({ name: item?.name, base: item?.base, tokens: item?.tokens });
+    if (!res.ok) { skipped.push(`${item?.name || "Unnamed"}: ${res.errors[0]}`); continue; }
+    if (list.length >= CUSTOM_MAX) { skipped.push(`${res.theme.name}: you already have ${CUSTOM_MAX} themes`); continue; }
+    const base0 = res.theme.name.slice(0, 34); let name = base0, n = 2;
+    while (names.has(name)) name = `${base0} (${n++})`;
+    names.add(name);
+    list.push({ id: newThemeId(), name, base: res.theme.base, tokens: res.theme.tokens, updatedAt: Date.now() });
+    added++;
+  }
+  saveCustomThemes(list);
+  renderThemePicker();
+  if (skipped.length) console.warn("Theme import skipped:", skipped);
+  toast(added ? `Imported ${added} theme${added === 1 ? "" : "s"}${skipped.length ? `. Skipped ${skipped.length}` : ""}` : "Nothing imported. Check the file");
+  if (added) syncThemes().catch(() => {});
+}
+
+// Copies the theme open in the builder as a new theme, named "<name> copy".
+function duplicateThemeFromBuilder() {
+  if (customThemes().length >= CUSTOM_MAX) return toast(`You can keep up to ${CUSTOM_MAX} custom themes. Delete one first.`);
+  const res = validateTheme({ name: ((tb.name || "").trim() || "My theme").slice(0, 34) + " copy", base: tb.base, tokens: tb.tokens });
+  if (!res.ok) { $("#tbError").textContent = res.errors[0]; $("#tbError").hidden = false; return; }
+  const list = customThemes();
+  list.push({ id: newThemeId(), ...res.theme, updatedAt: Date.now() });
+  saveCustomThemes(list);
+  closeSheet("themeBuilder");
+  renderThemePicker();
+  toast("Copied. It's in your themes now");
+  syncThemes().catch(() => {});
+}
+
+// ---- Phase 4c: sync with Supabase (user_themes). This device is the cache; the server is shared.
+// Rule: for each id, the copy with the newer updatedAt wins. Deletions are kept in a list until the server confirms them.
+const TOMB_KEY = "pinned.themes.deleted";
+function addTombstone(id) { const l = ls.get(TOMB_KEY, []); if (!l.includes(id)) l.push(id); ls.set(TOMB_KEY, l); }
+
+// Themes made before this release used short ids ("c..."). The database needs UUIDs, so they get new ones.
+function migrateThemeIds() {
+  let changed = false;
+  const list = customThemes().map((t) => {
+    if (isUuid(t.id)) return t;
+    changed = true;
+    const newId = newThemeId();
+    if (ls.get("soy-theme", "cork") === `custom:${t.id}`) ls.set("soy-theme", `custom:${newId}`);
+    return { ...t, id: newId };
+  });
+  if (changed) saveCustomThemes(list);
+}
+
+let themeSyncRun = null;
+async function syncThemes() {
+  const status = $("#themeSync");
+  const say = (m) => { if (status) status.textContent = m; };
+  if (isDemo) return say("Saved on this device.");
+  if (!api.hasSession()) return say("Sign in to sync themes across your devices.");
+  if (themeSyncRun) return themeSyncRun;   // only one sync at a time
+  themeSyncRun = (async () => {
+    try {
+      say("Syncing…");
+      migrateThemeIds();
+      const dead = ls.get(TOMB_KEY, []);
+      for (const id of dead) if (isUuid(id)) await api.deleteTheme(id);
+      ls.set(TOMB_KEY, []);
+      const remote = await api.listThemes();
+      const byId = new Map(customThemes().filter((t) => !dead.includes(t.id)).map((t) => [t.id, t]));
+      const remoteAt = new Map();
+      for (const r of remote) {
+        if (dead.includes(r.id)) continue;
+        const at = new Date(r.updated_at).getTime() || 0;
+        remoteAt.set(r.id, at);
+        const check = validateTheme({ name: r.name, base: r.json?.base, tokens: r.json?.tokens });
+        if (!check.ok) continue;
+        const local = byId.get(r.id);
+        if (!local || at > (local.updatedAt || 0) + 1000) byId.set(r.id, { id: r.id, ...check.theme, updatedAt: at });
+      }
+      const merged = [...byId.values()].slice(0, CUSTOM_MAX);
+      for (const t of merged) {
+        const at = remoteAt.get(t.id);
+        if (at === undefined || (t.updatedAt || 0) > at + 1000) await api.upsertTheme(t);
+      }
+      const before = JSON.stringify(customThemes());
+      saveCustomThemes(merged);
+      if (JSON.stringify(merged) !== before) {
+        renderThemePicker();
+        applyTheme(ls.get("soy-theme", "cork"));
+        rebuildAllNotes();
+      }
+      say(`Synced at ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`);
+    } catch (e) {
+      console.warn("Theme sync failed", e);
+      say("Couldn't sync right now. Your themes are saved on this device.");
+    } finally { themeSyncRun = null; }
+  })();
+  return themeSyncRun;
+}
+
+// ---- Phase 4e: Feel switches (Calm motion, Decorations) ----
+function renderFeelSwitches() {
+  $("#calmSwitch").setAttribute("aria-checked", String(ls.get("pinned-calm", false) === true));
+  $("#decoSwitch").setAttribute("aria-checked", String(ls.get("pinned-deco", true) !== false));
+}
+
+// ---- Update log and credits (Settings, About) ----
+// RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
+const UPDATE_LOG = [
+  { v: "soy-v33", date: "2026-10-21", title: "Themes sync, Feel options and this log", items: [
+    "Export themes as .json files, and import them with every theme checked",
+    "Duplicate a theme from the builder",
+    "Custom themes sync to your account, so they follow you across devices",
+    "New built-in themes: Light minimal, Dark minimal, Sage, Sunset, Ocean and Lavender night",
+    "Auto (day and night) follows your phone's light or dark setting",
+    "Feel: Calm motion pauses animations, Decorations hides planets and stars",
+    "Settings now shows this update log and the credits",
+  ] },
+  { v: "soy-v32", date: "2026-10-21", title: "Custom theme builder", items: [
+    "Build your own theme from a starting point, with a live preview",
+    "Colours, note colours, grid and corner radius",
+    "Contrast checks so text stays readable",
+    "Edit or delete your themes (up to 12)",
+  ] },
+  { v: "soy-v31", title: "Room swipe and composer chips", items: ["Swipe a room left to hide it", "Note type chips in the composer, which remember your last choice"] },
+  { v: "soy-v30", title: "Long-press note menu", items: ["Press and hold a note for its menu: open, reply, edit, pin, delete", "Right-click works the same way on a computer"] },
+  { v: "soy-v29", title: "Grouped Settings", items: ["Settings sorted into Profile, Appearance, Notifications, Board, Account and About"] },
+  { v: "soy-v28", title: "Dock and More sheet", items: ["Bottom dock with Notes, Draw, Chat, Games and More"] },
+  { v: "soy-v27", title: "Apple-style base", items: ["Frosted topbar and dock, larger touch targets, system font"] },
+  { v: "soy-v26", title: "Design tokens", items: ["Colours and sizes moved into shared tokens, so themes can change them"] },
+  { v: "earlier", title: "Earlier releases", items: ["Rooms menu with planets and recent rooms", "Hop and the other mini games", "Drawing tools, notes, photos, voice notes and voice chat"] },
+];
+const CREDITS = [
+  ["Made by", "Himal (9bitbin)"],
+  ["Built with", "Claude, by Anthropic"],
+  ["Backend", "Supabase (database, login, storage, realtime)"],
+  ["Hosting", "GitHub Pages"],
+  ["Supabase JS client", "@supabase/supabase-js, MIT licence"],
+];
+function renderAbout() {
+  if (UPDATE_LOG[0].v !== APP_VERSION) console.warn("UPDATE_LOG's top entry does not match APP_VERSION");
+  const log = $("#updateLog"); log.textContent = "";
+  UPDATE_LOG.forEach((r, i) => {
+    const d = document.createElement("details"); d.open = i === 0;
+    const s = document.createElement("summary");
+    s.textContent = r.v === "earlier" ? r.title : `${r.v}${r.date ? " · " + r.date : ""} · ${r.title}`;
+    const ul = document.createElement("ul");
+    for (const it of r.items) { const li = document.createElement("li"); li.textContent = it; ul.appendChild(li); }
+    d.append(s, ul); log.appendChild(d);
+  });
+  const cl = $("#creditsList"); cl.textContent = "";
+  for (const [k, v] of CREDITS) { const li = document.createElement("li"); const b = document.createElement("b"); b.textContent = k + ": "; li.append(b, v); cl.appendChild(li); }
 }
 
 function memberById(id) { return state.members.find((m) => m.id === id); }
@@ -1220,6 +1454,10 @@ async function boot() {
   let init = {};
   try { init = (await api.init()) || {}; } catch (e) { toast("Couldn't reach the server. Check your connection."); console.error(e); }
   $("#demoBanner").hidden = !isDemo;
+  // Feel options (Phase 4e): saved on this device only
+  document.documentElement.classList.toggle("calm", ls.get("pinned-calm", false) === true);
+  document.documentElement.classList.toggle("no-deco", ls.get("pinned-deco", true) === false);
+  if (api.hasSession()) setTimeout(() => syncThemes().catch(() => {}), 800);
   wireStatic();
   if (init.landing === "linked") return show("#linked");
   if (!api.hasSession()) return showLogin(init.linkError);
@@ -4324,6 +4562,7 @@ function onLinkInput() {
 function openSettings() {
   // themes
   renderThemePicker();
+  if (api.hasSession()) syncThemes().catch(() => {});
   $("#settingsCode").textContent = fmtCode(state.board?.code);
   $("#settingsName").value = state.me?.name || "";
   swatchRow($("#settingsSwatches"), state.me?.color, async (c) => {
@@ -4338,6 +4577,8 @@ function openSettings() {
   renderBgSettings();
   $("#vibeSwitch").setAttribute("aria-checked", String(hapticsOn !== false));
   $("#vibeRow").hidden = !canVibrate;
+  renderFeelSwitches();
+  renderAbout();
   $("#appVersion").textContent = `Pinned · ${APP_VERSION}${isStandalone() ? " · installed" : ""}`;
   // avatar + bio
   const av = state.me?.avatar_path && state.urls[state.me.avatar_path];
@@ -5852,6 +6093,12 @@ function wireStatic() {
   $("#tbCancel").onclick = () => closeSheet("themeBuilder");
   $("#tbSave").onclick = saveThemeFromBuilder;
   $("#tbDelete").onclick = deleteThemeFromBuilder;
+  $("#tbDuplicate").onclick = duplicateThemeFromBuilder;
+  $("#tbExport").onclick = () => exportThemes([{ name: (tb.name || "").trim() || "My theme", base: tb.base, tokens: tb.tokens }]);
+  $("#themeExport").onclick = () => exportThemes(customThemes());
+  $("#themeImport").onchange = (e) => { importThemesFile(e.target.files?.[0]).catch(() => toast("Couldn't import that file")); e.target.value = ""; };
+  $("#calmSwitch").onclick = () => { const on = ls.get("pinned-calm", false) !== true; ls.set("pinned-calm", on); document.documentElement.classList.toggle("calm", on); renderFeelSwitches(); };
+  $("#decoSwitch").onclick = () => { const on = ls.get("pinned-deco", true) === false; ls.set("pinned-deco", on); document.documentElement.classList.toggle("no-deco", !on); renderFeelSwitches(); };
   document.querySelectorAll("#more [data-proxy]").forEach((b) => b.onclick = () => { closeSheet("more"); $("#" + b.dataset.proxy).click(); });
   setInterval(() => { const d = $("#moreDot"); if (d) d.hidden = $("#qDot").hidden; }, 1500);
   $("#gamesClose").onclick = () => closeSheet("games");

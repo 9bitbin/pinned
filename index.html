@@ -409,6 +409,12 @@
       <div class="grp-body">
         <div class="grp-sub">Theme</div>
       <div class="themes" id="themePicker"></div>
+      <div class="setting-row theme-io">
+        <button class="btn small" id="themeExport" type="button">Export themes</button>
+        <label class="btn small" for="themeImport">Import themes</label>
+        <input type="file" id="themeImport" accept="application/json,.json" hidden>
+      </div>
+      <p class="muted small-note" id="themeSync"></p>
         <div class="grp-sub">Background</div>
       <div class="seg" id="bgMode" hidden>
         <button type="button" data-mode="shared">Shared for everyone</button>
@@ -426,6 +432,14 @@
       <div class="setting-row" id="vibeRow">
         <span>Vibrate on taps and sends</span>
         <button class="switch" id="vibeSwitch" type="button" role="switch" aria-checked="true" aria-label="Vibration"></button>
+      </div>
+      <div class="setting-row">
+        <span>Calm motion (pauses animations)</span>
+        <button class="switch" id="calmSwitch" type="button" role="switch" aria-checked="false" aria-label="Calm motion"></button>
+      </div>
+      <div class="setting-row">
+        <span>Decorations (planets and stars)</span>
+        <button class="switch" id="decoSwitch" type="button" role="switch" aria-checked="true" aria-label="Decorations"></button>
       </div>
       </div>
     </div>
@@ -482,6 +496,10 @@
       <div class="grp-title">About</div>
       <div class="grp-body">
       <p class="muted small-note version" id="appVersion"></p>
+      <div class="grp-sub">Update log</div>
+      <div class="updlog" id="updateLog"></div>
+      <div class="grp-sub">Credits</div>
+      <ul class="credits" id="creditsList"></ul>
       </div>
     </div>
     <div class="sheet-actions">
@@ -722,6 +740,10 @@
       <div class="tb-section-title">Readability</div>
       <div class="tb-contrast" id="tbContrast"></div>
       <p class="error" id="tbError" hidden></p>
+      <div class="tb-extra">
+        <button class="btn small" id="tbDuplicate" type="button">Duplicate</button>
+        <button class="btn small" id="tbExport" type="button">Export .json</button>
+      </div>
       <div class="sheet-actions tb-actions">
         <button class="btn danger" id="tbDelete" hidden>Delete</button>
         <button class="btn" id="tbCancel">Cancel</button>
