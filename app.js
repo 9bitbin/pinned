@@ -118,7 +118,7 @@ const C8 = {
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v30";
+const APP_VERSION = "soy-v31";
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
 let hapticsOn;
@@ -1129,7 +1129,28 @@ function roomCard(r, i) {
     const x = document.createElement("span"); x.className = "room-x"; x.textContent = "×"; x.setAttribute("aria-label", "Hide this room");
     c.appendChild(x);
   }
-  c.onclick = (e) => { e.stopPropagation(); roomsState.edit ? hideRoom(r.id) : openRoom(r); };
+  // swipe a room left past the threshold to hide it (same as Edit then ×)
+  let sx = null, swiped = false;
+  const reset = () => { c.style.translate = ""; c.style.opacity = ""; };
+  c.addEventListener("pointerdown", (e) => { if (roomsState.edit) return; sx = e.clientX; swiped = false; try { c.setPointerCapture(e.pointerId); } catch {} });
+  c.addEventListener("pointermove", (e) => {
+    if (sx == null) return;
+    const dx = Math.min(0, e.clientX - sx);
+    if (dx < -8) swiped = true;
+    c.style.translate = `${dx}px 0`; c.style.opacity = String(Math.max(0.35, 1 + dx / 220));
+  });
+  c.addEventListener("pointerup", (e) => {
+    if (sx == null) return;
+    const dx = e.clientX - sx; sx = null;
+    if (dx < -110) return hideRoom(r.id);
+    reset();
+  });
+  c.addEventListener("pointercancel", () => { sx = null; reset(); });
+  c.onclick = (e) => {
+    e.stopPropagation();
+    if (swiped) { swiped = false; return; }
+    roomsState.edit ? hideRoom(r.id) : openRoom(r);
+  };
   return c;
 }
 function hideRoom(id) {

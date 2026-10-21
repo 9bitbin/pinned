@@ -962,6 +962,7 @@ body.gaming { overflow: hidden; }
   text-align: center; color: inherit; font: inherit; cursor: pointer; background: var(--surface); border: 1px solid var(--line);
   box-shadow: var(--note-shadow); animation: roomSway 6.5s ease-in-out infinite; transform-origin: 50% 60%; }
 .room:active { scale: .97; }
+.room { touch-action: pan-y; transition: translate .2s ease, opacity .2s ease; }
 .room-system { position: relative; width: 120px; height: 104px; perspective: 340px; }
 .room-planet { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 50%;
   background: radial-gradient(circle at 32% 28%, #ffffff 0 4%, var(--planet, #ff9fd0) 30%, #1b1f2e 88%);
@@ -1014,3 +1015,11 @@ body.gaming { overflow: hidden; }
 .sheet.nm { max-height: 70vh; }
 .more-row.danger-row { color: #d93025; }
 .board .note, #board .note { -webkit-touch-callout: none; }
+
+/* ============ Phase 3: composer chips and floating tool icons ============ */
+#composerTabs.tabs { background: transparent; padding: 2px 0 6px; margin-bottom: 10px; gap: 8px; }
+#composerTabs.tabs button { flex: 0 0 auto; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--surface-ink); padding: 8px 14px; font-size: 14px; font-weight: 700; box-shadow: none; }
+#composerTabs.tabs button.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); box-shadow: none; }
+.boardtools button { display: grid; place-items: center; color: var(--surface-ink); }
+.boardtools button[aria-pressed="true"] { color: var(--accent-ink); }
+.boardtools #toolLoc { position: relative; }
