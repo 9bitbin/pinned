@@ -143,6 +143,18 @@
     </div>
     <div class="drawbar" id="drawBar" hidden>
       <div class="pens" id="bPens"></div>
+      <div class="tools-row" role="toolbar" aria-label="Drawing tools">
+        <button class="tool" id="bBrushPen" aria-pressed="false" title="Pen" aria-label="Pen"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l4.5-1 10-10-3.5-3.5-10 10z"/><path d="M14 6.5l3.5 3.5"/></svg></button>
+        <button class="tool" id="bBrushMarker" aria-pressed="false" title="Marker" aria-label="Marker"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4l6 6-8 8H6v-6z"/><path d="M11 7l6 6"/></svg></button>
+        <button class="tool" id="bBrushHi" aria-pressed="false" title="Highlighter" aria-label="Highlighter"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="15" width="16" height="5" rx="1"/><path d="M8 15l6-9 3 2-5 8"/></svg></button>
+        <span class="sep"></span>
+        <button class="tool" id="bEyedrop" aria-pressed="false" title="Eyedropper: tap a line to copy its color" aria-label="Eyedropper: tap a line to copy its color"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 5l5 5-9 9H5v-5z"/><path d="M12 7l5 5"/></svg></button>
+        <button class="tool" id="bFill" aria-pressed="false" title="Fill: tap inside a closed loop" aria-label="Fill: tap inside a closed loop"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 11l7-7 7 7-7 7z"/><path d="M19 15s-2 2.2-2 3.5a2 2 0 0 0 4 0c0-1.3-2-3.5-2-3.5z"/></svg></button>
+        <button class="tool" id="bText" aria-pressed="false" title="Text: tap, then type" aria-label="Text: tap, then type"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6V4h14v2"/><path d="M12 4v16"/><path d="M9 20h6"/></svg></button>
+        <span class="sep"></span>
+        <button class="tool" id="bZoomOut" title="Zoom out" aria-label="Zoom out"><span class="zoomtxt">−</span></button>
+        <button class="tool" id="bZoomIn" title="Zoom in" aria-label="Zoom in"><span class="zoomtxt">+</span></button>
+      </div>
       <div class="pad-row">
         <div class="sizes" id="bSizes"></div>
         <button class="tool" id="bEraser" aria-pressed="false" title="Erase your lines"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20H8l-5-5 10-10 8 8-6 6"/><path d="M6 11l7 7"/></svg></button>

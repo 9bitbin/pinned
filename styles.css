@@ -916,3 +916,11 @@ body.gaming { overflow: hidden; }
 @keyframes vpulse { 50% { opacity: .9; } }
 .vu small { font-size: 10px; color: #cfd2da; max-width: 46px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vu .vmute { position: absolute; top: -4px; right: 2px; font-size: 11px; }
+
+/* board drawing palette */
+.tools-row { display: flex; gap: 6px; align-items: center; justify-content: center; flex-wrap: wrap; }
+.tools-row .sep { width: 1px; height: 24px; background: var(--line); margin: 0 4px; }
+.tools-row .zoomtxt { font-size: 22px; font-weight: 800; line-height: 1; }
+#ink text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-weight: 800; pointer-events: none; }
+.ink-text-input { position: fixed; z-index: 300; font: 800 18px system-ui, sans-serif; background: rgba(255,255,255,.95); color: #222;
+  border: 2px solid var(--accent, #e0584f); border-radius: 10px; padding: 6px 10px; min-width: 140px; outline: none; box-shadow: 0 8px 20px -8px rgba(0,0,0,.4); }

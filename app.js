@@ -1947,9 +1947,16 @@ function expireCursors() {
 let inkMode = false, inkCur = null, inkSendT = 0, inkSent = 0;
 const inkTool = {
   color: PENS[0], size: SIZES[1], erasing: false,
+  tool: "draw",        // draw | eyedrop | fill | text
+  brush: "pen",        // pen | marker | hi
   tools() { return { color: this.color, size: this.size, erasing: this.erasing }; },
-  setColor(c) { this.color = c; this.erasing = false; }, setSize(s) { this.size = s; }, toggleEraser() { this.erasing = !this.erasing; },
+  setColor(c) { this.color = c; this.erasing = false; if (this.tool === "eyedrop") this.tool = "draw"; },
+  setSize(s) { this.size = s; }, toggleEraser() { this.erasing = !this.erasing; },
 };
+// brush looks: marker is a bit wider and see-through, highlighter is wide and very see-through.
+// The look is stored in the stroke's own color (hex with alpha), so no extra column is needed.
+const BRUSH = { pen: { w: 1, a: "" }, marker: { w: 2.2, a: "cc" }, hi: { w: 4, a: "66" } };
+const clampW = (v) => +Math.min(400, Math.max(0.5, v)).toFixed(2);
 const SVGNS = "http://www.w3.org/2000/svg";
 
 function inkD(p) {
@@ -1964,14 +1971,27 @@ function inkD(p) {
   return d + `L${l[0]} ${l[1]}`;
 }
 
-function inkPathEl(id) { return document.querySelector(`#ink path[data-id="${CSS.escape(id)}"]`); }
+function inkPathEl(id) { return document.querySelector(`#ink [data-id="${CSS.escape(id)}"]`); }
 
 function drawInk(row, live_ = false) {
+  const kind = row.kind || "ink";
   let el = inkPathEl(row.id);
-  if (!el) { el = document.createElementNS(SVGNS, "path"); el.dataset.id = row.id; $("#ink").appendChild(el); }
-  el.setAttribute("d", inkD(row.points));
-  el.setAttribute("stroke", row.color);
-  el.setAttribute("stroke-width", row.width);
+  if (el && el.tagName.toLowerCase() !== (kind === "text" ? "text" : "path")) { el.remove(); el = null; }
+  if (!el) {
+    el = document.createElementNS(SVGNS, kind === "text" ? "text" : "path");
+    el.dataset.id = row.id;
+    if (kind === "fill") $("#ink").prepend(el); else $("#ink").appendChild(el);   // fills sit under the lines
+  }
+  if (kind === "text") {
+    el.setAttribute("x", row.points[0][0]); el.setAttribute("y", row.points[0][1]);
+    el.setAttribute("font-size", row.width); el.style.fill = row.color; el.textContent = row.label || "";
+  } else if (kind === "fill") {
+    el.setAttribute("d", inkD(row.points) + "Z"); el.style.fill = row.color; el.style.stroke = "none";
+  } else {
+    el.setAttribute("d", inkD(row.points));
+    el.setAttribute("stroke", row.color);
+    el.setAttribute("stroke-width", row.width);
+  }
   el.classList.toggle("live", live_);
 }
 
@@ -1986,11 +2006,12 @@ function onStrokeEvent(row, deleted) {
 }
 
 function setInkMode(on) {
-  if (on) deselect();
+  if (on) { deselect(); inkTool.tool = "draw"; inkTool.erasing = false; }
   inkMode = on;
   document.body.classList.toggle("drawmode", on);
   $("#drawBar").hidden = !on;
   $("#toolDraw").setAttribute("aria-pressed", String(on));
+  syncBoardUI();
   $("#scroller").classList.toggle("drawing", on);
   if (on && !state.v2 && !isDemo) toast("Drawing on the board needs the latest database update (upgrade-v4.sql)", 4000);
 }
@@ -1998,9 +2019,105 @@ function setInkMode(on) {
 function inkStart(e) {
   if (inkTool.erasing) { inkCur = { erase: true }; inkEraseAt(e); return; }
   const w = toWorld(e.clientX, e.clientY);
-  inkCur = { id: uid(), board_id: state.board.id, author_id: state.me.id, color: inkTool.color, width: +(inkTool.size * 2 / state.view.s).toFixed(2), points: [[+w.x.toFixed(1), +w.y.toFixed(1)]] };
+  if (inkTool.tool === "eyedrop") return pickAt(w);
+  if (inkTool.tool === "fill") return fillAt(w);
+  if (inkTool.tool === "text") return openTextAt(e, w);
+  const b = BRUSH[inkTool.brush] || BRUSH.pen;
+  inkCur = { id: uid(), board_id: state.board.id, author_id: state.me.id, kind: "ink", color: inkTool.color + b.a, width: clampW(inkTool.size * 2 * b.w / state.view.s), points: [[+w.x.toFixed(1), +w.y.toFixed(1)]] };
   inkSent = 0;
   drawInk(inkCur, true);
+}
+
+// ---- palette helpers
+function setBoardTool(name) { inkTool.tool = name; inkTool.erasing = false; syncBoardUI(); }
+function syncBoardUI() {
+  const t = inkTool;
+  const map = {
+    bBrushPen: t.tool === "draw" && !t.erasing && t.brush === "pen",
+    bBrushMarker: t.tool === "draw" && !t.erasing && t.brush === "marker",
+    bBrushHi: t.tool === "draw" && !t.erasing && t.brush === "hi",
+    bEyedrop: t.tool === "eyedrop", bFill: t.tool === "fill", bText: t.tool === "text", bEraser: t.erasing,
+  };
+  for (const id in map) $("#" + id)?.setAttribute("aria-pressed", String(map[id]));
+  document.querySelectorAll("#bPens .pen").forEach((b) => b.setAttribute("aria-pressed", String(!t.erasing && t.tool !== "eyedrop" && b.dataset.c === t.color)));
+}
+function zoomCenter(f) { const r = vp(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, f); }
+function schemaMsg(err) {
+  return /kind|label|schema cache|does not exist|Could not find/i.test(err?.message || "") ? "Fill and text need upgrade-v11.sql in Supabase" : "Couldn't save that";
+}
+// eyedropper: copy the color of the line under your finger
+function pickAt(w) {
+  const r = 10 / state.view.s;
+  let best = null;
+  for (const s of [...state.strokes.values()].reverse()) {
+    if ((s.kind || "ink") !== "ink") continue;
+    const tol = r + s.width / 2;
+    if (s.points.some(([x, y]) => Math.hypot(x - w.x, y - w.y) < tol)) { best = s; break; }
+  }
+  if (!best) return toast("No line there. Tap a line to copy its color.");
+  inkTool.color = best.color.slice(0, 7);
+  setBoardTool("draw");
+  toast("Color picked");
+}
+// fill bucket: tap inside a closed loop of your ink
+function pointInPoly(x, y, pts) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, yi] = pts[i], [xj, yj] = pts[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+function closedShape(s) {
+  if ((s.kind || "ink") !== "ink" || s._live || s.points.length < 6) return false;
+  const a = s.points[0], b = s.points[s.points.length - 1];
+  return Math.hypot(a[0] - b[0], a[1] - b[1]) <= Math.max(18, s.width * 2);
+}
+function fillAt(w) {
+  let best = null, bestArea = Infinity;
+  for (const s of state.strokes.values()) {
+    if (!closedShape(s) || !pointInPoly(w.x, w.y, s.points)) continue;
+    const xs = s.points.map((p) => p[0]), ys = s.points.map((p) => p[1]);
+    const area = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
+    if (area < bestArea) { best = s; bestArea = area; }
+  }
+  if (!best) return toast("Draw a closed loop first, then tap inside it");
+  const color = inkTool.color + "66";
+  const key = JSON.stringify(best.points);
+  const existing = [...state.strokes.values()].find((s) => s.kind === "fill" && JSON.stringify(s.points) === key);
+  if (existing) {
+    const prev = existing.color;
+    existing.color = color; drawInk(existing);
+    api.updateStroke(existing.id, { color }).catch(() => { existing.color = prev; drawInk(existing); toast("Couldn't change that fill"); });
+    return;
+  }
+  const row = { id: uid(), board_id: state.board.id, author_id: state.me.id, kind: "fill", color, width: 1, points: best.points.map((p) => [p[0], p[1]]) };
+  addInk(row);
+  api.addStroke(row).catch((err) => { removeInk(row.id); toast(schemaMsg(err)); });
+}
+// text tool: tap, type, press Enter (Esc cancels)
+function openTextAt(e, w) {
+  document.querySelector(".ink-text-input")?.remove();
+  const input = document.createElement("input");
+  input.className = "ink-text-input"; input.maxLength = 200; input.placeholder = "Type, then Enter";
+  input.style.left = Math.max(8, Math.min(innerWidth - 180, e.clientX)) + "px";
+  input.style.top = Math.max(8, e.clientY - 20) + "px";
+  input.style.color = inkTool.color;
+  let done = false;
+  const finish = (save) => {
+    if (done) return; done = true;
+    const text = input.value.trim(); input.remove();
+    if (!save || !text) return;
+    const row = { id: uid(), board_id: state.board.id, author_id: state.me.id, kind: "text", label: text.slice(0, 200), color: inkTool.color, width: clampW(inkTool.size * 2.5), points: [[+w.x.toFixed(1), +w.y.toFixed(1)]] };
+    addInk(row);
+    api.addStroke(row).catch((err) => { removeInk(row.id); toast(schemaMsg(err)); });
+  };
+  input.onkeydown = (ev) => { if (ev.key === "Enter") finish(true); else if (ev.key === "Escape") finish(false); };
+  input.onblur = () => finish(true);
+  // taps inside the box must not reach the board (they would start another stroke)
+  for (const ev of ["pointerdown", "pointerup", "touchstart", "touchend", "mousedown", "click"]) input.addEventListener(ev, (x) => x.stopPropagation());
+  document.body.appendChild(input);
+  setTimeout(() => input.focus(), 60);   // after the tap ends, so the board does not steal focus
 }
 
 function inkMove(e) {
@@ -3677,7 +3794,6 @@ function openSettings() {
 const GAME_LIST = [
   { id: "kestrel", name: "Neon Kestrel", icon: "🦅", file: "games/neon-kestrel.html", blurb: "Himal's synthwave flyer. Tap to flap through the neon towers." },
   { id: "pindrop", name: "Pin Drop", icon: "📌", file: "games/pin-drop.html", blurb: "Drop the swinging pin on a sliding bullseye. 10 drops." },
-  { id: "hop", name: "Hop", icon: "🌙", file: "games/hop.html", blurb: "Hop stone to stone across the misty lake. Race on the same stones." },
   { id: "plane", name: "Paper Plane", icon: "✈️", file: "games/paper-plane.html", blurb: "Hold to climb, let go to dive. Dodge pins, grab hearts." },
   { id: "blocks", name: "Block Drop", icon: "🟦", file: "games/block-drop.html", blurb: "Stack falling blocks and clear lines. A race gets the same pieces." },
   { id: "typerace", name: "Type Race", icon: "⌨️", file: "games/type-race.html", blurb: "Type the passage fast and clean. Everyone gets the same text." },
@@ -5136,6 +5252,18 @@ function wireStatic() {
   $("#toolDraw").onclick = () => setInkMode(!inkMode);
   $("#bDone").onclick = () => setInkMode(false);
   buildTools({ pens: $("#bPens"), sizes: $("#bSizes"), eraser: $("#bEraser"), undo: $("#bUndo"), clear: $("#bClear") }, inkTool, { onUndo: inkUndo, onClear: () => {} });
+  $("#bBrushPen").onclick = () => { inkTool.brush = "pen"; setBoardTool("draw"); };
+  $("#bBrushMarker").onclick = () => { inkTool.brush = "marker"; setBoardTool("draw"); };
+  $("#bBrushHi").onclick = () => { inkTool.brush = "hi"; setBoardTool("draw"); };
+  $("#bEyedrop").onclick = () => setBoardTool(inkTool.tool === "eyedrop" ? "draw" : "eyedrop");
+  $("#bFill").onclick = () => setBoardTool(inkTool.tool === "fill" ? "draw" : "fill");
+  $("#bText").onclick = () => setBoardTool(inkTool.tool === "text" ? "draw" : "text");
+  $("#bZoomIn").onclick = () => zoomCenter(1.25);
+  $("#bZoomOut").onclick = () => zoomCenter(0.8);
+  $("#bEraser").onclick = () => { if (inkTool.erasing) setBoardTool("draw"); else { inkTool.erasing = true; inkTool.tool = "draw"; syncBoardUI(); } };
+  $("#bPens").addEventListener("click", () => setTimeout(syncBoardUI, 0));
+  $("#bSizes").addEventListener("click", () => setTimeout(syncBoardUI, 0));
+  syncBoardUI();
   $("#memberChips").onclick = openPeople;
   $("#dockChats").onclick = openChats;
   // games
