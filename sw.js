@@ -1,5 +1,5 @@
 // Pinned service worker: offline shell + push notifications
-const CACHE = "soy-v22";
+const CACHE = "soy-v23";
 const SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./config.js", "./manifest.webmanifest", "./icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {
