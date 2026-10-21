@@ -1,0 +1,6 @@
+{
+  "name": "pinned",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test tests/c8.test.js tests/map.test.js" }
+}

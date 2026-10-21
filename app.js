@@ -1,3 +1,5 @@
+import { C8 } from "./c8.js";
+import { haversine, bearing, compassOf, fmtDist, fmtAcc, buildMapModel } from "./map.js";
 // Pinned: shared sticky-note board for two
 import { CONFIG } from "./config.js";
 
@@ -58,67 +60,9 @@ const QUESTIONS = [
   "What's something you want me to know today?",
 ];
 
-// Crazy 8s rules engine (used by demo mode + the vs-computer AI; the real server
-// runs the same rules in SQL). A game object: {deck,hand_x,hand_o,discard,top,suit,
-// turn,status,winner,x_count,o_count,draw_count,last_note}.
-const C8 = {
-  RANKS: ["A", "2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K"],
-  SUITS: ["H", "D", "C", "S"],
-  suitOf: (c) => c[1],
-  rankOf: (c) => c[0],
-  shuffle(arr) { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; },
-  fullDeck() { const d = []; for (const r of C8.RANKS) for (const s of C8.SUITS) d.push(r + s); return d; },
-  playable(card, top, suit) { return !!card && (C8.suitOf(card) === suit || C8.rankOf(card) === C8.rankOf(top) || C8.rankOf(card) === "8"); },
-  hasPlay(hand, top, suit) { return hand.some((c) => C8.playable(c, top, suit)); },
-  deal() {
-    const deck = C8.shuffle(C8.fullDeck());
-    const hand_x = deck.splice(0, 7), hand_o = deck.splice(0, 7);
-    let top; while (true) { top = deck.shift(); if (C8.rankOf(top) !== "8" || !deck.length) break; deck.push(top); }
-    return { deck, hand_x, hand_o, discard: [top], top, suit: C8.suitOf(top), turn: "x", status: "active", winner: null,
-      x_count: 7, o_count: 7, draw_count: deck.length, last_note: null };
-  },
-  play(g, mark, card, suit) {
-    if (g.status !== "active") return { err: "This game is not being played" };
-    if (g.turn !== mark) return { err: "Not your turn yet" };
-    const hand = mark === "x" ? g.hand_x : g.hand_o;
-    const i = hand.indexOf(card);
-    if (i < 0) return { err: "That card is not in your hand" };
-    if (!C8.playable(card, g.top, g.suit)) return { err: "That card does not match" };
-    let newSuit;
-    if (C8.rankOf(card) === "8") { if (!C8.SUITS.includes(suit)) return { err: "Pick a suit for your 8" }; newSuit = suit; }
-    else newSuit = C8.suitOf(card);
-    hand.splice(i, 1); g.discard.unshift(card); g.top = card; g.suit = newSuit;
-    g[mark === "x" ? "x_count" : "o_count"] = hand.length;
-    if (!hand.length) { g.status = "done"; g.winner = mark; g.last_note = `${card} — went out`; }
-    else { g.turn = mark === "x" ? "o" : "x"; g.last_note = `played ${card}${C8.rankOf(card) === "8" ? " → " + newSuit : ""}`; }
-    return { ok: true };
-  },
-  draw(g, mark) {
-    if (g.status !== "active") return { err: "This game is not being played" };
-    if (g.turn !== mark) return { err: "Not your turn yet" };
-    const hand = mark === "x" ? g.hand_x : g.hand_o;
-    if (!g.deck.length && g.discard.length > 1) { g.deck = C8.shuffle(g.discard.slice(1)); g.discard = [g.discard[0]]; }
-    if (!g.deck.length) { g.turn = mark === "x" ? "o" : "x"; g.draw_count = 0; g.last_note = "no cards to draw — passed"; return { ok: true, passed: true }; }
-    const card = g.deck.shift(); hand.push(card);
-    const keep = C8.playable(card, g.top, g.suit);
-    g[mark === "x" ? "x_count" : "o_count"] = hand.length; g.draw_count = g.deck.length;
-    if (!keep) g.turn = mark === "x" ? "o" : "x";
-    g.last_note = keep ? "drew a card" : "drew a card — passed";
-    return { ok: true, drew: card, keep };
-  },
-  view(g, mark) {
-    const hand = (mark === "x" ? g.hand_x : mark === "o" ? g.hand_o : []).slice().sort((a, b) => (C8.suitOf(a).localeCompare(C8.suitOf(b)) || C8.RANKS.indexOf(C8.rankOf(a)) - C8.RANKS.indexOf(C8.rankOf(b))));
-    return { status: g.status, mark, your_turn: !!mark && g.turn === mark && g.status === "active", turn: g.turn,
-      top: g.top, suit: g.suit, your_count: mark === "x" ? g.x_count : g.o_count, opp_count: mark === "x" ? g.o_count : g.x_count,
-      x_count: g.x_count, o_count: g.o_count, draw_count: g.draw_count, winner: g.winner, last_note: g.last_note,
-      can_pass: !!mark && g.turn === mark && g.status === "active" && !C8.hasPlay(mark === "x" ? g.hand_x : g.hand_o, g.top, g.suit) && g.draw_count === 0,
-      hand };
-  },
-};
-
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v33";
+const APP_VERSION = "soy-v34";
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
 let hapticsOn;
@@ -1271,6 +1215,11 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v34", date: "2026-10-21", title: "Live map and code split", items: [
+    "Live map: see where you and your partner are, with the distance and direction between you",
+    "Open the map from the location panel. It needs internet for the map tiles",
+    "Crazy 8s rules and map maths moved into their own files, with automated tests",
+  ] },
   { v: "soy-v33", date: "2026-10-21", title: "Themes sync, Feel options and this log", items: [
     "Export themes as .json files, and import them with every theme checked",
     "Duplicate a theme from the builder",
@@ -1279,6 +1228,7 @@ const UPDATE_LOG = [
     "Auto (day and night) follows your phone's light or dark setting",
     "Feel: Calm motion pauses animations, Decorations hides planets and stars",
     "Settings now shows this update log and the credits",
+    "New app icon: a red pin with a goofy grin, with other pins behind it",
   ] },
   { v: "soy-v32", date: "2026-10-21", title: "Custom theme builder", items: [
     "Build your own theme from a starting point, with a live preview",
@@ -2028,28 +1978,6 @@ function renderPeople() {
 const geo = { on: false, watch: null, me: null, lastSent: 0, denied: false };
 const geoKey = () => "pinned-geo-" + (state.board?.id || "");
 
-function haversine(a, b) {
-  const R = 6371000, toR = Math.PI / 180;
-  const dLat = (b.lat - a.lat) * toR, dLng = (b.lng - a.lng) * toR;
-  const la1 = a.lat * toR, la2 = b.lat * toR;
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
-}
-function bearing(a, b) {
-  const toR = Math.PI / 180;
-  const y = Math.sin((b.lng - a.lng) * toR) * Math.cos(b.lat * toR);
-  const x = Math.cos(a.lat * toR) * Math.sin(b.lat * toR) - Math.sin(a.lat * toR) * Math.cos(b.lat * toR) * Math.cos((b.lng - a.lng) * toR);
-  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
-}
-const COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
-const compassOf = (deg) => COMPASS[Math.round(deg / 45) % 8];
-function fmtDist(m) {
-  const ft = m * 3.28084;
-  if (ft < 528) return `${Math.round(ft / 10) * 10} ft`;            // under ~0.1 mi: feet
-  const mi = m / 1609.344;
-  return mi < 10 ? `${mi.toFixed(1)} mi` : `${Math.round(mi)} mi`;
-}
-function fmtAcc(m) { return m == null ? "" : m < 1609 ? `±${Math.round(m * 3.28084)} ft` : `±${(m / 1609.344).toFixed(1)} mi`; }
 
 function startGeo() {
   if (!("geolocation" in navigator)) { toast("This device can't share location."); return; }
@@ -2080,6 +2008,63 @@ function onGeoErr(err) {
     toast("Location permission was blocked. Turn it on for this site in your phone's settings, then try again.", 5000);
   } else toast("Couldn't get your location. Make sure location is on.", 4000);
   renderLoc();
+}
+
+// ---- Live map (Batch C) ----
+// Leaflet (map library) is loaded the first time the map opens, from jsDelivr with a pinned version and checksums.
+const LEAFLET = {
+  css: { href: "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css", integrity: "sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" },
+  js: { src: "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js", integrity: "sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" },
+};
+let leafletLoading = null, mapInst = null, mapLayer = null;
+function loadLeaflet() {
+  if (window.L) return Promise.resolve();
+  if (leafletLoading) return leafletLoading;
+  leafletLoading = new Promise((resolve, reject) => {
+    const css = document.createElement("link");
+    css.rel = "stylesheet"; css.href = LEAFLET.css.href; css.integrity = LEAFLET.css.integrity; css.crossOrigin = "anonymous";
+    document.head.appendChild(css);
+    const s = document.createElement("script");
+    s.src = LEAFLET.js.src; s.integrity = LEAFLET.js.integrity; s.crossOrigin = "anonymous";
+    s.onload = () => resolve();
+    s.onerror = () => { leafletLoading = null; reject(new Error("map library")); };
+    document.head.appendChild(s);
+  });
+  return leafletLoading;
+}
+
+async function openMap() {
+  const model = buildMapModel(sharers());
+  if (model.empty) return toast("Nobody is sharing their location right now", 3000);
+  closeLoc();
+  openSheet("map");
+  const pairs = $("#mapPairs"); pairs.innerHTML = "";
+  for (const p of model.pairs) {
+    const li = document.createElement("li");
+    li.textContent = `${p.name}: ${fmtDist(p.meters)} ${compassOf(p.bearing)}${p.acc != null ? ` · ${fmtAcc(p.acc)}` : ""}`;
+    pairs.appendChild(li);
+  }
+  if (!model.pairs.length) {
+    const li = document.createElement("li"); li.className = "loc-empty";
+    li.textContent = geo.on ? "Distances appear once your partner is sharing too." : "Turn on sharing to see distances.";
+    pairs.appendChild(li);
+  }
+  try { await loadLeaflet(); }
+  catch { $("#mapBox").textContent = "The map needs internet. The distances are listed below."; return; }
+  if (!mapInst) {
+    mapInst = L.map("mapBox", { zoomControl: true, attributionControl: true });
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(mapInst);
+    mapLayer = L.layerGroup().addTo(mapInst);
+  }
+  mapLayer.clearLayers();
+  const me = model.markers.find((m) => m.me);
+  for (const m of model.markers) {
+    L.circleMarker([m.lat, m.lng], { radius: m.me ? 9 : 7, color: "#ffffff", weight: 2, fillColor: m.me ? "#e63946" : "#3a86ff", fillOpacity: 1 })
+      .bindTooltip(m.me ? "You" : m.name).addTo(mapLayer);
+  }
+  if (me) for (const m of model.markers.filter((x) => !x.me)) L.polyline([[me.lat, me.lng], [m.lat, m.lng]], { color: "#e63946", weight: 2, dashArray: "6 6" }).addTo(mapLayer);
+  mapInst.fitBounds(model.bounds, { padding: [30, 30], maxZoom: 16 });
+  setTimeout(() => mapInst && mapInst.invalidateSize(), 60);   // the sheet was hidden until just now
 }
 
 function toggleGeo() {
@@ -6167,6 +6152,9 @@ function wireStatic() {
   // live location
   $("#toolLoc").onclick = openLoc;
   $("#locClose").onclick = closeLoc;
+  $("#locMapBtn").onclick = openMap;
+  $("#mapClose").onclick = () => closeSheet("map");
+  $("#mapBackdrop").onclick = () => closeSheet("map");
   $("#locBackdrop").onclick = closeLoc;
   $("#locSwitch").onclick = toggleGeo;
   document.addEventListener("visibilitychange", () => {

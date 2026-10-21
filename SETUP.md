@@ -379,3 +379,31 @@ What changed:
 
 Note: media notes (photos, voice, drawings) still need a connection; only text/emoji notes and text messages queue offline.
 
+
+---
+
+---
+
+## Upgrade to v11: drawing board tools (fill and text)
+
+The drawing board has a palette: pen, marker, highlighter, eyedropper, fill bucket, text, eraser, undo, and zoom.
+Fill and text need two new columns on the strokes table.
+
+1. Supabase > SQL Editor > paste `supabase/upgrade-v11.sql` > **Run**.
+2. Pen, marker, highlighter, eyedropper, undo, and zoom work without it.
+
+## Upgrade to v12: profile picture fix
+
+Profile picture uploads failed with `invalid input syntax for type uuid: "avatars"`. The photo rules read the first folder name as a board ID.
+
+1. Supabase > SQL Editor > paste `supabase/upgrade-v12.sql` > **Run**. It replaces the three photo rules and adds profile picture rules.
+2. Check a board photo still uploads, then try the profile picture again.
+
+## Hop (game)
+
+A stone-hopping game in `games/hop.html` with synthesized music. Race mode uses the same stones for both players.
+No database change. It's in the game list in `app.js`.
+
+## Removed: Delete my account
+
+The delete-account feature was removed in v20. If you deployed the `delete-account` function in Supabase, delete it there (Edge Functions > delete-account > Delete).

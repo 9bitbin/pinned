@@ -1084,3 +1084,9 @@ html.no-deco .room-system, html.no-deco #starCanvas { display: none !important; 
 .updlog ul { margin: 6px 0 2px 18px; padding: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
 .credits { list-style: none; margin: 4px 0 0; padding: 0; font-size: 14px; color: var(--muted); }
 .credits li { padding: 4px 0; }
+
+/* ---- Batch C: live map ---- */
+.loc-map { width: 100%; margin: 10px 0 4px; }
+.map-box { height: 52vh; min-height: 260px; border-radius: var(--radius-m); overflow: hidden; border: 1px solid var(--line); background: var(--surface); }
+.map-pairs { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 6px; font-size: 15px; color: var(--surface-ink); }
+.map-pairs li { padding: 10px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }

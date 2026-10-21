@@ -249,8 +249,20 @@
     </div>
     <p class="loc-note" id="locHint">When it's on, everyone here can see where you are — and you see them. Works only while Pinned is open. Turn it off any time.</p>
     <ul id="locList"></ul>
+    <button class="btn small loc-map" id="locMapBtn" type="button">Open live map</button>
     <p class="loc-foot">Locations are live only. Nothing is saved.</p>
   </aside>
+
+  <!-- live map (Batch C): opens from the location panel -->
+  <div class="sheet-backdrop" id="mapBackdrop" hidden></div>
+  <section class="sheet tall map-sheet" id="map" hidden aria-label="Live map">
+    <div class="grab"></div>
+    <div class="settings-head"><h2>Live map</h2></div>
+    <div class="map-box" id="mapBox" role="img" aria-label="Map of people sharing their location"></div>
+    <ul class="map-pairs" id="mapPairs"></ul>
+    <p class="loc-foot">Locations are live only. Nothing is saved. The map needs internet.</p>
+    <div class="sheet-actions"><button class="btn primary" id="mapClose" type="button">Done</button></div>
+  </section>
 
   <!-- Composer -->
   <div class="sheet-backdrop" id="composerBackdrop" hidden></div>
