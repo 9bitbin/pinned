@@ -118,7 +118,7 @@ const C8 = {
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v27";
+const APP_VERSION = "soy-v28";
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
 let hapticsOn;
@@ -5555,6 +5555,13 @@ function wireStatic() {
   $("#dockChats").onclick = openChats;
   // games
   $("#dockGames").onclick = openGames;
+  // Phase 3: five-item dock. Check in and Today live behind More (their hidden originals keep their handlers).
+  $("#dockNotes").onclick = () => { document.querySelectorAll(".sheet").forEach((el) => { if (!el.hidden && $("#" + el.id + "Backdrop")) closeSheet(el.id); }); };
+  $("#dockMore").onclick = () => openSheet("more");
+  $("#moreBackdrop").onclick = () => closeSheet("more");
+  $("#moreClose").onclick = () => closeSheet("more");
+  document.querySelectorAll("#more [data-proxy]").forEach((b) => b.onclick = () => { closeSheet("more"); $("#" + b.dataset.proxy).click(); });
+  setInterval(() => { const d = $("#moreDot"); if (d) d.hidden = $("#qDot").hidden; }, 1500);
   $("#gamesClose").onclick = () => closeSheet("games");
   $("#gamesBackdrop").onclick = () => closeSheet("games");
   $("#sbBack").onclick = () => { games.boardGame = null; renderGames(); };
