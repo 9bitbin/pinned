@@ -180,6 +180,7 @@
       <button id="toolLoc" aria-label="Live location" title="Live location"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg><i class="dot live" id="locDot" hidden></i></button>
       <button id="toolFind" aria-label="Find someone" title="Find someone"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg></button>
       <button id="toolHome" aria-label="Back to the newest notes" title="Home"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 11L12 4l8.5 7"/><path d="M5.5 10v9.5h13V10"/><path d="M10 19.5v-5h4v5"/></svg></button>
+      <button id="toolMatrix" aria-label="Release the matrix flappy birds" title="Matrix birds"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13c3-5 7-6 10-3l3-3 3 2-2.5 2.5C17 16 12 19 8 17l-2 3-1-3z"/><circle cx="14.5" cy="10" r=".9" fill="currentColor"/></svg></button>
       <button id="toolDraw" aria-label="Draw on the board" title="Draw on the board"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M13.5 7.5l3 3"/></svg></button>
     </div>
     <div class="drawbar" id="drawBar" hidden>
@@ -726,6 +727,7 @@
   <div class="fx" id="fx" aria-hidden="true"></div>
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
+  <canvas id="matrixFx" aria-hidden="true"></canvas>
   <script type="module" src="app.js"></script>
   <!-- theme builder lives at the top level so it stacks above Settings -->
     <div class="sheet-backdrop" id="themeBuilderBackdrop" hidden></div>

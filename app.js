@@ -2,6 +2,7 @@ import { C8 } from "./c8.js";
 import { haversine, bearing, compassOf, fmtDist, fmtAcc, buildMapModel } from "./map.js";
 // Pinned: shared sticky-note board for two
 import { CONFIG } from "./config.js";
+import { createMatrixFx } from "./matrixfx.js";
 
 // ---------------------------------------------------------------- constants
 const BOARD_W = 420;                 // virtual board width (same on every phone)
@@ -62,7 +63,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v35";
+const APP_VERSION = "soy-v36";
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
 let hapticsOn;
@@ -1215,6 +1216,11 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v36", date: "2026-10-21", title: "Flappy Matrix and matrix birds tool", items: [
+    "New game: Flappy Matrix, in the games list. Matrix mode or classic",
+    "New board tool: the matrix birds. Press it to release code-birds and rain that fade away; press again to make them explode",
+    "Flappy Matrix scores need the upgrade-v14.sql database update",
+  ] },
   { v: "soy-v35", date: "2026-10-21", title: "Paste images into chat", items: [
     "Paste a screenshot or copied picture straight into the chat box",
     "Pasted images send the same way as the photo button",
@@ -4586,6 +4592,7 @@ const GAME_LIST = [
   { id: "plane", name: "Paper Plane", icon: "✈️", file: "games/paper-plane.html", blurb: "Hold to climb, let go to dive. Dodge pins, grab hearts." },
   { id: "blocks", name: "Block Drop", icon: "🟦", file: "games/block-drop.html", blurb: "Stack falling blocks and clear lines. A race gets the same pieces." },
   { id: "typerace", name: "Type Race", icon: "⌨️", file: "games/type-race.html", blurb: "Type the passage fast and clean. Everyone gets the same text." },
+  { id: "flappy", name: "Flappy Matrix", icon: "🟩", file: "games/flappy-matrix.html", blurb: "Flap through the falling code. Matrix mode or classic, with its own soundtrack." },
   { id: "speak", name: "Polyglot", icon: "🗣️", file: "games/polyglot.html", blurb: "Say phrases in another language. Voice-scored (or practice mode on iPhone)." },
 ];
 const gameById = (id) => GAME_LIST.find((g) => g.id === id);
@@ -6169,6 +6176,13 @@ function wireStatic() {
   $("#toolLoc").onclick = openLoc;
   $("#locClose").onclick = closeLoc;
   $("#locMapBtn").onclick = openMap;
+  // Matrix birds tool: press to release, press again to explode (see matrixfx.js)
+  const matrixFx = createMatrixFx($("#matrixFx"));
+  $("#toolMatrix").onclick = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    haptic(matrixFx.active() ? 25 : 12);
+    matrixFx.toggle(r.left + r.width / 2, r.top + r.height / 2);
+  };
   $("#mapClose").onclick = () => closeSheet("map");
   $("#mapBackdrop").onclick = () => closeSheet("map");
   $("#locBackdrop").onclick = closeLoc;
