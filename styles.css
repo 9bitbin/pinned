@@ -107,7 +107,7 @@
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { height: 100%; margin: 0; }
 body {
-  font-family: "Nunito", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--font);
   background: var(--bg);
   background-image: var(--bg-image);
   background-size: var(--bg-size);
@@ -144,8 +144,8 @@ input, textarea { font: inherit; -webkit-user-select: text; user-select: text; }
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  width: 100%; padding: 13px 16px; border-radius: 14px; border: 1.5px solid var(--line);
-  background: transparent; font-weight: 800; font-size: 16px;
+  width: 100%; min-height: 44px; padding: 12px 16px; border-radius: 12px; border: 1.5px solid var(--line);
+  background: transparent; font-weight: 700; font-size: 16px;
 }
 .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .btn.danger { color: #d93025; border-color: rgba(217,48,37,.35); }
@@ -167,11 +167,12 @@ input, textarea { font: inherit; -webkit-user-select: text; user-select: text; }
   display: flex; align-items: center; gap: 10px;
   padding: calc(env(safe-area-inset-top) + 8px) 12px 8px;
   background: var(--topbar); color: var(--topbar-ink);
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%);
+  border-bottom: 0.5px solid var(--line);
   position: relative; z-index: 5;
 }
 .topbar .title { flex: 1; text-align: center; font-weight: 800; letter-spacing: .2px; }
-.who { display: flex; min-width: 44px; }
+.who { display: flex; min-width: 44px; min-height: 44px; align-items: center; }
 .chip {
   width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
   font-weight: 800; font-size: 13px; color: #2d2416; border: 2px solid var(--topbar);
@@ -271,10 +272,11 @@ input, textarea { font: inherit; -webkit-user-select: text; user-select: text; }
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 21;
   max-width: 520px; margin: 0 auto; max-height: 92vh; overflow-y: auto;
   background: var(--surface); color: var(--surface-ink);
-  border-radius: 24px 24px 0 0; padding: 8px 18px calc(env(safe-area-inset-bottom) + 16px);
+  border-radius: 24px 24px 0 0; padding: 0 18px calc(env(safe-area-inset-bottom) + 16px);
   box-shadow: 0 -20px 50px -20px rgba(0,0,0,.5);
   animation: rise .22s cubic-bezier(.2,.9,.3,1.1);
 }
+.sheet::before { content: ""; display: block; width: 36px; height: 5px; border-radius: 3px; background: var(--line); margin: 8px auto 10px; }
 [data-theme="dreamy"] .sheet { backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
 .sheet.tall { max-height: 94vh; }
 .sheet h2 { margin: 4px 0 6px; font-size: 22px; }
@@ -490,12 +492,13 @@ input, textarea { font: inherit; -webkit-user-select: text; user-select: text; }
 .dock {
   position: fixed; left: 14px; bottom: calc(env(safe-area-inset-bottom) + 22px); z-index: 6;
   display: flex; gap: 4px; padding: 5px; border-radius: 22px;
-  background: var(--surface); box-shadow: 0 12px 26px -12px rgba(0,0,0,.5);
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%);
+  box-shadow: 0 12px 26px -12px rgba(0,0,0,.5);
 }
-[data-theme="dreamy"] .dock { background: rgba(246,244,255,.85); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
 .dock button { position: relative; border: 0; background: transparent; border-radius: 17px; padding: 6px 9px 5px; display: grid; justify-items: center; color: var(--surface-ink); }
 .dock button:active { background: var(--line); }
-.dock .ic { font-size: 21px; line-height: 1; }
+.dock .ic { display: grid; place-items: center; height: 24px; line-height: 1; }
 .dock .lb { font-size: 10px; font-weight: 800; margin-top: 2px; color: var(--muted); }
 .dock .dot { position: absolute; top: 4px; right: 8px; width: 9px; height: 9px; border-radius: 50%; background: #e5484d; border: 2px solid var(--surface); }
 .dock .dot.live { background: #30a46c; animation: blip 1.4s infinite; }
@@ -947,8 +950,8 @@ body.gaming { overflow: hidden; }
 .menu-screen .orb.o2 { width: 170px; height: 170px; right: -50px; top: 44%; animation-delay: -5s; background: radial-gradient(circle at 35% 35%, #cfe9ff, #2f4a8f 58%, transparent 72%); }
 .menu-screen .orb.o3 { width: 90px; height: 90px; left: 60%; bottom: 10%; animation-delay: -9s; background: radial-gradient(circle at 35% 35%, #fff1b3, #8a4a3a 60%, transparent 72%); }
 .menu-top, .room-grid, .hidden-tray, .menu-hint, .menu-foot, .pair-back { position: relative; }
-.menu-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 22px 18px 4px; }
-.menu-top h1 { margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -.5px; }
+.menu-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: calc(env(safe-area-inset-top) + 18px) 18px 4px; }
+.menu-top h1 { margin: 0; font-size: 34px; font-weight: 800; letter-spacing: -.6px; }
 .menu-actions { display: flex; gap: 8px; }
 .chip-btn { font: inherit; font-weight: 700; font-size: 14px; color: var(--surface-ink); padding: 7px 14px; border-radius: 999px; cursor: pointer;
   background: var(--surface); border: 1px solid var(--line); }
