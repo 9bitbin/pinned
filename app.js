@@ -227,6 +227,17 @@ function createSupabaseApi() {
     async updateProfile(patch) {
       must(await sb.from("profiles").update(patch).eq("id", myId()));
     },
+    async myBoards() {
+      let res = await sb.from("board_members").select("board_id, joined_at, bg, boards(id, code, created_by, bg_mode, bg)").eq("user_id", myId());
+      if (res.error) res = await sb.from("board_members").select("board_id, joined_at, boards(id, code, created_by)").eq("user_id", myId());
+      return must(res).filter((r) => r.boards).map((r) => ({ ...r.boards, my_bg: r.bg || null, joined_at: r.joined_at }));
+    },
+    async roomPeople(boardId) {
+      const rows = must(await sb.from("board_members").select("user_id").eq("board_id", boardId));
+      const ids = rows.map((r) => r.user_id).filter((id) => id !== myId());
+      if (!ids.length) return [];
+      return must(await sb.from("profiles").select("id,name,color").in("id", ids));
+    },
     async myBoard() {
       let res = await sb.from("board_members").select("board_id, bg, boards(id, code, created_by, bg_mode, bg)").eq("user_id", myId()).order("joined_at", { ascending: false }).limit(1);
       if (res.error) res = await sb.from("board_members").select("board_id, boards(id, code, created_by)").eq("user_id", myId()).order("joined_at", { ascending: false }).limit(1);
@@ -497,6 +508,14 @@ function createDemoApi() {
     async me() { return db().profiles[meId()] || null; },
     async signIn(name, color) { const d = db(); d.profiles[meId()] = { id: meId(), name, color, muted: [] }; save(d); return d.profiles[meId()]; },
     async updateProfile(patch) { const d = db(); Object.assign(d.profiles[meId()], patch); save(d); emit({ type: "members" }); },
+    async myBoards() {
+      const d = db();
+      return d.members.filter((m) => m.user_id === meId() && d.boards[m.board_id]).map((m) => ({ bg_mode: "shared", bg: null, ...d.boards[m.board_id], my_bg: m.bg || null, joined_at: m.joined_at || d.boards[m.board_id].created_at || "" }));
+    },
+    async roomPeople(boardId) {
+      const d = db();
+      return d.members.filter((m) => m.board_id === boardId && m.user_id !== meId()).map((m) => d.profiles[m.user_id]).filter(Boolean);
+    },
     async myBoard() { const d = db(); const m = d.members.find((x) => x.user_id === meId()); return m ? { bg_mode: "shared", bg: null, ...d.boards[m.board_id], my_bg: m.bg || null } : null; },
     async getBoard(boardId) { return { bg_mode: "shared", bg: null, ...db().boards[boardId] }; },
     async setBoardBg(boardId, mode, bg, setBg) {
@@ -753,7 +772,7 @@ function toast(msg, ms = 2600, action = null) {
   }
   clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), ms);
 }
-function show(id) { for (const s of ["#login", "#linked", "#welcome", "#pair", "#boardScreen"]) $(s).hidden = s !== id; }
+function show(id) { for (const s of ["#login", "#linked", "#welcome", "#pair", "#menu", "#boardScreen"]) $(s).hidden = s !== id; }
 function setError(el, msg) { el.textContent = msg || ""; el.hidden = !msg; }
 function busy(btn, on, label) {
   if (on) { btn.dataset.label = btn.textContent; btn.textContent = label || "…"; btn.disabled = true; }
@@ -930,9 +949,9 @@ async function afterLogin() {
     state.me = await api.me();
     if (!state.me) return showWelcome();
     state.me.muted = state.me.muted || [];
-    const board = await api.myBoard();
-    if (!board) return showPair();
-    await openBoard(board);
+    const rooms = await api.myBoards();
+    if (!rooms.length) return showPair();
+    await showMenu();
   } catch (e) {
     console.error(e); toast(e.message || "Something went wrong");
     showWelcome();
@@ -987,6 +1006,207 @@ function startPolling(nonce) {
   tick();
 }
 
+// ---------------------------------------------------------------- your rooms (menu)
+// Every room you're in is listed here, most recently opened first. Hiding a room only hides it
+// on this device. Nothing is left or deleted, and entering the code again brings it back.
+const ROOMS_KEY = "pinned.rooms";
+const roomsState = { list: [], edit: false, busy: false };
+function roomsStore() { const v = ls.get(ROOMS_KEY, null) || {}; return { hidden: Array.isArray(v.hidden) ? v.hidden : [], opened: v.opened || {} }; }
+function roomsSave(v) { ls.set(ROOMS_KEY, v); }
+function markRoomOpened(boardId) {
+  const v = roomsStore(); v.opened[boardId] = Date.now();
+  v.hidden = v.hidden.filter((id) => id !== boardId);   // opening or joining a room always shows it again
+  roomsSave(v);
+}
+async function loadRooms() {
+  const rows = await api.myBoards();
+  const v = roomsStore();
+  const people = await Promise.all(rows.map((r) => api.roomPeople(r.id).catch(() => [])));
+  const list = rows.map((r, i) => ({ ...r, people: people[i], last: v.opened[r.id] || Date.parse(r.joined_at) || 0 }));
+  list.sort((a, b) => b.last - a.last);
+  return list;
+}
+async function showMenu() {
+  show("#menu");
+  $("#menu").classList.toggle("editing", roomsState.edit);
+  startStars();
+  try { roomsState.list = await loadRooms(); }
+  catch (e) { toast(e.message || "Couldn't load your rooms"); roomsState.list = roomsState.list || []; }
+  if (!roomsState.list.length) return showPair();
+  renderRooms();
+  if (menuMusicOn) menuMusicStart();   // starts on the first tap if the browser needs one
+}
+function renderRooms() {
+  const v = roomsStore(), grid = $("#roomGrid");
+  const visible = roomsState.list.filter((r) => !v.hidden.includes(r.id));
+  const hidden = roomsState.list.filter((r) => v.hidden.includes(r.id));
+  grid.innerHTML = "";
+  visible.forEach((r, i) => grid.appendChild(roomCard(r, i)));
+  $("#menuHint").textContent = roomsState.edit
+    ? "Tap × to hide a room. Nothing is deleted."
+    : visible.length ? "Tap a room to jump straight in." : "Every room is hidden. Show one below.";
+  $("#hiddenTray").hidden = !hidden.length;
+  const list = $("#hiddenList"); list.innerHTML = "";
+  for (const r of hidden) {
+    const b = document.createElement("button"); b.type = "button"; b.className = "chip-btn";
+    b.textContent = `Show ${roomTitle(r)}`; b.onclick = () => showRoom(r.id); list.appendChild(b);
+  }
+  $("#menuEdit").setAttribute("aria-pressed", String(roomsState.edit));
+  $("#menu").classList.toggle("editing", roomsState.edit);
+}
+function roomTitle(r) {
+  const names = (r.people || []).map((p) => p.name).filter(Boolean);
+  return names.length ? names.join(" & ") : "Waiting for your person";
+}
+function roomCard(r, i) {
+  const c = document.createElement("button");
+  c.type = "button"; c.className = "room";
+  c.style.animationDelay = `${(-(i * 0.7) % 6.5).toFixed(2)}s`;
+  const color = BRIGHT[(r.people || [])[0]?.color] || BRIGHT[["c1", "c2", "c3", "c4", "c5", "c6"][i % 6]];
+  c.style.setProperty("--planet", color);
+  const sys = document.createElement("span"); sys.className = "room-system"; sys.setAttribute("aria-hidden", "true");
+  const orbit = document.createElement("span"); orbit.className = "room-orbit";
+  orbit.style.setProperty("--spin", `${8 + (i % 3) * 3}s`);
+  const moon = document.createElement("span"); moon.className = "room-moon"; orbit.appendChild(moon);
+  const planet = document.createElement("span"); planet.className = "room-planet";
+  sys.append(orbit, planet);
+  const name = document.createElement("span"); name.className = "room-name"; name.textContent = roomTitle(r);
+  const code = document.createElement("span"); code.className = "room-code"; code.textContent = fmtCode(r.code);
+  c.append(sys, name, code);
+  if (roomsState.edit) {
+    const x = document.createElement("span"); x.className = "room-x"; x.textContent = "×"; x.setAttribute("aria-label", "Hide this room");
+    c.appendChild(x);
+  }
+  c.onclick = (e) => { e.stopPropagation(); roomsState.edit ? hideRoom(r.id) : openRoom(r); };
+  return c;
+}
+function hideRoom(id) {
+  const v = roomsStore(); if (!v.hidden.includes(id)) v.hidden.push(id); roomsSave(v);
+  renderRooms(); toast("Hidden from your menu. Enter its code to bring it back.", 3500);
+}
+function showRoom(id) { const v = roomsStore(); v.hidden = v.hidden.filter((x) => x !== id); roomsSave(v); renderRooms(); }
+async function openRoom(r) {
+  if (roomsState.busy) return;
+  roomsState.busy = true;
+  stopMenuMusic();
+  try {
+    if (state.board && state.board.id !== r.id) resetBoardState();
+    await openBoard(r);
+  } catch (e) { toast(e.message || "Couldn't open that room"); await showMenu(); }
+  finally { roomsState.busy = false; }
+}
+function openRoomsFromBoard() {
+  if (state.board) resetBoardState();
+  showMenu();
+}
+
+// starfield + shooting stars behind the menu (runs only while the menu is open)
+let starsRunning = false, starsT0 = 0;
+const STAR_LIST = Array.from({ length: 170 }, () => ({ x: Math.random(), y: Math.random(), r: 0.4 + Math.random() * 1.4, ph: Math.random() * 6.28, sp: 0.004 + Math.random() * 0.012 }));
+function startStars() {
+  if (starsRunning) return;
+  starsRunning = true; starsT0 = performance.now();
+  const cv = $("#starCanvas"), ctx = cv.getContext("2d");
+  let shoot = null, nextShoot = 2;
+  const size = () => { const d = Math.min(devicePixelRatio || 1, 2); cv.width = innerWidth * d; cv.height = innerHeight * d; ctx.setTransform(d, 0, 0, d, 0, 0); };
+  size(); addEventListener("resize", size);
+  const frame = (now) => {
+    if ($("#menu").hidden) { starsRunning = false; removeEventListener("resize", size); return; }
+    const t = (now - starsT0) / 1000;
+    ctx.clearRect(0, 0, innerWidth, innerHeight);
+    for (const s of STAR_LIST) {
+      const y = ((s.y * innerHeight + t * s.sp * 60) % innerHeight);
+      ctx.globalAlpha = 0.35 + 0.5 * Math.abs(Math.sin(t * 1.3 + s.ph));
+      ctx.fillStyle = "#fff";
+      ctx.beginPath(); ctx.arc(s.x * innerWidth, y, s.r, 0, 6.283); ctx.fill();
+    }
+    if (t > nextShoot && !shoot) { shoot = { x: Math.random() * innerWidth, y: 0, t0: t }; nextShoot = t + 6 + Math.random() * 8; }
+    if (shoot) {
+      const k = (t - shoot.t0) / 0.9;
+      if (k > 1) shoot = null;
+      else {
+        const x = shoot.x + k * 260, y = shoot.y + k * 150;
+        const g = ctx.createLinearGradient(x - 60, y - 35, x, y);
+        g.addColorStop(0, "rgba(255,255,255,0)"); g.addColorStop(1, "rgba(220,200,255,.9)");
+        ctx.globalAlpha = 1; ctx.strokeStyle = g; ctx.lineWidth = 1.6;
+        ctx.beginPath(); ctx.moveTo(x - 60, y - 35); ctx.lineTo(x, y); ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+}
+
+// ambient space music for the menu: slow pads, drifting bells and a soft wind. Synthesized, no files.
+let mAc = null, mBus = null, mMaster = null, mTimer = null, mNext = 0, mStep = 0;
+let menuMusicOn = ls.get("pinned.menu.music", true) !== false;
+const M_CHORDS = [[57, 60, 64, 67, 71], [53, 57, 60, 64, 69], [55, 59, 62, 66, 69], [52, 55, 59, 62, 67]];
+const M_STEP = 1.5;   // seconds per step; a chord lasts 6 steps
+const mMidi = (m) => 440 * Math.pow(2, (m - 69) / 12);
+function mNoise(ctx, secs) { const n = Math.floor(ctx.sampleRate * secs), b = ctx.createBuffer(1, n, ctx.sampleRate), d = b.getChannelData(0); for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1; return b; }
+function mImpulse(ctx, secs, decay) { const n = Math.floor(ctx.sampleRate * secs), b = ctx.createBuffer(2, n, ctx.sampleRate); for (let c = 0; c < 2; c++) { const d = b.getChannelData(c); for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, decay); } return b; }
+function menuMusicStart() {
+  if (!menuMusicOn || mAc) return;
+  try { mAc = new (window.AudioContext || window.webkitAudioContext)(); } catch { mAc = null; return; }
+  if (mAc.state === "suspended") mAc.resume().catch(() => {});
+  mMaster = mAc.createGain(); mMaster.gain.value = 0; mMaster.connect(mAc.destination);
+  mMaster.gain.linearRampToValueAtTime(0.45, mAc.currentTime + 5);
+  const verb = mAc.createConvolver(); verb.buffer = mImpulse(mAc, 5, 2.2);
+  const wet = mAc.createGain(); wet.gain.value = 0.6; verb.connect(wet); wet.connect(mMaster);
+  mBus = mAc.createGain(); mBus.gain.value = 0.7; mBus.connect(mMaster); mBus.connect(verb);
+  const wind = mAc.createBufferSource(); wind.buffer = mNoise(mAc, 4); wind.loop = true;
+  const bp = mAc.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 900; bp.Q.value = 0.3;
+  const wg = mAc.createGain(); wg.gain.value = 0.02;
+  const lfo = mAc.createOscillator(), lg = mAc.createGain(); lfo.frequency.value = 0.05; lg.gain.value = 0.015;
+  lfo.connect(lg); lg.connect(wg.gain);
+  wind.connect(bp); bp.connect(wg); wg.connect(mBus); wind.start(); lfo.start();
+  mNext = mAc.currentTime + 0.4; mStep = 0;
+  mTimer = setInterval(menuSchedule, 80);
+}
+function menuSchedule() {
+  if (!mAc) return;
+  while (mNext < mAc.currentTime + 0.6) { menuPlayStep(mStep, mNext); mNext += M_STEP; mStep++; }
+}
+function menuPlayStep(s, t) {
+  const C = M_CHORDS[Math.floor(s / 6) % M_CHORDS.length];
+  if (s % 6 === 0) {
+    const d = 6 * M_STEP + 2.5;
+    for (const m of C.slice(0, 4)) mPad(mMidi(m), t, d);
+  }
+  if (Math.random() < 0.7) {
+    const m = C[Math.floor(Math.random() * C.length)] + 12 * (Math.random() < 0.5 ? 1 : 2);
+    mBell(mMidi(m), t + Math.random() * 0.6);
+  }
+  if (Math.random() < 0.35) {
+    const f = 1400 + Math.random() * 1200;
+    mBell(f, t + Math.random() * 1.2, 0.04, 2.8, f * 0.8);   // stardust
+  }
+}
+function mPad(f, t, d) {
+  const o1 = mAc.createOscillator(), o2 = mAc.createOscillator(), g = mAc.createGain(), lp = mAc.createBiquadFilter();
+  o1.type = "sine"; o2.type = "triangle"; o1.frequency.value = f; o2.frequency.value = f; o2.detune.value = 5;
+  lp.type = "lowpass"; lp.frequency.value = 800; lp.Q.value = 0.5;
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.028, t + 2.5);
+  g.gain.setValueAtTime(0.028, t + d - 2.5); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+  o1.connect(lp); o2.connect(lp); lp.connect(g); g.connect(mBus);
+  o1.start(t); o2.start(t); o1.stop(t + d + 0.1); o2.stop(t + d + 0.1);
+}
+function mBell(f, t, v = 0.05, d = 3.2, glideTo = null) {
+  const o = mAc.createOscillator(), g = mAc.createGain();
+  o.type = "sine"; o.frequency.setValueAtTime(f, t);
+  if (glideTo) o.frequency.exponentialRampToValueAtTime(glideTo, t + d);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(v, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+  o.connect(g); g.connect(mBus); o.start(t); o.stop(t + d + 0.1);
+}
+function stopMenuMusic() {
+  clearInterval(mTimer); mTimer = null;
+  if (!mAc) return;
+  const ac = mAc, master = mMaster; mAc = null;
+  try { master.gain.cancelScheduledValues(ac.currentTime); master.gain.linearRampToValueAtTime(0, ac.currentTime + 1.2); } catch { /* ignore */ }
+  setTimeout(() => ac.close().catch(() => {}), 1400);
+}
+
 // ---------------------------------------------------------------- welcome / pair
 let welcomeColor = "c2";
 function showWelcome() {
@@ -1000,8 +1220,8 @@ async function onWelcome() {
   const btn = $("#welcomeGo"); busy(btn, true, "One sec…");
   try {
     state.me = await api.signIn(name, welcomeColor);
-    const board = await api.myBoard();
-    board ? await openBoard(board) : showPair();
+    const rooms = await api.myBoards();
+    rooms.length ? await showMenu() : showPair();
   } catch (e) { setError($("#welcomeError"), e.message); }
   busy(btn, false);
 }
@@ -1024,6 +1244,7 @@ async function renderInviteQR(code) {
 }
 function showPair() {
   show("#pair");
+  $("#pairBack").hidden = !roomsState.list.length;
   if (pendingJoinCode) {
     const inp = $("#codeInput"); inp.value = fmtCode(pendingJoinCode);
     setTimeout(() => { inp.scrollIntoView({ block: "center" }); inp.focus(); }, 200);
@@ -1088,7 +1309,9 @@ function onResume(force = false) {
   }
 }
 async function openBoard(board) {
+  stopMenuMusic();
   state.board = board;
+  markRoomOpened(board.id);
   show("#boardScreen");
   const sk = $("#boardSkeleton"); if (sk) sk.hidden = false;
   await refreshMembers();
@@ -5251,6 +5474,17 @@ function wireStatic() {
   $("#toolFind").onclick = () => (others().filter((m) => state.views[m.id]).length > 1 ? openPeople() : findSomeone());
   $("#toolDraw").onclick = () => setInkMode(!inkMode);
   $("#bDone").onclick = () => setInkMode(false);
+  $("#openRooms").onclick = openRoomsFromBoard;
+  $("#menuEdit").onclick = () => { roomsState.edit = !roomsState.edit; renderRooms(); };
+  $("#menuNew").onclick = () => showPair();
+  $("#pairBack").onclick = () => showMenu();
+  $("#menuMusic").onclick = () => {
+    menuMusicOn = !menuMusicOn; ls.set("pinned.menu.music", menuMusicOn);
+    $("#menuMusic").setAttribute("aria-pressed", String(menuMusicOn)); $("#menuMusic").textContent = menuMusicOn ? "🎵" : "🔇";
+    if (menuMusicOn) menuMusicStart(); else stopMenuMusic();
+  };
+  $("#menuMusic").setAttribute("aria-pressed", String(menuMusicOn)); $("#menuMusic").textContent = menuMusicOn ? "🎵" : "🔇";
+  $("#menu").addEventListener("pointerdown", () => { if (menuMusicOn) menuMusicStart(); }, { passive: true });
   buildTools({ pens: $("#bPens"), sizes: $("#bSizes"), eraser: $("#bEraser"), undo: $("#bUndo"), clear: $("#bClear") }, inkTool, { onUndo: inkUndo, onClear: () => {} });
   $("#bBrushPen").onclick = () => { inkTool.brush = "pen"; setBoardTool("draw"); };
   $("#bBrushMarker").onclick = () => { inkTool.brush = "marker"; setBoardTool("draw"); };

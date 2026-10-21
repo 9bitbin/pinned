@@ -924,3 +924,53 @@ body.gaming { overflow: hidden; }
 #ink text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-weight: 800; pointer-events: none; }
 .ink-text-input { position: fixed; z-index: 300; font: 800 18px system-ui, sans-serif; background: rgba(255,255,255,.95); color: #222;
   border: 2px solid var(--accent, #e0584f); border-radius: 10px; padding: 6px 10px; min-width: 140px; outline: none; box-shadow: 0 8px 20px -8px rgba(0,0,0,.4); }
+
+/* ---- your rooms menu: same grid and cards as the board pages, with planets ---- */
+.menu-screen { position: fixed; inset: 0; overflow-y: auto; overflow-x: hidden; color: var(--surface-ink);
+  background: var(--bg); background-image: var(--bg-image); background-size: var(--bg-size); }
+.menu-screen #starCanvas { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: .55; }
+.menu-screen .orb { position: fixed; border-radius: 50%; opacity: .16; pointer-events: none; animation: orbFloat 16s ease-in-out infinite; }
+.menu-screen .orb.o1 { width: 260px; height: 260px; left: -90px; top: 8%; background: radial-gradient(circle at 35% 35%, #ffd0e6, #5a4a8f 62%, transparent 72%); }
+.menu-screen .orb.o2 { width: 170px; height: 170px; right: -50px; top: 44%; animation-delay: -5s; background: radial-gradient(circle at 35% 35%, #cfe9ff, #2f4a8f 58%, transparent 72%); }
+.menu-screen .orb.o3 { width: 90px; height: 90px; left: 60%; bottom: 10%; animation-delay: -9s; background: radial-gradient(circle at 35% 35%, #fff1b3, #8a4a3a 60%, transparent 72%); }
+.menu-top, .room-grid, .hidden-tray, .menu-hint, .menu-foot, .pair-back { position: relative; }
+.menu-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 22px 18px 4px; }
+.menu-top h1 { margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -.5px; }
+.menu-actions { display: flex; gap: 8px; }
+.chip-btn { font: inherit; font-weight: 700; font-size: 14px; color: var(--surface-ink); padding: 7px 14px; border-radius: 999px; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--line); }
+.chip-btn[aria-pressed="true"] { border-color: var(--accent); }
+.menu-hint { margin: 2px 18px 8px; font-size: 14px; color: var(--muted); }
+.room-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; padding: 10px 16px 24px; }
+.room { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 12px 14px; border-radius: 22px;
+  text-align: center; color: inherit; font: inherit; cursor: pointer; background: var(--surface); border: 1px solid var(--line);
+  box-shadow: var(--note-shadow); animation: roomSway 6.5s ease-in-out infinite; transform-origin: 50% 60%; }
+.room:active { scale: .97; }
+.room-system { position: relative; width: 120px; height: 104px; perspective: 340px; }
+.room-planet { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 50%;
+  background: radial-gradient(circle at 32% 28%, #ffffff 0 4%, var(--planet, #ff9fd0) 30%, #1b1f2e 88%);
+  box-shadow: inset -9px -9px 16px rgba(0, 0, 0, .55), 0 0 22px -4px var(--planet, #ff9fd0);
+  animation: planetBob 5s ease-in-out infinite; }
+.room-planet::after { content: ""; position: absolute; left: 50%; top: 50%; width: 92px; height: 18px; margin: -9px 0 0 -46px; border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, .25); transform: rotate(-14deg); pointer-events: none; }
+.room-orbit { position: absolute; left: 50%; top: 50%; width: 104px; height: 104px; margin: -52px 0 0 -52px; border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, .16); transform-style: preserve-3d; animation: orbitSpin var(--spin, 9s) linear infinite; }
+.room-moon { position: absolute; left: 50%; top: -4px; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #fff, #b8c4da 70%); box-shadow: 0 0 10px rgba(220, 230, 255, .9); }
+.room-name { font-weight: 800; font-size: 15px; line-height: 1.25; overflow-wrap: anywhere; margin-top: 4px; }
+.room-code { font-size: 12px; font-weight: 700; letter-spacing: .08em; color: var(--muted); }
+.room-x { position: absolute; top: -8px; right: -8px; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 19px; font-weight: 800; line-height: 1; color: #fff; background: #e0584f; box-shadow: 0 4px 12px rgba(0, 0, 0, .4); }
+.menu-screen.editing .room { animation: roomWiggle .32s ease-in-out infinite alternate; }
+.hidden-tray { padding: 0 16px 20px; }
+.hidden-list { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 2px; }
+.menu-foot { padding: 12px 16px 22px; }
+.menu-foot .btn { width: 100%; }
+.pair-back { margin: 12px 16px 0; }
+.topbar #openRooms { font-size: 20px; }
+@keyframes roomSway { 0%, 100% { rotate: -0.8deg; } 50% { rotate: 0.8deg; } }
+@keyframes roomWiggle { 0% { rotate: -2deg; } 100% { rotate: 2deg; } }
+@keyframes planetBob { 0%, 100% { translate: 0 0; } 50% { translate: 0 -5px; } }
+@keyframes orbitSpin { from { transform: rotateX(68deg) rotateZ(0deg); } to { transform: rotateX(68deg) rotateZ(360deg); } }
+@keyframes orbFloat { 0%, 100% { translate: 0 0; } 50% { translate: 10px -16px; } }
+@media (prefers-reduced-motion: reduce) { .room, .room-planet, .room-orbit, .menu-screen .orb { animation: none !important; } }
