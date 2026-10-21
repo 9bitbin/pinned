@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Space Dogfight</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #03050c; color: #fff; font-family: system-ui, -apple-system, sans-serif; }
+  canvas { display: block; touch-action: none; }
+  #hud { position: fixed; top: 10px; left: 12px; right: 12px; display: flex; justify-content: space-between; font-size: 17px; font-weight: 700; pointer-events: none; text-shadow: 0 2px 8px #000; }
+  #msg { position: fixed; bottom: 16px; left: 0; right: 0; text-align: center; font-size: 14px; color: #cfe; pointer-events: none; text-shadow: 0 2px 8px #000; }
+  #fire { position: fixed; bottom: 60px; right: 20px; width: 84px; height: 84px; border-radius: 50%; border: 0; background: rgba(255,80,80,.7); color: #fff; font: 700 16px system-ui; touch-action: manipulation; }
+</style>
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
+</head>
+<body>
+<div id="hud"><span id="kills">Kills 0</span><span id="hp">Shield 100</span></div>
+<div id="msg">Arrows or drag to steer. Space or the red button fires. Shoot down 15 raiders.</div>
+<button id="fire" aria-label="Fire">FIRE</button>
+<script type="module">
+import * as THREE from 'three';
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x03050c);
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 400);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x223344, 1.1));
+
+// starfield
+const stars = new THREE.BufferGeometry();
+const sv = new Float32Array(900 * 3);
+for (let i = 0; i < 900; i++) { sv[i * 3] = (Math.random() - 0.5) * 300; sv[i * 3 + 1] = (Math.random() - 0.5) * 300; sv[i * 3 + 2] = -Math.random() * 300; }
+stars.setAttribute('position', new THREE.BufferAttribute(sv, 3));
+scene.add(new THREE.Points(stars, new THREE.PointsMaterial({ color: 0xffffff, size: 0.6 })));
+
+const player = new THREE.Group(); scene.add(player);
+const hull = new THREE.Mesh(new THREE.ConeGeometry(0.6, 2, 10), new THREE.MeshStandardMaterial({ color: 0x9bd1ff }));
+hull.rotation.x = Math.PI / 2; player.add(hull);
+camera.position.set(0, 0, 4); player.add(camera);
+scene.add(player);
+
+const enemies = [], shots = [], bursts = [];
+const enemyMat = new THREE.MeshStandardMaterial({ color: 0xff5a6e, emissive: 0x300010 });
+const shotMat = new THREE.MeshBasicMaterial({ color: 0xffe066 });
+const shotGeo = new THREE.SphereGeometry(0.12, 8, 8);
+let kills = 0, shield = 100, over = false, reported = false, fireCd = 0, steer = { x: 0, y: 0 }, keys = {};
+let dragStart = null, held = false, enemyFireT = 0;
+const killsEl = document.getElementById('kills'), hpEl = document.getElementById('hp'), msgEl = document.getElementById('msg');
+
+function report(score) {
+  if (window.parent === window) return;
+  try { window.parent.postMessage({ pinned: 1, t: 'over', score }, location.origin); } catch (e) {}
+}
+
+function spawnEnemy() {
+  const e = new THREE.Mesh(new THREE.OctahedronGeometry(1.1), enemyMat);
+  const a = Math.random() * Math.PI * 2, r = 6 + Math.random() * 6;
+  e.position.set(player.position.x + Math.cos(a) * r, player.position.y + Math.sin(a) * r, player.position.z - 40 - Math.random() * 30);
+  e.userData = { vx: (Math.random() - 0.5) * 2, vy: (Math.random() - 0.5) * 2, t: Math.random() * 6 };
+  scene.add(e); enemies.push(e);
+}
+for (let i = 0; i < 4; i++) spawnEnemy();
+
+function shoot() {
+  if (over || fireCd > 0) return;
+  fireCd = 0.22;
+  const s = new THREE.Mesh(shotGeo, shotMat);
+  s.position.copy(player.position);
+  const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion);
+  s.userData.v = dir.multiplyScalar(90);
+  s.userData.life = 2;
+  scene.add(s); shots.push(s);
+}
+
+function burst(pos) {
+  const b = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffaa33, transparent: true }));
+  b.position.copy(pos); b.userData.life = 0.4; scene.add(b); bursts.push(b);
+}
+
+addEventListener('keydown', (e) => { keys[e.key] = true; if (e.code === 'Space') { e.preventDefault(); shoot(); } });
+addEventListener('keyup', (e) => { keys[e.key] = false; });
+renderer.domElement.addEventListener('pointerdown', (e) => { dragStart = { x: e.clientX, y: e.clientY }; });
+addEventListener('pointerup', () => { dragStart = null; steer.x = steer.y = 0; });
+renderer.domElement.addEventListener('pointermove', (e) => {
+  if (!dragStart) return;
+  steer.x = Math.max(-1, Math.min(1, (e.clientX - dragStart.x) / 120));
+  steer.y = Math.max(-1, Math.min(1, (e.clientY - dragStart.y) / 120));
+});
+document.getElementById('fire').addEventListener('pointerdown', (e) => { e.stopPropagation(); shoot(); });
+
+function end() {
+  over = true;
+  const score = kills * 100;
+  msgEl.textContent = `Shields down after ${kills} kills. Score ${score}.`;
+  if (!reported) { reported = true; report(score); }
+}
+
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.033, (now - last) / 1000); last = now;
+  fireCd = Math.max(0, fireCd - dt);
+  if (!over) {
+    const sx = steer.x + ((keys.ArrowLeft ? -1 : 0) + (keys.ArrowRight ? 1 : 0));
+    const sy = steer.y + ((keys.ArrowUp ? -1 : 0) + (keys.ArrowDown ? 1 : 0));
+    player.rotation.y -= Math.max(-1, Math.min(1, sx)) * dt * 1.6;
+    player.rotation.x = Math.max(-0.9, Math.min(0.9, player.rotation.x - Math.max(-1, Math.min(1, sy)) * dt * 1.2));
+    player.translateZ(-18 * dt);
+    if (keys.Space) shoot();
+
+    for (let i = shots.length - 1; i >= 0; i--) {
+      const s = shots[i];
+      s.position.addScaledVector(s.userData.v, dt); s.userData.life -= dt;
+      let hit = false;
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        if (s.position.distanceTo(enemies[j].position) < 1.4) {
+          burst(enemies[j].position); scene.remove(enemies[j]); enemies.splice(j, 1);
+          kills++; killsEl.textContent = `Kills ${kills}`; hit = true; spawnEnemy(); break;
+        }
+      }
+      if (hit || s.userData.life <= 0) { scene.remove(s); shots.splice(i, 1); }
+    }
+    enemyFireT -= dt;
+    for (const e of enemies) {
+      const u = e.userData; u.t += dt;
+      e.position.x += Math.sin(u.t) * u.vx * dt * 4;
+      e.position.y += Math.cos(u.t) * u.vy * dt * 4;
+      e.rotation.y += dt; e.rotation.x += dt * 0.7;
+      if (e.position.distanceTo(player.position) < 1.2) {
+        shield -= 20; hpEl.textContent = `Shield ${Math.max(0, shield)}`;
+        burst(e.position); e.position.z -= 30;
+        if (shield <= 0) return end();
+      }
+      if (e.position.z > player.position.z + 2) { e.position.z = player.position.z - 80; }
+    }
+    if (enemies.length < 4) spawnEnemy();
+    for (let i = bursts.length - 1; i >= 0; i--) {
+      const b = bursts[i]; b.userData.life -= dt; b.scale.multiplyScalar(1 + dt * 6);
+      b.material.opacity = Math.max(0, b.userData.life / 0.4);
+      if (b.userData.life <= 0) { scene.remove(b); bursts.splice(i, 1); }
+    }
+    if (kills >= 15) {
+      msgEl.textContent = `Sector cleared! Score ${kills * 100}.`;
+      over = true;
+      if (!reported) { reported = true; report(kills * 100); }
+    }
+  }
+  stars.attributes.position.needsUpdate = false;
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

@@ -63,7 +63,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v36";
+const APP_VERSION = "soy-v37";
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
 let hapticsOn;
@@ -1216,6 +1216,13 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v37", date: "2026-10-21", title: "Ten new games with instructions", items: [
+    "New games: Connect Four, Dots and Boxes, Memory Race, Reaction Duel, Hangman, Battleship",
+    "New 3D games: Stack 3D, Marble Maze (tilt or drag), Code Tunnel, Space Dogfight",
+    "Every game has a Read first sheet with how to play. Tap Play solo to start",
+    "Duo and group modes are shown but come with online play later",
+    "New game scores need the upgrade-v15.sql database update",
+  ] },
   { v: "soy-v36", date: "2026-10-21", title: "Flappy Matrix and matrix birds tool", items: [
     "New game: Flappy Matrix, in the games list. Matrix mode or classic",
     "New board tool: the matrix birds. Press it to release code-birds and rain that fade away; press again to make them explode",
@@ -4586,16 +4593,44 @@ function openSettings() {
 
 // ================================================================ games (Phase 3)
 const GAME_LIST = [
-  { id: "kestrel", name: "Neon Kestrel", icon: "🦅", file: "games/neon-kestrel.html", blurb: "Himal's synthwave flyer. Tap to flap through the neon towers." },
-  { id: "pindrop", name: "Pin Drop", icon: "📌", file: "games/pin-drop.html", blurb: "Drop the swinging pin on a sliding bullseye. 10 drops." },
-  { id: "hop", name: "Hop", icon: "🌙", file: "games/hop.html", blurb: "Hop stone to stone across the misty lake. Race on the same stones." },
-  { id: "plane", name: "Paper Plane", icon: "✈️", file: "games/paper-plane.html", blurb: "Hold to climb, let go to dive. Dodge pins, grab hearts." },
-  { id: "blocks", name: "Block Drop", icon: "🟦", file: "games/block-drop.html", blurb: "Stack falling blocks and clear lines. A race gets the same pieces." },
-  { id: "typerace", name: "Type Race", icon: "⌨️", file: "games/type-race.html", blurb: "Type the passage fast and clean. Everyone gets the same text." },
-  { id: "flappy", name: "Flappy Matrix", icon: "🟩", file: "games/flappy-matrix.html", blurb: "Flap through the falling code. Matrix mode or classic, with its own soundtrack." },
-  { id: "speak", name: "Polyglot", icon: "🗣️", file: "games/polyglot.html", blurb: "Say phrases in another language. Voice-scored (or practice mode on iPhone)." },
-];
-const gameById = (id) => GAME_LIST.find((g) => g.id === id);
+  { id: "kestrel", name: "Neon Kestrel", icon: "🦅", file: "games/neon-kestrel.html", blurb: "Himal's synthwave flyer. Tap to flap through the neon towers.", how: ["Tap, click or press Space to flap upward.", "Gravity pulls you down, so keep tapping to hold the line.", "Collect the stars ★ for points.", "Don't touch the neon towers."] },
+  { id: "pindrop", name: "Pin Drop", icon: "📌", file: "games/pin-drop.html", blurb: "Drop the swinging pin on a sliding bullseye. 10 drops.", how: ["Tap to drop the swinging pin onto the sliding bullseye.", "You get 10 drops.", "The closer to the centre, the more points."] },
+  { id: "hop", name: "Hop", icon: "🌙", file: "games/hop.html", blurb: "Hop stone to stone across the misty lake. Race on the same stones.", how: ["Hold to charge a jump. The meter swings back and forth.", "Release on the gold tick to land on the glowing stone.", "Perfect landings build a combo.", "Every stone +1, perfect +2, a firefly on a stone +1."] },
+  { id: "plane", name: "Paper Plane", icon: "✈️", file: "games/paper-plane.html", blurb: "Hold to climb, let go to dive. Dodge pins, grab hearts.", how: ["Hold anywhere to climb. Let go to dive.", "Slip through the pin boards.", "Grab hearts ❤️ for points.", "Don't touch a pin or the desk."] },
+  { id: "blocks", name: "Block Drop", icon: "🟦", file: "games/block-drop.html", blurb: "Stack falling blocks and clear lines. A race gets the same pieces.", how: ["Move falling blocks left and right, rotate them, and drop them into place.", "Fill a whole row to clear it. Four lines at once is a Quad.", "Keyboard: ← → to move, ↑ to rotate, ↓ soft drop, space to slam.", "On a phone, use the buttons below the board."] },
+  { id: "typerace", name: "Type Race", icon: "⌨️", file: "games/type-race.html", blurb: "Type the passage fast and clean. Everyone gets the same text.", how: ["Tap the text and start typing the passage.", "Type it as fast and as cleanly as you can.", "Your score is net WPM: your speed minus your mistakes."] },
+  { id: "speak", name: "Polyglot", icon: "🗣️", file: "games/polyglot.html", blurb: "Say phrases in another language. Voice-scored (or practice mode on iPhone).", how: ["Listen to the phrase, then say it out loud in the language.", "The closer and quicker you are, the higher your score.", "5 rounds. On iPhone you can practise without scoring."] },
+  { id: "flappy", name: "Flappy Matrix", icon: "🟩", file: "games/flappy-matrix.html", blurb: "Flap through the falling code. Matrix mode or classic, with its own soundtrack.", how: ["Tap, click or press Space to flap through the falling code.", "Pass between the pipes to score.", "Choose Matrix or Classic in the menu. Press P or Esc to pause."] },
+  { id: "connect4", name: "Connect Four", icon: "🔴", file: "games/connect-four.html", blurb: "Drop discs and line up four before the computer does.", race: false, how: ["Tap a column to drop your disc into it.", "Line up four of your colour in a row, a column or a diagonal to win.", "Solo plays against the computer. Duo and group play come with online play."] },
+  { id: "dots", name: "Dots and Boxes", icon: "⬛", file: "games/dots-and-boxes.html", blurb: "Draw lines between dots. Close a box to claim it and go again.", race: false, how: ["Tap the gap between two dots to draw a line.", "Complete the fourth side of a box to claim it, then you go again.", "The player with the most boxes at the end wins. Solo plays against the computer."] },
+  { id: "memory", name: "Memory Race", icon: "🃏", file: "games/memory-race.html", blurb: "Find the matching pairs. Fewer moves and a faster time score more.", race: false, how: ["Tap two cards to flip them over.", "Match a pair to keep it. If they don't match, they flip back.", "Fewest moves and fastest time make the best score."] },
+  { id: "reaction", name: "Reaction Duel", icon: "🚦", file: "games/reaction-duel.html", blurb: "Wait for the light to turn green, then tap as fast as you can.", race: false, how: ["Wait while the light is red. Tapping early is a false start.", "When it turns green, tap as fast as you can.", "Faster reactions score more points."] },
+  { id: "hangman", name: "Hangman", icon: "🔤", file: "games/hangman.html", blurb: "Guess the hidden word one letter at a time before the drawing is finished.", race: false, how: ["Tap letters on the keyboard to guess.", "Each wrong guess adds a part to the drawing.", "Guess the word before the drawing is finished. Fewer wrong guesses score more."] },
+  { id: "battleship", name: "Battleship", icon: "🚢", file: "games/battleship.html", blurb: "Find and sink the computer's three ships on a 6 by 6 grid.", race: false, how: ["Tap a square on the grid to fire.", "A hit turns red. A miss turns grey.", "Sink all three ships to win. Fewer shots score more."] },
+  { id: "stack", name: "Stack 3D", icon: "🧱", file: "games/stack-3d.html", blurb: "Tap to drop each block onto the one below. Build the tallest tower you can.", race: false, how: ["Tap to drop the swinging block.", "Land it on the tower. Any overhang gets chopped off.", "Every block that lands adds to your score. Miss the tower and the game is over."] },
+  { id: "marble", name: "Marble Maze", icon: "🔵", file: "games/marble-maze.html", blurb: "Tilt your phone or drag to roll the marble through the maze to the exit.", race: false, how: ["On a phone, tilt the device. On a computer, drag the maze or use the arrow keys.", "Roll the marble into the gold exit without falling into a hole.", "Each maze you finish adds to your score. Faster finishes score more."] },
+  { id: "tunnel", name: "Code Tunnel", icon: "💚", file: "games/code-tunnel.html", blurb: "Run down a glowing tunnel of code, dodging the blocks.", race: false, how: ["Swipe or use ← → to switch lanes.", "Dodge the blocks. Every second you survive adds to your score.", "Pick up the coins for bonus points."] },
+  { id: "dogfight", name: "Space Dogfight", icon: "🚀", file: "games/space-dogfight.html", blurb: "Fly a small starship and shoot down the drones in deep space.", race: false, how: ["Drag, or use the arrow keys, to steer your ship.", "Tap or press Space to shoot.", "Each drone you destroy adds points. Don't crash into them."] },
+];const gameById = (id) => GAME_LIST.find((g) => g.id === id);
+
+// ---- How to play (shown before every game) ----
+// Solo works now. Duo and group (2-10 players) appear as online play is added (see the roadmap in UPDATE-LOG).
+let howGameId = null;
+function openHowTo(gameId) {
+  const g = gameById(gameId); if (!g) return;
+  howGameId = gameId;
+  $("#howTitle").textContent = `${g.icon} ${g.name}`;
+  const ul = $("#howList"); ul.innerHTML = "";
+  for (const line of g.how?.length ? g.how : [g.blurb]) { const li = document.createElement("li"); li.textContent = line; ul.appendChild(li); }
+  const wrap = $("#howModes"); wrap.innerHTML = "";
+  for (const [label, live] of [["Solo · 1 player", true], ["Duo · 2 players", false], ["Group · 3 to 10 players", false]]) {
+    const b = document.createElement("button"); b.type = "button"; b.className = "mode-chip";
+    b.textContent = label; b.disabled = !live; b.setAttribute("aria-pressed", String(live));
+    if (!live) b.title = "Coming with online play";
+    wrap.appendChild(b);
+  }
+  openSheet("howTo");
+}
 const RACE_WAIT = 20000, RACE_MAX = 4 * 60000, RACE_STALE = 20000;
 const games = { boards: {}, v7: true, v8: true, v7Warned: false, ttt: [], c8: [], boardGame: null, race: null, play: null, tttId: null, cpu: null, cpuLevel: "easy", picking: false, timer: null, c8Id: null, c8View: null, c8cpu: null, c8pick: false, c8sel: null };
 const colorOf = (id) => BRIGHT[memberById(id)?.color] || BRIGHT.c1;
@@ -4679,14 +4714,14 @@ function renderGames() {
     } else line.textContent = games.v7 ? "No scores yet. Be the first!" : "";
     card.appendChild(line);
     const acts = mk("div", "gc-actions");
-    const solo = mk("button", "btn small", "Play solo"); solo.onclick = () => openGameOverlay(g.id, "solo");
+    const solo = mk("button", "btn small", "Play solo"); solo.onclick = () => openHowTo(g.id);
     const raceOpen = r && r.game === g.id && r.phase === "lobby";
     const raceBusy = r && (r.phase === "count" || r.phase === "run");
     const race = mk("button", "btn small primary", raceOpen ? (r.joined ? "Back to lobby" : "Join race") : "Race");
     race.disabled = !!raceBusy || (r && r.phase === "lobby" && r.game !== g.id);
     race.onclick = () => (raceOpen ? (r.joined ? openGameOverlay(g.id, "race") : joinRace()) : startRace(g.id));
     const sb = mk("button", "btn small", "Scores"); sb.onclick = () => { games.boardGame = g.id; renderGames(); loadGameBoard(g.id).then(renderGamesIfOpen); };
-    acts.append(solo, race, sb);
+    acts.append(solo, ...(g.race === false ? [] : [race]), sb);
     card.appendChild(acts);
     list.appendChild(card);
   }
@@ -6185,6 +6220,9 @@ function wireStatic() {
   };
   $("#mapClose").onclick = () => closeSheet("map");
   $("#mapBackdrop").onclick = () => closeSheet("map");
+  $("#howClose").onclick = () => closeSheet("howTo");
+  $("#howToBackdrop").onclick = () => closeSheet("howTo");
+  $("#howStart").onclick = () => { const id = howGameId; closeSheet("howTo"); if (id) openGameOverlay(id, "solo"); };
   $("#locBackdrop").onclick = closeLoc;
   $("#locSwitch").onclick = toggleGeo;
   document.addEventListener("visibilitychange", () => {

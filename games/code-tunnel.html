@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Code Tunnel</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #03040a; color: #9dffc9; font-family: ui-monospace, Menlo, monospace; }
+  canvas { display: block; touch-action: none; }
+  #hud { position: fixed; top: 10px; left: 12px; right: 12px; display: flex; justify-content: space-between; font-size: 18px; font-weight: 700; pointer-events: none; text-shadow: 0 0 8px #0f8; }
+  #msg { position: fixed; bottom: 16px; left: 0; right: 0; text-align: center; font-size: 14px; color: #bff; pointer-events: none; }
+</style>
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
+</head>
+<body>
+<div id="hud"><span id="dist">0 m</span><span id="lives">♥♥♥</span></div>
+<div id="msg">Steer with the arrow keys, drag, or tilt. Dodge the blocks of broken code.</div>
+<script type="module">
+import * as THREE from 'three';
+
+const LANES = [-2, 0, 2];          // x positions of the three lanes
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x03040a, 10, 60);
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 100);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// glowing ring segments make up the tunnel walls
+const ringGeo = new THREE.TorusGeometry(4, 0.05, 6, 40);
+const ringMat = new THREE.MeshBasicMaterial({ color: 0x33ffaa });
+const rings = [];
+for (let i = 0; i < 40; i++) { const r = new THREE.Mesh(ringGeo, ringMat); r.rotation.x = Math.PI / 2; r.position.z = -i * 3; scene.add(r); rings.push(r); }
+
+const blockGeo = new THREE.BoxGeometry(1.4, 1.4, 1.4);
+const blockMat = new THREE.MeshStandardMaterial({ color: 0xff4d6d, emissive: 0x400010 });
+scene.add(new THREE.HemisphereLight(0xffffff, 0x112233, 1.2));
+const blocks = [];
+const ship = new THREE.Mesh(new THREE.ConeGeometry(0.4, 1, 8), new THREE.MeshStandardMaterial({ color: 0xbff3ff, emissive: 0x104050 }));
+ship.rotation.x = -Math.PI / 2; ship.position.set(0, -1, -2); scene.add(ship);
+
+let speed = 14, dist = 0, lives = 3, lane = 1, laneX = 0, over = false, reported = false, invuln = 0, spawnT = 0;
+const distEl = document.getElementById('dist'), livesEl = document.getElementById('lives');
+const msgEl = document.getElementById('msg');
+
+function report(score) {
+  if (window.parent === window) return;
+  try { window.parent.postMessage({ pinned: 1, t: 'over', score }, location.origin); } catch (e) {}
+}
+
+function spawnRow() {
+  // leave at least one lane open
+  const open = Math.floor(Math.random() * 3);
+  LANES.forEach((x, i) => {
+    if (i === open || Math.random() < 0.35) return;
+    const b = new THREE.Mesh(blockGeo, blockMat);
+    b.position.set(x, -1 + 0.7, -60);
+    scene.add(b); blocks.push(b);
+  });
+}
+
+function setLane(i) { lane = Math.max(0, Math.min(2, i)); }
+addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowLeft') setLane(lane - 1);
+  if (e.key === 'ArrowRight') setLane(lane + 1);
+});
+let dragStart = null;
+renderer.domElement.addEventListener('pointerdown', (e) => { dragStart = e.clientX; });
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (dragStart == null) return;
+  const dx = e.clientX - dragStart;
+  if (Math.abs(dx) > 30) setLane(lane + (dx > 0 ? 1 : -1)); else setLane(lane);
+  dragStart = null;
+});
+addEventListener('deviceorientation', (e) => {
+  if (e.gamma == null) return;
+  const g = e.gamma;
+  setLane(g < -12 ? 0 : g > 12 ? 2 : 1);
+});
+
+function end() {
+  over = true;
+  const score = Math.floor(dist);
+  msgEl.textContent = `Crashed at ${score} m. Score ${score}.`;
+  if (!reported) { reported = true; report(score); }
+}
+
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.033, (now - last) / 1000); last = now;
+  if (!over) {
+    dist += speed * dt;
+    speed = Math.min(34, 14 + dist * 0.02);
+    laneX += (LANES[lane] - laneX) * Math.min(1, dt * 14);
+    ship.position.x = laneX;
+    invuln = Math.max(0, invuln - dt);
+    spawnT += speed * dt;
+    if (spawnT > 9) { spawnT = 0; spawnRow(); }
+    for (const b of blocks) {
+      b.position.z += speed * dt;
+      b.rotation.x += dt; b.rotation.y += dt * 0.7;
+      if (invuln <= 0 && Math.abs(b.position.z - ship.position.z) < 0.9 && Math.abs(b.position.x - laneX) < 0.9 && Math.abs(b.position.y - ship.position.y) < 1.2) {
+        lives--; invuln = 1.5; b.visible = false; livesEl.textContent = '♥'.repeat(lives) + '♡'.repeat(3 - lives);
+        if (lives <= 0) end();
+      }
+    }
+    for (let i = blocks.length - 1; i >= 0; i--) if (blocks[i].position.z > 4) { scene.remove(blocks[i]); blocks.splice(i, 1); }
+    rings.forEach((r) => { r.position.z += speed * dt; if (r.position.z > 3) r.position.z -= 120; });
+    distEl.textContent = `${Math.floor(dist)} m`;
+  }
+  ship.visible = invuln <= 0 || Math.floor(now / 80) % 2 === 0;
+  camera.position.set(laneX * 0.5, 0.6, 3);
+  camera.lookAt(laneX * 0.3, -0.4, -10);
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

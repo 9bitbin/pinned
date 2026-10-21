@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Battleship</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0c1a2b; color: #eaf4ff; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { display: flex; flex-direction: column; align-items: center; padding: 12px; gap: 10px; }
+  .info { font-size: 15px; color: #a9c4dd; text-align: center; min-height: 1.4em; }
+  .label { font-size: 13px; color: #7fa3c4; text-transform: uppercase; letter-spacing: .08em; }
+  .grid { display: grid; gap: 3px; width: min(92vw, 360px); }
+  .cell { aspect-ratio: 1; border: 0; border-radius: 6px; background: #163553; min-width: 0; }
+  .cell.ship { background: #3c6e95; }
+  .cell.hit { background: #e0534f; }
+  .cell.miss { background: #2a4a68; }
+  .cell.sunk { background: #7a1f2b; }
+  .cell.mine { background: #2a3f55; }
+  .cell:disabled { cursor: default; }
+  button.solo { font: inherit; font-weight: 700; color: #0c1a2b; background: #5ad1ff; border: 0; border-radius: 14px; padding: 12px 18px; min-height: 44px; }
+  .hint { font-size: 13px; color: #6f8fb0; text-align: center; max-width: 380px; }
+</style>
+</head>
+<body>
+<div class="label">Enemy waters</div>
+<div class="grid" id="enemy"></div>
+<div class="info" id="info">Sink all 3 enemy ships before they sink yours.</div>
+<div class="label">Your fleet</div>
+<div class="grid" id="mine"></div>
+<button class="solo" id="again">New battle</button>
+<p class="hint">Tap a square in enemy waters to fire. Ships are 4, 3 and 2 squares long. Fewer shots score more.</p>
+<script type="module">
+import { SIZE, placeFleet, fire, allSunk, chooseShot, scoreFor, emptyBoard } from './lib/battleship.js';
+
+let enemy, mine, shots, over, reported = false;
+const enemyEl = document.getElementById('enemy');
+const mineEl = document.getElementById('mine');
+const info = document.getElementById('info');
+
+function report(score) {
+  if (window.parent === window) return;
+  try { window.parent.postMessage({ pinned: 1, t: 'over', score }, location.origin); } catch (e) {}
+}
+
+function grid(el, board, isEnemy) {
+  el.style.gridTemplateColumns = `repeat(${SIZE}, 1fr)`;
+  el.innerHTML = '';
+  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
+    const v = board[r][c];
+    const b = document.createElement('button');
+    let cls = 'cell';
+    if (isEnemy) {
+      if (v === 2) cls += ' hit'; else if (v === 3) cls += ' miss';
+    } else {
+      if (v === 1) cls += ' mine'; else if (v === 2) cls += ' hit'; else if (v === 3) cls += ' miss';
+    }
+    b.className = cls;
+    b.setAttribute('aria-label', `Row ${r + 1} column ${c + 1}`);
+    b.disabled = !isEnemy || over || v === 2 || v === 3;
+    b.onclick = () => fireAt(r, c);
+    el.appendChild(b);
+  }
+}
+
+function fireAt(r, c) {
+  if (over) return;
+  const res = fire(enemy, r, c);
+  if (res.result === 'repeat') return;
+  enemy = res.board; shots++;
+  if (allSunk(enemy)) return end(true, res.result === 'sunk' ? 'You sank the last ship!' : 'You win!');
+  // computer turn
+  const [cr, cc] = chooseShot(mine);
+  const cres = fire(mine, cr, cc);
+  mine = cres.board;
+  if (allSunk(mine)) return end(false, 'Your fleet is gone.');
+  info.textContent = `${res.result === 'hit' || res.result === 'sunk' ? 'Hit!' : 'Miss.'} Enemy fired at ${cr + 1},${cc + 1}: ${cres.result === 'miss' ? 'miss' : 'hit'}. Shots: ${shots}`;
+  render();
+}
+
+function end(won, msg) {
+  over = true;
+  const score = scoreFor(shots, won);
+  info.textContent = `${msg} Shots ${shots}. Score ${score}.`;
+  render();
+  if (!reported) { reported = true; report(score); }
+}
+
+function render() { grid(enemyEl, enemy, true); grid(mineEl, mine, false); }
+
+function newGame() {
+  enemy = placeFleet(); mine = placeFleet(); shots = 0; over = false; reported = false;
+  info.textContent = 'Sink all 3 enemy ships before they sink yours.';
+  render();
+}
+document.getElementById('again').onclick = newGame;
+newGame();
+</script>
+</body>
+</html>
