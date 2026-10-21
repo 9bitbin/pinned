@@ -78,7 +78,7 @@
   --note-shadow: 0 0 0 1px rgba(255,255,255,.07), 0 10px 24px -12px rgba(0,0,0,.8);
   --font-note: "Nunito", system-ui, sans-serif;
   color-scheme: dark;
-}
+} 
 [data-theme="dreamy"] {
   --bg: #6f7fa6;
   --bg-image:
