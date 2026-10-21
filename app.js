@@ -62,7 +62,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v34";
+const APP_VERSION = "soy-v35";
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
 let hapticsOn;
@@ -1215,6 +1215,10 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v35", date: "2026-10-21", title: "Paste images into chat", items: [
+    "Paste a screenshot or copied picture straight into the chat box",
+    "Pasted images send the same way as the photo button",
+  ] },
   { v: "soy-v34", date: "2026-10-21", title: "Live map and code split", items: [
     "Live map: see where you and your partner are, with the distance and direction between you",
     "Open the map from the location panel. It needs internet for the map tiles",
@@ -6117,6 +6121,18 @@ function wireStatic() {
   $("#msgSend").onclick = () => sendChat();
   $("#msgInput").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } });
   $("#msgInput").addEventListener("input", sendTyping);
+  // Paste an image (screenshot or copied picture) straight into the chat, the same as the photo button.
+  // Plain text pastes are left alone.
+  $("#msgInput").addEventListener("paste", async (e) => {
+    const items = [...(e.clipboardData?.items || [])];
+    const img = items.find((it) => it.kind === "file" && it.type.startsWith("image/"));
+    if (!img) return;
+    e.preventDefault();
+    const file = img.getAsFile();
+    if (!file) return;
+    try { sendChat(await compressImage(file)); }
+    catch (err) { toast(err.message || "Couldn't use that image"); }
+  });
   $("#msgPhoto").addEventListener("change", async (e) => {
     const f = e.target.files && e.target.files[0]; e.target.value = ""; if (!f) return;
     try { sendChat(await compressImage(f)); } catch (err) { toast(err.message); }
