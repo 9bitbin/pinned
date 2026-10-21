@@ -379,22 +379,3 @@ What changed:
 
 Note: media notes (photos, voice, drawings) still need a connection; only text/emoji notes and text messages queue offline.
 
-## @ pings (email + phone) — v11
-
-What it does: in the note composer, tap **@ Ping someone**, pick people, and Stick it. Each person gets a phone notification ("<name> pinged you 📌") and an email ("<name> pinged you on Pinned") with a link to the app and steps to add it to the home screen. The email never includes the note text.
-
-Rules: only people on the board can be pinged; 10 pings a day per sender (rolling 24 hours); pings go out only for notes stuck now, not scheduled ones; people who were pinged don't also get the generic "New note" alert for that same note.
-
-Steps:
-1. Run `supabase/upgrade-v11.sql` in SQL Editor.
-2. Brevo: Settings > SMTP & API > API Keys > create a key. Add it as a secret named `BREVO_API_KEY` (Edge Functions > Secrets). Never put it in config.js or GitHub.
-3. In Brevo, confirm the sender address you want emails from (Senders & IP). Add it as the secret `BREVO_SENDER_EMAIL`.
-4. Optional secret `APP_URL` if the app address ever changes (default: https://9bitbin.github.io/stuck-on-you/).
-5. Redeploy the `notify` function with the new `supabase/notify/index.ts` (version 8). Check: opening the function URL in a browser should show `"version": 8`.
-
-Notes:
-- The email link opens the app, not a room-specific link. Boards are joined with the pairing code, so the email can't include a per-board link safely.
-- Brevo's free plan allows about 300 emails a day across the account.
-- Emails can land in spam at first. Check the spam folder once, and mark as "not spam" if needed.
-- Muting "pings" in Settings silences the phone push only. Email still sends.
-- If you post a ping while offline, the note sends later but the ping is not sent.

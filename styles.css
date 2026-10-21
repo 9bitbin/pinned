@@ -917,10 +917,3 @@ body.gaming { overflow: hidden; }
 .vu small { font-size: 10px; color: #cfd2da; max-width: 46px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vu .vmute { position: absolute; top: -4px; right: 2px; font-size: 11px; }
 
-/* @ ping picker (composer) */
-.ping-box { margin: 12px 0 4px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,.55); border: 1px dashed rgba(0,0,0,.18); }
-.ping-toggle { font: inherit; font-weight: 600; background: none; border: 0; padding: 4px 0; cursor: pointer; color: inherit; }
-.ping-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 4px; }
-.ping-chip { font: inherit; padding: 6px 12px; border-radius: 999px; border: 1px solid rgba(0,0,0,.2); background: #fff; cursor: pointer; }
-.ping-chip.on { background: #e0584f; border-color: #e0584f; color: #fff; }
-.ping-hint { margin: 6px 0 0; font-size: 12px; opacity: .7; }
