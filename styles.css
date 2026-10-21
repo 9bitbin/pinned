@@ -1023,3 +1023,47 @@ body.gaming { overflow: hidden; }
 .boardtools button { display: grid; place-items: center; color: var(--surface-ink); }
 .boardtools button[aria-pressed="true"] { color: var(--accent-ink); }
 .boardtools #toolLoc { position: relative; }
+
+/* ============ Phase 4: custom themes and the theme builder ============ */
+.theme-card { position: relative; }
+.theme-card .tc-edit { position: absolute; top: 8px; right: 8px; font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 999px; background: var(--surface); color: var(--surface-ink); border: 1px solid var(--line); }
+.theme-card.add .sw.plus { display: grid; place-items: center; height: 64px; font-size: 30px; font-weight: 700; color: var(--muted); border-bottom: 1px dashed var(--line); }
+
+.tb-section-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 0 8px; }
+.tb-chips { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 4px; }
+.tb-chips::-webkit-scrollbar { display: none; }
+.tb-chips button { flex: 0 0 auto; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--surface-ink); padding: 8px 14px; font-weight: 700; font-size: 14px; }
+
+/* the mini board uses the same variables as the real page, scoped to this box */
+.tb-preview { position: relative; min-height: 150px; border-radius: var(--radius-m); padding: 16px; display: grid; gap: 14px; align-content: center;
+  background-color: var(--bg); background-image: var(--bg-image); background-size: var(--bg-size); border: 1px solid var(--line); color: var(--surface-ink); }
+.tb-preview .tbp-card { background: var(--surface); color: var(--surface-ink); border-radius: var(--radius-m); padding: 12px 14px; box-shadow: var(--note-shadow); display: grid; gap: 4px; justify-items: start; }
+.tbp-muted { color: var(--muted); font-size: 14px; }
+.tbp-btn { border: 0; background: var(--accent); color: var(--accent-ink); border-radius: 12px; padding: 8px 14px; font-weight: 700; margin-top: 4px; }
+.tbp-notes { display: flex; gap: 10px; justify-content: center; }
+.tbp-notes i { width: 54px; height: 54px; border-radius: 8px; box-shadow: var(--note-shadow); }
+.tbp-notes i:nth-child(1) { background: var(--n1); transform: rotate(-4deg); }
+.tbp-notes i:nth-child(2) { background: var(--n2); transform: rotate(3deg); }
+.tbp-notes i:nth-child(3) { background: var(--n3); transform: rotate(-1deg); }
+
+.tb-group { background: color-mix(in srgb, var(--surface) 90%, var(--surface-ink) 10%); border-radius: var(--radius-m); padding: 4px 14px; }
+.tb-row { display: flex; align-items: center; justify-content: space-between; min-height: 48px; border-bottom: .5px solid var(--line); cursor: pointer; }
+.tb-row:last-child { border-bottom: 0; }
+.tb-row input[type=color] { width: 44px; height: 30px; border: 0; background: transparent; padding: 0; cursor: pointer; }
+.tb-notes { display: flex; gap: 10px; flex-wrap: wrap; }
+.tb-notes input[type=color] { width: 44px; height: 44px; border: 2px solid var(--line); border-radius: 50%; padding: 0; background: transparent; cursor: pointer; }
+.tb-range { display: grid; gap: 6px; padding: 10px 0; font-size: 15px; font-weight: 600; }
+.tb-range b { font-variant-numeric: tabular-nums; color: var(--muted); }
+.tb-range input { width: 100%; accent-color: var(--accent); }
+.tb-radius { margin-top: 10px; }
+.tb-contrast { background: color-mix(in srgb, var(--surface) 90%, var(--surface-ink) 10%); border-radius: var(--radius-m); padding: 4px 14px 10px; }
+.tb-check { display: flex; justify-content: space-between; padding: 8px 0; font-size: 14px; border-bottom: .5px solid var(--line); }
+.tb-check:last-of-type { border-bottom: 0; }
+.tb-check.warn { color: #d93025; font-weight: 700; }
+.tb-check b { font-variant-numeric: tabular-nums; }
+.tb-actions { display: flex; gap: 8px; }
+.tb-actions .btn { flex: 1; }
+.tb-actions .btn.danger { flex: 0 0 auto; }
+/* the builder opens on top of Settings (it sits earlier in the page, so it needs a higher layer) */
+#themeBuilderBackdrop { z-index: 22; }
+#themeBuilder.sheet { z-index: 23; }

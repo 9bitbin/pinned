@@ -697,5 +697,36 @@
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
   <script type="module" src="app.js"></script>
+  <!-- theme builder lives at the top level so it stacks above Settings -->
+    <div class="sheet-backdrop" id="themeBuilderBackdrop" hidden></div>
+    <section class="sheet tall tb" id="themeBuilder" hidden aria-label="Theme builder">
+      <div class="grab"></div>
+      <div class="settings-head"><h2 id="tbTitle">Build a theme</h2></div>
+      <label class="field"><span>Name</span><input id="tbName" maxlength="40" placeholder="Our Sunday" autocomplete="off"></label>
+      <div class="tb-section-title">Start from</div>
+      <div class="tb-chips" id="tbStart"></div>
+      <div class="tb-preview" id="tbPreview" aria-label="Live preview">
+        <div class="tbp-card"><b>Sticky note</b><span class="tbp-muted">A little note for you both</span><button type="button" class="tbp-btn">Button</button></div>
+        <div class="tbp-notes"><i></i><i></i><i></i></div>
+      </div>
+      <div class="tb-section-title">Colours</div>
+      <div class="tb-group" id="tbColors"></div>
+      <div class="tb-section-title">Note colours</div>
+      <div class="tb-notes" id="tbNotes"></div>
+      <div class="tb-section-title">Grid and shape</div>
+      <div class="tb-group">
+        <label class="tb-range"><span>Grid size <b id="tbGridSizeV"></b></span><input type="range" id="tbGridSize" min="8" max="64" step="1"></label>
+        <label class="tb-range"><span>Grid strength <b id="tbGridOpV"></b></span><input type="range" id="tbGridOp" min="0" max="0.2" step="0.005"></label>
+      </div>
+      <div class="seg tb-radius" id="tbRadius"><button type="button" data-v="s">Small</button><button type="button" data-v="m">Medium</button><button type="button" data-v="l">Large</button></div>
+      <div class="tb-section-title">Readability</div>
+      <div class="tb-contrast" id="tbContrast"></div>
+      <p class="error" id="tbError" hidden></p>
+      <div class="sheet-actions tb-actions">
+        <button class="btn danger" id="tbDelete" hidden>Delete</button>
+        <button class="btn" id="tbCancel">Cancel</button>
+        <button class="btn primary" id="tbSave">Save theme</button>
+      </div>
+    </section>
 </body>
 </html>

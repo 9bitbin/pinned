@@ -118,7 +118,7 @@ const C8 = {
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v31";
+const APP_VERSION = "soy-v32";
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
 let hapticsOn;
@@ -793,11 +793,23 @@ function swatchRow(container, selected, onPick, palette = "note") {
   }
 }
 
+// Applies a built-in theme ("cork", ...) or a custom one ("custom:<id>") to this device.
 function applyTheme(id) {
-  document.documentElement.dataset.theme = id;
-  const meta = document.querySelector('meta[name="theme-color"]');
-  meta.content = { cork: "#8a5e36", pastel: "#f5ecff", midnight: "#0e1014", dreamy: "#8d9cc4" }[id] || "#8a5e36";
-  ls.set("soy-theme", id);
+  const custom = String(id).startsWith("custom:") ? customById(String(id).slice(7)) : null;
+  clearPaint();
+  let resolved, metaColor;
+  if (custom) {
+    // a custom theme starts from the closest built-in CSS, then its saved colours are painted on top
+    document.documentElement.dataset.theme = custom.base === "light" ? "cork" : "midnight";
+    paintTheme(custom.tokens, custom.base);
+    resolved = id; metaColor = custom.tokens.bg || "#0e1014";
+  } else {
+    resolved = ["cork", "pastel", "midnight", "dreamy"].includes(id) ? id : "cork";
+    document.documentElement.dataset.theme = resolved;
+    metaColor = { cork: "#8a5e36", pastel: "#f5ecff", midnight: "#0e1014", dreamy: "#8d9cc4" }[resolved];
+  }
+  document.querySelector('meta[name="theme-color"]').content = metaColor;
+  ls.set("soy-theme", resolved);
 }
 
 // ---- Theme schema (Phase 1 groundwork for custom themes; see roadmap section 5.2) ----
@@ -843,13 +855,231 @@ function validateTheme(input) {
   for (const k of Object.keys(t)) if (!(k in THEME_COLOR_KEYS) && !["gridSize", "gridOpacity", "radius", "shadow", "motion", "note"].includes(k) && !["bgPattern", "gridColor"].includes(k)) errors.push(`Unknown token: ${k}`);
   return errors.length ? { ok: false, errors } : { ok: true, theme: out, errors: [] };
 }
-// Applies a validated custom theme as CSS variables on the root element.
-function applyCustomTokens(theme) {
+// ============ Custom themes (Phase 4, roadmap section 5.2) ============
+// A custom theme is a validated theme object (see validateTheme). Each device keeps its list in
+// localStorage, and "soy-theme" holds either a built-in id ("cork", ...) or "custom:<id>".
+// Applying a theme = clear any old inline colours, then write the new ones as CSS variables on <html>.
+const CUSTOM_KEY = "pinned.themes.custom";
+const CUSTOM_MAX = 12;
+const PAINT_KEYS = ["--bg", "--surface", "--surface-ink", "--muted", "--line", "--accent", "--accent-ink", "--planet",
+  "--topbar", "--topbar-ink", "--note-ink", "--bg-image", "--bg-size", "--radius-m", "--note-shadow",
+  "--n1", "--n2", "--n3", "--n4", "--n5", "--n6", "color-scheme"];
+
+// Turns a theme's tokens into CSS variables. Used for the real page and for the builder preview.
+function tokenVars(t) {
+  const v = {};
+  const set = (k, val) => { if (val !== undefined && val !== null) v[k] = val; };
+  set("--bg", t.bg); set("--surface", t.surface); set("--surface-ink", t.surfaceInk); set("--muted", t.muted);
+  set("--line", t.line); set("--accent", t.accent); set("--accent-ink", t.accentInk); set("--planet", t.planet);
+  if (t.bg) set("--topbar", `color-mix(in srgb, ${t.bg} 82%, transparent)`);
+  set("--topbar-ink", t.surfaceInk); set("--note-ink", t.surfaceInk);
+  // grid: lines drawn in the text colour at the chosen strength; strength 0 means no grid
+  const size = t.gridSize ?? 28, op = t.gridOpacity ?? 0;
+  if (op > 0 && t.surfaceInk) {
+    const g = `color-mix(in srgb, ${t.surfaceInk} ${(op * 100).toFixed(1)}%, transparent)`;
+    v["--bg-image"] = `linear-gradient(${g} 1px, transparent 1px), linear-gradient(90deg, ${g} 1px, transparent 1px)`;
+    v["--bg-size"] = `${size}px ${size}px, ${size}px ${size}px`;
+  } else { v["--bg-image"] = "none"; v["--bg-size"] = "auto"; }
+  v["--radius-m"] = { s: "10px", m: "16px", l: "22px" }[t.radius || "m"];
+  v["--note-shadow"] = { none: "none", soft: "0 8px 18px -10px rgba(0,0,0,.45)", strong: "0 14px 30px -10px rgba(0,0,0,.7)" }[t.shadow || "soft"];
+  (t.note || []).forEach((c, i) => { v[`--n${i + 1}`] = c; });
+  return v;
+}
+function paintTheme(tokens, base) {
   const root = document.documentElement.style;
-  for (const [k, cssVar] of Object.entries(THEME_COLOR_KEYS)) if (theme.tokens[k]) root.setProperty(cssVar, theme.tokens[k]);
-  if (theme.tokens.note) theme.tokens.note.forEach((c, i) => root.setProperty(`--n${i + 1}`, c));
-  if (theme.tokens.gridSize) root.setProperty("--grid-size", `${theme.tokens.gridSize}px`);
-  if (theme.tokens.gridOpacity !== undefined) root.setProperty("--grid-opacity", String(theme.tokens.gridOpacity));
+  for (const [k, val] of Object.entries(tokenVars(tokens))) root.setProperty(k, val);
+  root.setProperty("color-scheme", base === "light" ? "light" : "dark");
+}
+function clearPaint() {
+  const root = document.documentElement.style;
+  for (const k of PAINT_KEYS) root.removeProperty(k);
+}
+function customThemes() { const v = ls.get(CUSTOM_KEY, []); return Array.isArray(v) ? v : []; }
+function customById(id) { return customThemes().find((t) => t.id === id) || null; }
+function saveCustomThemes(list) { ls.set(CUSTOM_KEY, list); }
+
+// ---- Theme picker in Settings: built-ins, your custom themes, then "Build a theme" ----
+function renderThemePicker() {
+  const tp = $("#themePicker"); tp.innerHTML = "";
+  const cur = document.documentElement.dataset.theme;
+  const curId = ls.get("soy-theme", "cork");
+  const pick = (id, el) => {
+    applyTheme(id);
+    tp.querySelectorAll(".theme-card").forEach((x) => x.setAttribute("aria-pressed", String(x === el)));
+    rebuildAllNotes();
+  };
+  for (const t of THEMES) {
+    const b = document.createElement("button"); b.className = "theme-card"; b.type = "button";
+    b.setAttribute("aria-pressed", String(t.id === curId));
+    b.innerHTML = `<div class="sw" style="background:${t.bg}">${t.notes.map((c) => `<i style="background:${c}"></i>`).join("")}</div><b>${t.name}</b>`;
+    b.onclick = () => pick(t.id, b);
+    tp.appendChild(b);
+  }
+  for (const c of customThemes()) {
+    const id = `custom:${c.id}`;
+    const b = document.createElement("button"); b.className = "theme-card custom"; b.type = "button";
+    b.setAttribute("aria-pressed", String(id === curId));
+    b.innerHTML = `<div class="sw" style="background:${c.tokens.bg}">${(c.tokens.note || []).slice(0, 3).map((n) => `<i style="background:${n}"></i>`).join("")}</div><b></b><span class="tc-edit">Edit</span>`;
+    b.querySelector("b").textContent = c.name;
+    b.onclick = () => pick(id, b);
+    b.querySelector(".tc-edit").onclick = (e) => { e.stopPropagation(); openThemeBuilder(c.id); };
+    tp.appendChild(b);
+  }
+  const add = document.createElement("button"); add.className = "theme-card add"; add.type = "button";
+  add.innerHTML = `<div class="sw plus" aria-hidden="true">+</div><b>Build a theme</b>`;
+  add.onclick = () => openThemeBuilder(null);
+  tp.appendChild(add);
+}
+
+// ---- Theme builder (roadmap 5.2.2): edit a working copy, preview live, save only when valid ----
+// Starting points. Values match the built-in look so "Start from" feels familiar.
+const TB_STARTS = {
+  cork:     { label: "Cozy cork",   base: "light", tokens: { bg: "#b98a5a", surface: "#fffaf2", surfaceInk: "#3b2a1a", muted: "#7c6650", line: "#ead9c3", accent: "#c2410c", accentInk: "#ffffff", planet: "#ff9fd0", note: ["#fff176", "#ffb3c7", "#a7d8ff", "#b8f0b0", "#d7c2ff", "#ffcf99"], gridSize: 28, gridOpacity: 0, radius: "m", shadow: "soft", motion: "normal" } },
+  pastel:   { label: "Pastel",      base: "light", tokens: { bg: "#f5ecff", surface: "#ffffff", surfaceInk: "#3f345a", muted: "#6f6391", line: "#ece4fa", accent: "#b86bd8", accentInk: "#ffffff", planet: "#ffd6e5", note: ["#fff4b8", "#ffd6e5", "#d4ecff", "#d7f7dc", "#e9dcff", "#ffe2c9"], gridSize: 28, gridOpacity: 0, radius: "m", shadow: "soft", motion: "normal" } },
+  midnight: { label: "Dark minimal", base: "dark", tokens: { bg: "#0e1014", surface: "#171a21", surfaceInk: "#e7e9ee", muted: "#8a909e", line: "#262a33", accent: "#e7e9ee", accentInk: "#0e1014", planet: "#ffd0e6", note: ["#2b2a1f", "#2e1f27", "#1d2633", "#1e2b22", "#262033", "#30251c"], gridSize: 28, gridOpacity: 0.035, radius: "m", shadow: "soft", motion: "normal" } },
+  dreamy:   { label: "Dreamy",      base: "light", tokens: { bg: "#6f7fa6", surface: "#f6f4ff", surfaceInk: "#34385a", muted: "#5d6287", line: "#7878aa33", accent: "#7c6fd6", accentInk: "#ffffff", planet: "#ffd0e6", note: ["#fff6c8", "#ffd2e2", "#c8e6ff", "#cdf5e1", "#e1d2ff", "#ffdec8"], gridSize: 28, gridOpacity: 0, radius: "m", shadow: "soft", motion: "normal" } },
+  blank:    { label: "Blank dark",  base: "dark", tokens: { bg: "#111318", surface: "#1b1e26", surfaceInk: "#eceef3", muted: "#9aa1b2", line: "#2a2f3b", accent: "#eceef3", accentInk: "#111318", planet: "#ffd0e6", note: ["#2b2a1f", "#2e1f27", "#1d2633", "#1e2b22", "#262033", "#30251c"], gridSize: 28, gridOpacity: 0.03, radius: "m", shadow: "soft", motion: "normal" } },
+};
+const TB_COLOR_FIELDS = [
+  ["bg", "Background"], ["surface", "Cards"], ["surfaceInk", "Text"], ["muted", "Secondary text"],
+  ["line", "Dividers"], ["accent", "Buttons"], ["accentInk", "Button text"], ["planet", "Planet glow"],
+];
+let tb = null; // the working copy while the builder is open
+
+const cloneTokens = (x) => JSON.parse(JSON.stringify(x));
+// WCAG contrast ratio between two #rrggbb colours (1 = no contrast, 21 = black on white)
+function luminance(hex) {
+  const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+    .map((v) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)));
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+}
+function contrastRatio(a, b) {
+  const [hi, lo] = [luminance(a.slice(0, 7)), luminance(b.slice(0, 7))].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+function openThemeBuilder(id) {
+  const existing = id ? customById(id) : null;
+  if (!existing && customThemes().length >= CUSTOM_MAX) {
+    toast(`You can keep up to ${CUSTOM_MAX} custom themes. Delete one first.`); return;
+  }
+  tb = existing
+    ? { id: existing.id, name: existing.name, base: existing.base, tokens: cloneTokens(existing.tokens) }
+    : { id: null, name: "", base: "dark", tokens: cloneTokens(TB_STARTS.midnight.tokens) };
+  if (!tb.tokens.note) tb.tokens.note = [...TB_STARTS.midnight.tokens.note];
+  $("#tbTitle").textContent = existing ? "Edit theme" : "Build a theme";
+  $("#tbDelete").hidden = !existing;
+  $("#tbError").hidden = true;
+  $("#tbName").value = tb.name;
+  renderTbStarts();
+  renderTbControls();
+  openSheet("themeBuilder");
+}
+
+function renderTbStarts() {
+  const wrap = $("#tbStart"); wrap.innerHTML = "";
+  for (const [key, st] of Object.entries(TB_STARTS)) {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = st.label;
+    b.onclick = () => { tb.base = st.base; tb.tokens = cloneTokens(st.tokens); renderTbControls(); };
+    wrap.appendChild(b);
+  }
+}
+
+// Builds the colour rows once, then keeps their values in step with the working copy.
+function buildTbControls() {
+  const colors = $("#tbColors"); colors.innerHTML = "";
+  for (const [key, label] of TB_COLOR_FIELDS) {
+    const row = document.createElement("label"); row.className = "tb-row";
+    row.innerHTML = `<span></span><input type="color" aria-label="${label}">`;
+    row.querySelector("span").textContent = label;
+    row.querySelector("input").oninput = (e) => { tb.tokens[key] = e.target.value; renderTbPreview(); renderTbContrast(); };
+    row.querySelector("input").dataset.key = key;
+    colors.appendChild(row);
+  }
+  const notes = $("#tbNotes"); notes.innerHTML = "";
+  for (let i = 0; i < 6; i++) {
+    const inp = document.createElement("input"); inp.type = "color"; inp.setAttribute("aria-label", `Note colour ${i + 1}`);
+    inp.oninput = (e) => { tb.tokens.note[i] = e.target.value; renderTbPreview(); };
+    inp.dataset.note = String(i);
+    notes.appendChild(inp);
+  }
+  $("#tbGridSize").oninput = (e) => { tb.tokens.gridSize = Number(e.target.value); renderTbControls(false); renderTbPreview(); };
+  $("#tbGridOp").oninput = (e) => { tb.tokens.gridOpacity = Number(e.target.value); renderTbControls(false); renderTbPreview(); };
+  $("#tbName").oninput = (e) => { tb.name = e.target.value; };
+  document.querySelectorAll("#tbRadius button").forEach((b) => b.onclick = () => { tb.tokens.radius = b.dataset.v; renderTbControls(false); renderTbPreview(); });
+}
+
+// Puts the working copy into every control, then refreshes the preview and contrast checks.
+function renderTbControls(all = true) {
+  const t = tb.tokens;
+  if (all) {
+    document.querySelectorAll("#tbColors input[type=color]").forEach((inp) => { inp.value = t[inp.dataset.key] || "#000000"; });
+    document.querySelectorAll("#tbNotes input[type=color]").forEach((inp) => { inp.value = (t.note || [])[Number(inp.dataset.note)] || "#000000"; });
+  }
+  $("#tbGridSize").value = t.gridSize ?? 28; $("#tbGridSizeV").textContent = `${t.gridSize ?? 28}px`;
+  $("#tbGridOp").value = t.gridOpacity ?? 0; $("#tbGridOpV").textContent = (t.gridOpacity ?? 0) === 0 ? "off" : String(t.gridOpacity);
+  document.querySelectorAll("#tbRadius button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === (t.radius || "m"))));
+  renderTbPreview(); renderTbContrast();
+}
+
+// The mini board: the same CSS variables the real page uses, scoped to this box only.
+function renderTbPreview() {
+  const pv = $("#tbPreview");
+  for (const [k, v] of Object.entries(tokenVars(tb.tokens))) pv.style.setProperty(k, v);
+}
+
+// Text pairs the app relies on most. Body text needs 4.5:1 (WCAG AA).
+function renderTbContrast() {
+  const t = tb.tokens;
+  const pairs = [
+    ["Text on cards", t.surfaceInk, t.surface],
+    ["Secondary text on cards", t.muted, t.surface],
+    ["Button text", t.accentInk, t.accent],
+    ["Text on background", t.surfaceInk, t.bg],
+  ];
+  const box = $("#tbContrast"); box.innerHTML = "";
+  let weak = 0;
+  for (const [label, a, b] of pairs) {
+    const r = contrastRatio(a, b), ok = r >= 4.5;
+    if (!ok) weak++;
+    const row = document.createElement("div"); row.className = `tb-check ${ok ? "ok" : "warn"}`;
+    row.innerHTML = `<span></span><b>${r.toFixed(1)}:1</b>`;
+    row.querySelector("span").textContent = `${ok ? "✓" : "!"} ${label}`;
+    box.appendChild(row);
+  }
+  if (weak) { const n = document.createElement("p"); n.className = "hint"; n.textContent = "Some text may be hard to read. You can still save."; box.appendChild(n); }
+}
+
+function saveThemeFromBuilder() {
+  const name = (tb.name || "").trim() || "My theme";
+  const res = validateTheme({ name, base: tb.base, tokens: tb.tokens });
+  if (!res.ok) { $("#tbError").textContent = res.errors[0]; $("#tbError").hidden = false; return; }
+  const list = customThemes();
+  const now = Date.now();
+  if (tb.id) {
+    const i = list.findIndex((t) => t.id === tb.id);
+    if (i >= 0) list[i] = { id: tb.id, ...res.theme, updatedAt: now };
+  } else {
+    if (list.length >= CUSTOM_MAX) { $("#tbError").textContent = `You can keep up to ${CUSTOM_MAX} custom themes.`; $("#tbError").hidden = false; return; }
+    tb.id = "c" + now.toString(36) + Math.random().toString(36).slice(2, 6);
+    list.push({ id: tb.id, ...res.theme, updatedAt: now });
+  }
+  saveCustomThemes(list);
+  applyTheme(`custom:${tb.id}`);
+  closeSheet("themeBuilder");
+  renderThemePicker();
+  rebuildAllNotes();
+  toast("Theme saved");
+}
+
+function deleteThemeFromBuilder() {
+  if (!tb.id) return;
+  if (!confirm("Delete this theme? Boards using it go back to Cozy corkboard.")) return;
+  saveCustomThemes(customThemes().filter((t) => t.id !== tb.id));
+  if (ls.get("soy-theme", "cork") === `custom:${tb.id}`) applyTheme("cork");
+  closeSheet("themeBuilder");
+  renderThemePicker();
+  rebuildAllNotes();
 }
 
 function memberById(id) { return state.members.find((m) => m.id === id); }
@@ -4093,15 +4323,7 @@ function onLinkInput() {
 // ---------------------------------------------------------------- settings
 function openSettings() {
   // themes
-  const tp = $("#themePicker"); tp.innerHTML = "";
-  const cur = document.documentElement.dataset.theme;
-  for (const t of THEMES) {
-    const b = document.createElement("button"); b.className = "theme-card"; b.type = "button";
-    b.setAttribute("aria-pressed", String(t.id === cur));
-    b.innerHTML = `<div class="sw" style="background:${t.bg}">${t.notes.map((c) => `<i style="background:${c}"></i>`).join("")}</div><b>${t.name}</b>`;
-    b.onclick = () => { applyTheme(t.id); tp.querySelectorAll(".theme-card").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); rebuildAllNotes(); };
-    tp.appendChild(b);
-  }
+  renderThemePicker();
   $("#settingsCode").textContent = fmtCode(state.board?.code);
   $("#settingsName").value = state.me?.name || "";
   swatchRow($("#settingsSwatches"), state.me?.color, async (c) => {
@@ -5624,6 +5846,12 @@ function wireStatic() {
   $("#moreClose").onclick = () => closeSheet("more");
   $("#noteMenuBackdrop").onclick = () => closeSheet("noteMenu");
   $("#nmClose").onclick = () => closeSheet("noteMenu");
+  // Phase 4: theme builder
+  buildTbControls();
+  $("#themeBuilderBackdrop").onclick = () => closeSheet("themeBuilder");
+  $("#tbCancel").onclick = () => closeSheet("themeBuilder");
+  $("#tbSave").onclick = saveThemeFromBuilder;
+  $("#tbDelete").onclick = deleteThemeFromBuilder;
   document.querySelectorAll("#more [data-proxy]").forEach((b) => b.onclick = () => { closeSheet("more"); $("#" + b.dataset.proxy).click(); });
   setInterval(() => { const d = $("#moreDot"); if (d) d.hidden = $("#qDot").hidden; }, 1500);
   $("#gamesClose").onclick = () => closeSheet("games");
