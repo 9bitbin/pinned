@@ -1217,9 +1217,9 @@ function renderFeelSwitches() {
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
   { v: "soy-v37", date: "2026-10-21", title: "Ten new games with instructions", items: [
-    "New games: Connect Four, Dots and Boxes, Memory Race, Reaction Duel, Hangman, Battleship",
-    "New 3D games: Stack 3D, Marble Maze (tilt or drag), Code Tunnel, Space Dogfight",
-    "Every game has a Read first sheet with how to play. Tap Play solo to start",
+    "New games: Connect Four, Dots and Boxes, Reaction Duel, Hangman",
+    "New 3D game: Stack 3D",
+    "Every new game has a how to play sheet. Tap Play solo to start",
     "Duo and group modes are shown but come with online play later",
     "New game scores need the upgrade-v15.sql database update",
   ] },
@@ -4603,14 +4603,9 @@ const GAME_LIST = [
   { id: "flappy", name: "Flappy Matrix", icon: "🟩", file: "games/flappy-matrix.html", blurb: "Flap through the falling code. Matrix mode or classic, with its own soundtrack.", how: ["Tap, click or press Space to flap through the falling code.", "Pass between the pipes to score.", "Choose Matrix or Classic in the menu. Press P or Esc to pause."] },
   { id: "connect4", name: "Connect Four", icon: "🔴", file: "games/connect-four.html", blurb: "Drop discs and line up four before the computer does.", race: false, how: ["Tap a column to drop your disc into it.", "Line up four of your colour in a row, a column or a diagonal to win.", "Solo plays against the computer. Duo and group play come with online play."] },
   { id: "dots", name: "Dots and Boxes", icon: "⬛", file: "games/dots-and-boxes.html", blurb: "Draw lines between dots. Close a box to claim it and go again.", race: false, how: ["Tap the gap between two dots to draw a line.", "Complete the fourth side of a box to claim it, then you go again.", "The player with the most boxes at the end wins. Solo plays against the computer."] },
-  { id: "memory", name: "Memory Race", icon: "🃏", file: "games/memory-race.html", blurb: "Find the matching pairs. Fewer moves and a faster time score more.", race: false, how: ["Tap two cards to flip them over.", "Match a pair to keep it. If they don't match, they flip back.", "Fewest moves and fastest time make the best score."] },
   { id: "reaction", name: "Reaction Duel", icon: "🚦", file: "games/reaction-duel.html", blurb: "Wait for the light to turn green, then tap as fast as you can.", race: false, how: ["Wait while the light is red. Tapping early is a false start.", "When it turns green, tap as fast as you can.", "Faster reactions score more points."] },
   { id: "hangman", name: "Hangman", icon: "🔤", file: "games/hangman.html", blurb: "Guess the hidden word one letter at a time before the drawing is finished.", race: false, how: ["Tap letters on the keyboard to guess.", "Each wrong guess adds a part to the drawing.", "Guess the word before the drawing is finished. Fewer wrong guesses score more."] },
-  { id: "battleship", name: "Battleship", icon: "🚢", file: "games/battleship.html", blurb: "Find and sink the computer's three ships on a 6 by 6 grid.", race: false, how: ["Tap a square on the grid to fire.", "A hit turns red. A miss turns grey.", "Sink all three ships to win. Fewer shots score more."] },
   { id: "stack", name: "Stack 3D", icon: "🧱", file: "games/stack-3d.html", blurb: "Tap to drop each block onto the one below. Build the tallest tower you can.", race: false, how: ["Tap to drop the swinging block.", "Land it on the tower. Any overhang gets chopped off.", "Every block that lands adds to your score. Miss the tower and the game is over."] },
-  { id: "marble", name: "Marble Maze", icon: "🔵", file: "games/marble-maze.html", blurb: "Tilt your phone or drag to roll the marble through the maze to the exit.", race: false, how: ["On a phone, tilt the device. On a computer, drag the maze or use the arrow keys.", "Roll the marble into the gold exit without falling into a hole.", "Each maze you finish adds to your score. Faster finishes score more."] },
-  { id: "tunnel", name: "Code Tunnel", icon: "💚", file: "games/code-tunnel.html", blurb: "Run down a glowing tunnel of code, dodging the blocks.", race: false, how: ["Swipe or use ← → to switch lanes.", "Dodge the blocks. Every second you survive adds to your score.", "Pick up the coins for bonus points."] },
-  { id: "dogfight", name: "Space Dogfight", icon: "🚀", file: "games/space-dogfight.html", blurb: "Fly a small starship and shoot down the drones in deep space.", race: false, how: ["Drag, or use the arrow keys, to steer your ship.", "Tap or press Space to shoot.", "Each drone you destroy adds points. Don't crash into them."] },
 ];const gameById = (id) => GAME_LIST.find((g) => g.id === id);
 
 // ---- How to play (shown before every game) ----
