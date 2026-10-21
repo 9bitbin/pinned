@@ -1296,7 +1296,6 @@ const UPDATE_LOG = [
 ];
 const CREDITS = [
   ["Made by", "Himal (9bitbin)"],
-  ["Built with", "Claude, by Anthropic"],
   ["Backend", "Supabase (database, login, storage, realtime)"],
   ["Hosting", "GitHub Pages"],
   ["Supabase JS client", "@supabase/supabase-js, MIT licence"],
