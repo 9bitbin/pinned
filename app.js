@@ -63,7 +63,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v40";
+const APP_VERSION = "soy-v42";
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
 let hapticsOn;
@@ -382,6 +382,10 @@ function createSupabaseApi() {
     async duoRespond(id, accept) { return must(await sb.rpc("duo_respond", { p_game: id, p_accept: accept })); },
     async duoMove(id, state, next, done, winner) { return must(await sb.rpc("duo_move", { p_game: id, p_state: state, p_next: next || null, p_done: !!done, p_winner: winner || null })); },
     async duoQuit(id) { return must(await sb.rpc("duo_quit", { p_game: id })); },
+    async duoSet(id, key, val) { return must(await sb.rpc("duo_set", { p_game: id, p_key: key, p_val: val })); },
+    async duoFinish(id, winner) { return must(await sb.rpc("duo_finish", { p_game: id, p_winner: winner || null })); },
+    async duoHangmanWord(id, word) { return must(await sb.rpc("duo_hangman_word", { p_game: id, p_word: word })); },
+    async duoHangmanGuess(id, letter) { return must(await sb.rpc("duo_hangman_guess", { p_game: id, p_letter: letter })); },
     live(boardId, me, h) {
       if (liveCh) sb.removeChannel(liveCh);
       let presence = { name: me.name, color: me.color, visible: true, doodling: false };
@@ -637,6 +641,10 @@ function createDemoApi() {
     async duoRespond() { throw new Error("Play together needs online mode"); },
     async duoMove() { throw new Error("Play together needs online mode"); },
     async duoQuit() { throw new Error("Play together needs online mode"); },
+    async duoSet() { throw new Error("Play together needs online mode"); },
+    async duoFinish() { throw new Error("Play together needs online mode"); },
+    async duoHangmanWord() { throw new Error("Play together needs online mode"); },
+    async duoHangmanGuess() { throw new Error("Play together needs online mode"); },
     async tttChallenge(boardId, oId) {
       const d = db();
       if (d.ttt.some((g) => g.board_id === boardId && ["invited", "active"].includes(g.status) && [g.x_id, g.o_id].includes(oId) && [g.x_id, g.o_id].includes(meId()))) throw new Error("You already have a game going with them");
@@ -1232,6 +1240,18 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v42", date: "2026-10-21", title: "Watch other players in races", items: [
+    "When you're out of a race, you automatically watch the best player still going",
+    "Tap the arrows to watch the other players, or tap a name in the race bar",
+    "Works for canvas games. Type Race and Polyglot show their last picture",
+  ] },
+  { v: "soy-v41", date: "2026-10-21", title: "Play together: Dots, Reaction Duel, Hangman", items: [
+    "Dots and Boxes, Reaction Duel and Hangman now play online with your partner, in Play together",
+    "Reaction Duel: best of three rounds, both tap when the pad turns green",
+    "Hangman: one of you sets a secret word, the other guesses",
+    "Connect Four online fixed: a new game now starts with a board",
+    "Needs upgrade-v18.sql in Supabase, and the notify function redeployed",
+  ] },
   { v: "soy-v40", date: "2026-10-21", title: "Play together: Connect Four online", items: [
     "New Play together section at the top of Games. Challenge your partner to Connect Four",
     "Moves sync live on both phones, one move at a time",
@@ -4725,16 +4745,18 @@ function openHowTo(gameId) {
   const ul = $("#howList"); ul.innerHTML = "";
   for (const line of g.how?.length ? g.how : [g.blurb]) { const li = document.createElement("li"); li.textContent = line; ul.appendChild(li); }
   const wrap = $("#howModes"); wrap.innerHTML = "";
-  for (const [label, live] of [["Solo · 1 player", true], ["Duo · 2 players", false], ["Group · 3 to 10 players", false]]) {
+  const duoLive = !!DUO[gameId];
+  for (const [label, live] of [["Solo · 1 player", true], [duoLive ? "Duo · 2 players, online" : "Duo · 2 players", duoLive], ["Group · 3 to 10 players", false]]) {
     const b = document.createElement("button"); b.type = "button"; b.className = "mode-chip";
     b.textContent = label; b.disabled = !live; b.setAttribute("aria-pressed", String(live));
     if (!live) b.title = "Coming with online play";
+    if (live && label.startsWith("Duo")) b.onclick = () => { closeSheet("howTo"); renderGames(); openSheet("games"); };
     wrap.appendChild(b);
   }
   openSheet("howTo");
 }
 const RACE_WAIT = 20000, RACE_MAX = 4 * 60000, RACE_STALE = 20000;
-const games = { boards: {}, v7: true, v8: true, v7Warned: false, ttt: [], c8: [], boardGame: null, race: null, play: null, tttId: null, cpu: null, cpuLevel: "easy", picking: false, timer: null, c8Id: null, c8View: null, c8cpu: null, c8pick: false, c8sel: null };
+const games = { boards: {}, v7: true, v8: true, v7Warned: false, ttt: [], c8: [], boardGame: null, race: null, play: null, tttId: null, cpu: null, cpuLevel: "easy", picking: false, timer: null, c8Id: null, c8View: null, c8cpu: null, c8pick: false, c8sel: null, watch: null };
 const colorOf = (id) => BRIGHT[memberById(id)?.color] || BRIGHT.c1;
 const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const fmtSecs = (ms) => `0:${pad2(Math.max(0, Math.ceil(ms / 1000)))}`;
@@ -4889,6 +4911,63 @@ function updateGamesDot() {
 }
 
 // ---------------------------------------------------------------- the game window
+// ---------------------------------------------------------------- race: send snapshots, watch other players
+let snapTimer = null, snapCanvas = null;
+function startSnaps() {
+  stopSnaps();
+  snapCanvas = document.createElement("canvas");
+  snapTimer = setInterval(sendSnap, 600);
+}
+function stopSnaps() { clearInterval(snapTimer); snapTimer = null; }
+function sendSnap() {
+  const p = games.play, r = games.race;
+  if (!p || p.mode !== "race" || !r || !r.joined || r.phase !== "run") return;
+  const mine = r.players.get(state.me.id); if (!mine || mine.over) return;
+  let src = null;
+  try {
+    const cvs = [...($("#gameFrame").contentDocument?.querySelectorAll("canvas") || [])];
+    src = cvs.sort((a, b) => b.width * b.height - a.width * a.height)[0];
+  } catch { return; }   // the game is not reachable: nothing to share
+  if (!src || !src.width || !snapCanvas) return;
+  const w = 240, h = Math.max(1, Math.round(w * src.height / src.width));
+  snapCanvas.width = w; snapCanvas.height = h;
+  snapCanvas.getContext("2d").drawImage(src, 0, 0, w, h);
+  raceSend("snap", { img: snapCanvas.toDataURL("image/jpeg", 0.5) });
+}
+function watchable() {
+  const r = games.race; if (!r) return [];
+  return [...r.players.values()].filter((p) => p.id !== state.me.id && p.snap).sort((a, b) => b.score - a.score);
+}
+function canWatch() { return !!games.race?.players.get(state.me.id)?.over; }
+function openWatch(id) {
+  games.watch = id;
+  $("#watchView").hidden = false; $("#gameFrame").style.visibility = "hidden";
+  setWatchImg(id);
+}
+function closeWatch() {
+  games.watch = null;
+  $("#watchView").hidden = true; $("#gameFrame").style.visibility = "";
+}
+function setWatchImg(id) {
+  const pl = games.race?.players.get(id); if (!pl) return;
+  $("#watchImg").src = pl.snap || "";
+  const tag = pl.over ? (pl.left ? " 👋" : " 💥") : "";
+  $("#watchName").textContent = `${memberById(id)?.name || "Friend"} · ${pl.score}${tag}`;
+  const list = watchable(), i = list.findIndex((p) => p.id === id);
+  $("#watchNote").textContent = list.length > 1 && i >= 0 ? `${i + 1} of ${list.length}` : "";
+}
+function watchStep(dir) {
+  const list = watchable(); if (!list.length) return;
+  const i = list.findIndex((p) => p.id === games.watch);
+  openWatch(list[(i + dir + list.length) % list.length].id);
+}
+// when you're out, show the best player still going
+function autoWatch() {
+  if (!games.play || games.play.mode !== "race" || !canWatch()) return;
+  const list = watchable();
+  if (list.length) openWatch(list[0].id);
+}
+
 function sendToGame(msg) {
   const f = $("#gameFrame");
   try { f.contentWindow?.postMessage({ pinned: 1, ...msg }, location.origin); } catch { /* frame gone */ }
@@ -4915,6 +4994,7 @@ function openGameOverlay(gameId, mode) {
 function closeGameOverlay(silent = false) {
   const p = games.play; if (!p) return;
   const r = games.race;
+  stopSnaps(); if (games.watch) closeWatch();
   if (p.mode === "race" && r && r.rid === p.rid && r.joined) {
     if (r.phase === "lobby") {
       r.players.delete(state.me.id); r.joined = false;
@@ -4962,11 +5042,14 @@ async function onGameOver(raw) {
     if (!r || r.rid !== p.rid || !r.joined) return;
     const mine = r.players.get(state.me.id);
     if (!mine || mine.over) return;           // one run per race
+    sendSnap();                                  // the last frame everyone sees
+    stopSnaps();
     Object.assign(mine, { over: true, alive: false, score, at: Date.now() });
     raceSend("over", { s: score });
     renderRaceChips();
     checkRaceDone();
     recordScore(p.game, score, "race", r.rid);
+    setTimeout(autoWatch, 900);
   } else {
     recordScore(p.game, score, "solo");
     $("#soloEndScore").textContent = `Score ${score}`;
@@ -5049,6 +5132,14 @@ function onRaceMsg(m) {
       }
       return;
     case "go": if (same && r.phase === "lobby") beginRace(m.players || []); return;
+    case "snap": {
+      if (!same) return;
+      const pl = r.players.get(m.u); if (!pl) return;
+      pl.snap = m.img;
+      if (games.watch === m.u) setWatchImg(m.u);
+      renderRaceChips();
+      return;
+    }
     case "st": {
       if (!same) return;
       const pl = r.players.get(m.u); if (!pl || pl.over) return;
@@ -5087,6 +5178,7 @@ function beginRace(ids) {
     el.hidden = true;
     r.phase = "run"; r.runAt = Date.now();
     for (const pl of r.players.values()) pl.at = Date.now();
+    startSnaps();
     if (games.play.ready) { sendToGame({ t: "go" }); $("#gameFrame").focus(); } else games.play.pendingGo = true;
     renderRaceChips();
   };
@@ -5187,6 +5279,7 @@ function renderRaceChips() {
     const c = mk("span", "rc" + (pl.over ? " out" : ""));
     const dot = mk("i"); dot.style.background = colorOf(pl.id); c.appendChild(dot);
     c.appendChild(document.createTextNode(`${pl.id === state.me.id ? "You" : (memberById(pl.id)?.name || "Friend")} ${pl.score}${pl.left ? " 👋" : pl.over ? " 💥" : ""}`));
+    if (pl.id !== state.me.id && pl.snap && canWatch()) { c.classList.add("watchable"); c.title = "Watch"; c.onclick = () => openWatch(pl.id); }
     box.appendChild(c);
   }
 }
@@ -5308,8 +5401,15 @@ function renderTttCard() {
 }
 
 // ---------------------------------------------------------------- play together (online, two players)
-const DUO = { connect4: { name: "Connect Four", icon: "🔴" } };
-let duoGames = [], duoOpenId = null;
+const DUO = {
+  connect4: { name: "Connect Four", icon: "🔴" },
+  dots: { name: "Dots and Boxes", icon: "⬛" },
+  reaction: { name: "Reaction Duel", icon: "🚦" },
+  hangman: { name: "Hangman", icon: "🔤" },
+};
+const REACTION_ROUNDS = 3, TOO_EARLY = 99999;
+let duoGames = [], duoOpenId = null, reactTimer = null;
+const reactStarted = new Set();
 
 async function loadDuo() {
   if (!state.board || isDemo) return;
@@ -5323,13 +5423,24 @@ function upsertDuo(row) {
   if (duoOpenId === row.id) renderDuo();
 }
 function duoNeedsDb(e) {
-  if (/duo_games|schema cache|does not exist|Could not find/i.test(e?.message || "")) toast("Play together needs upgrade-v17.sql in Supabase", 5000);
+  if (/duo_|schema cache|does not exist|Could not find/i.test(e?.message || "")) toast("Play together needs the latest database update (upgrade-v18.sql)", 5000);
   else toast(e?.message || "Something went wrong");
 }
+const countCh = (s, ch) => (s.split(ch).length - 1);
+const duoP = (t) => { const p = document.createElement("p"); p.className = "muted"; p.textContent = t; return p; };
+const duoLetter = (g, id) => (id === g.a_id ? "a" : "b");
+
 function duoStatusText(g) {
   const me = state.me.id, nm = (id) => (id === me ? "You" : (memberById(id)?.name || "They"));
   if (g.status === "invited") return g.b_id === me ? `${nm(g.a_id)} challenged you` : `Waiting for ${nm(g.b_id)} to accept`;
-  if (g.status === "active") return g.turn === me ? "Your move" : `${nm(g.turn)} to move`;
+  if (g.status === "active") {
+    if (g.game === "reaction") return `Round ${Math.max(1, g.state?.round || 0)} of ${REACTION_ROUNDS}`;
+    if (g.game === "hangman") {
+      if (g.turn === me) return me === g.a_id ? "Pick a secret word" : "Your guess";
+      return g.a_id === g.turn ? `${nm(g.turn)} is picking a word` : `${nm(g.turn)} is guessing`;
+    }
+    return g.turn === me ? "Your move" : `${nm(g.turn)} to move`;
+  }
   if (g.status === "done") return !g.winner ? "It's a draw 🤝" : g.winner === me ? "You won 🎉" : `${nm(g.winner)} won`;
   return g.status === "declined" ? "Passed" : "Cancelled";
 }
@@ -5341,8 +5452,8 @@ function onDuoEvent(row) {
   const me = state.me.id, opp = row.a_id === me ? row.b_id : row.a_id, name = memberById(opp)?.name || "Someone";
   const mine = row.a_id === me || row.b_id === me, label = DUO[row.game]?.name || "a game";
   if (mine && duoOpenId !== row.id) {
-    if (row.status === "invited" && row.b_id === me && !prev) toast(`🔴 ${name} challenged you to ${label}. Tap 🎮 Games.`, 5000);
-    else if (row.status === "active" && prev?.status === "invited" && row.a_id === me) toast(`${name} accepted! Your move.`, 4000);
+    if (row.status === "invited" && row.b_id === me && !prev) toast(`${DUO[row.game]?.icon || "🎲"} ${name} challenged you to ${label}. Tap 🎮 Games.`, 5000);
+    else if (row.status === "active" && prev?.status === "invited" && row.a_id === me) toast(`${name} accepted! Let's play ${label}.`, 4000);
     else if (row.status === "active" && row.turn === me && prev?.turn !== me) toast(`Your move in ${label}`, 3000);
   }
   renderGamesIfOpen();
@@ -5352,14 +5463,14 @@ function renderDuoCards(list) {
   const card = mk("div", "game-card");
   const top = mk("div", "gc-top");
   top.appendChild(mk("span", "gc-ic", "🤝"));
-  const t = mk("div"); t.appendChild(mk("b", null, "Play together")); t.appendChild(mk("small", null, "Online games with your partner, one move at a time."));
+  const t = mk("div"); t.appendChild(mk("b", null, "Play together")); t.appendChild(mk("small", null, "Online games with your partner."));
   top.appendChild(t); card.appendChild(top);
   const opp = partner();
   if (!opp) card.appendChild(mk("div", "gc-best", "Invite your partner to the board to play together."));
   else {
     const acts = mk("div", "gc-actions");
     for (const key of Object.keys(DUO)) {
-      const b = mk("button", "btn small primary", `${DUO[key].icon} Challenge`);
+      const b = mk("button", "btn small primary", `${DUO[key].icon} ${DUO[key].name}`);
       b.onclick = () => duoChallenge(key, opp.id);
       acts.appendChild(b);
     }
@@ -5382,9 +5493,29 @@ async function duoChallenge(game, oppId) {
 }
 
 function openDuo(id) { duoOpenId = id; closeSheet("games"); renderDuo(); openSheet("duo"); }
-function closeDuo() { closeSheet("duo"); duoOpenId = null; renderGames(); openSheet("games"); }
+function closeDuo() { clearTimeout(reactTimer); closeSheet("duo"); duoOpenId = null; renderGames(); openSheet("games"); }
 
-// Connect Four helpers. A board is 42 characters, top row first; '-' is empty, 'R' and 'Y' are discs.
+function renderDuo() {
+  const g = duoOf(duoOpenId); if (!g) return;
+  const me = state.me.id, info = DUO[g.game] || { name: "Game", icon: "🎲" }, mine = g.a_id === me || g.b_id === me;
+  $("#duoTitle").textContent = `${info.icon} ${info.name}`;
+  $("#duoStatus").textContent = duoStatusText(g);
+  const area = $("#duoGrid"); area.innerHTML = ""; area.className = g.game === "connect4" ? "c4-board" : "duo-area";
+  clearTimeout(reactTimer);
+  if (g.status === "active" || g.status === "done") {
+    if (g.game === "connect4") renderC4(g, area);
+    else if (g.game === "dots") renderDots(g, area);
+    else if (g.game === "reaction") renderReaction(g, area);
+    else if (g.game === "hangman") renderHangman(g, area);
+  }
+  const show = (id, on) => { $(id).hidden = !on; };
+  show("#duoAccept", g.status === "invited" && g.b_id === me);
+  show("#duoDecline", g.status === "invited" && g.b_id === me);
+  show("#duoQuit", g.status === "active" && mine);
+  show("#duoRematch", g.status === "done" && mine);
+}
+
+// ---- Connect Four
 function c4Drop(s, c, mark) {
   for (let r = 5; r >= 0; r--) { const i = r * 7 + c; if (s[i] === "-") return s.slice(0, i) + mark + s.slice(i + 1); }
   return null;
@@ -5397,32 +5528,17 @@ function c4Winner(s) {
   }
   return s.includes("-") ? null : "draw";
 }
-
-function renderDuo() {
-  const g = duoOf(duoOpenId); if (!g) return;
-  const me = state.me.id, info = DUO[g.game] || { name: "Game", icon: "🎲" };
-  const mine = g.a_id === me || g.b_id === me;
-  const myTurn = g.status === "active" && g.turn === me;
-  $("#duoTitle").textContent = `${info.icon} ${info.name}`;
-  $("#duoStatus").textContent = duoStatusText(g);
-  const cells = g.state?.b || "-".repeat(42);
-  const grid = $("#duoGrid"); grid.innerHTML = "";
+function renderC4(g, area) {
+  const me = state.me.id, cells = g.state?.b || "-".repeat(42), myTurn = g.status === "active" && g.turn === me;
   const mark = g.a_id === me ? "R" : "Y";
   for (let c = 0; c < 7; c++) {
     const col = document.createElement("button"); col.type = "button"; col.className = "c4-col";
-    col.setAttribute("aria-label", `Column ${c + 1}`);
-    col.disabled = !myTurn;
+    col.setAttribute("aria-label", `Column ${c + 1}`); col.disabled = !myTurn;
     for (let r = 0; r < 6; r++) { const cell = document.createElement("i"); cell.className = "c4-cell"; const v = cells[r * 7 + c]; if (v !== "-") cell.classList.add(v); col.appendChild(cell); }
     col.onclick = () => duoDrop(c, mark);
-    grid.appendChild(col);
+    area.appendChild(col);
   }
-  const show = (id, on) => { $(id).hidden = !on; };
-  show("#duoAccept", g.status === "invited" && g.b_id === me);
-  show("#duoDecline", g.status === "invited" && g.b_id === me);
-  show("#duoQuit", g.status === "active" && mine);
-  show("#duoRematch", g.status === "done" && mine);
 }
-
 async function duoDrop(c, mark) {
   const g = duoOf(duoOpenId); if (!g) return;
   const next = c4Drop(g.state?.b || "-".repeat(42), c, mark);
@@ -5437,6 +5553,181 @@ async function duoDrop(c, mark) {
   } catch (e) { duoNeedsDb(e); }
 }
 
+// ---- Dots and Boxes. h = 12 horizontal lines (4 rows x 3), v = 12 vertical lines (3 rows x 4), o = 9 boxes.
+// 'x' = line drawn, '-' = empty; boxes hold 'a', 'b' or '-'.
+function dotsDraw(s, type, idx, letter) {
+  const h = s.h.split(""), v = s.v.split(""), o = s.o.split("");
+  const arr = type === "h" ? h : v;
+  if (arr[idx] !== "-") return null;
+  arr[idx] = "x";
+  const boxes = type === "h"
+    ? [[Math.floor(idx / 3) - 1, idx % 3], [Math.floor(idx / 3), idx % 3]]
+    : [[Math.floor(idx / 4), idx % 4 - 1], [Math.floor(idx / 4), idx % 4]];
+  let done = 0;
+  for (const [r, c] of boxes) {
+    if (r < 0 || c < 0 || r > 2 || c > 2 || o[r * 3 + c] !== "-") continue;
+    if ([h[r * 3 + c], h[(r + 1) * 3 + c], v[r * 4 + c], v[r * 4 + c + 1]].every((x) => x === "x")) { o[r * 3 + c] = letter; done++; }
+  }
+  return { s: { h: h.join(""), v: v.join(""), o: o.join("") }, done };
+}
+function renderDots(g, area) {
+  const me = state.me.id, myTurn = g.status === "active" && g.turn === me;
+  const h = g.state?.h || "-".repeat(12), v = g.state?.v || "-".repeat(12), o = g.state?.o || "-".repeat(9);
+  const board = document.createElement("div"); board.className = "dots-board";
+  for (let R = 0; R < 7; R++) for (let C = 0; C < 7; C++) {
+    const cell = document.createElement("div"); cell.className = "dots-cell";
+    if (R % 2 === 0 && C % 2 === 0) cell.classList.add("dot");
+    else if (R % 2 === 0) {
+      const idx = (R / 2) * 3 + (C - 1) / 2, b = document.createElement("button");
+      b.type = "button"; b.className = "dl h" + (h[idx] === "x" ? " x" : "");
+      b.disabled = !myTurn || h[idx] !== "-"; b.setAttribute("aria-label", "Draw line");
+      b.onclick = () => duoDotsDraw("h", idx); cell.appendChild(b);
+    } else if (C % 2 === 0) {
+      const idx = ((R - 1) / 2) * 4 + C / 2, b = document.createElement("button");
+      b.type = "button"; b.className = "dl v" + (v[idx] === "x" ? " x" : "");
+      b.disabled = !myTurn || v[idx] !== "-"; b.setAttribute("aria-label", "Draw line");
+      b.onclick = () => duoDotsDraw("v", idx); cell.appendChild(b);
+    } else {
+      const idx = ((R - 1) / 2) * 3 + (C - 1) / 2;
+      cell.classList.add("bx"); if (o[idx] === "a") cell.classList.add("a"); else if (o[idx] === "b") cell.classList.add("b");
+    }
+    board.appendChild(cell);
+  }
+  area.appendChild(board);
+  const p = document.createElement("p"); p.className = "duo-score";
+  p.textContent = `${memberById(g.a_id)?.name || "Them"} ${countCh(o, "a")} – ${countCh(o, "b")} ${memberById(g.b_id)?.name || "Them"}`;
+  area.appendChild(p);
+}
+async function duoDotsDraw(type, idx) {
+  const g = duoOf(duoOpenId); if (!g) return;
+  const me = state.me.id, letter = duoLetter(g, me);
+  const cur = { h: g.state?.h || "-".repeat(12), v: g.state?.v || "-".repeat(12), o: g.state?.o || "-".repeat(9) };
+  const res = dotsDraw(cur, type, idx, letter); if (!res) return;
+  const o = res.s.o, full = !o.includes("-");
+  const aN = countCh(o, "a"), bN = countCh(o, "b");
+  const winner = !full ? null : aN > bN ? g.a_id : bN > aN ? g.b_id : null;
+  const other = me === g.a_id ? g.b_id : g.a_id;
+  try {
+    const row = await api.duoMove(g.id, res.s, res.done > 0 ? me : other, full, winner);
+    upsertDuo(row); api.notify(state.board.id, "duo", { game_id: g.id });
+    if (full && winner === me) rain("🎉", 10);
+  } catch (e) { duoNeedsDb(e); }
+}
+
+// ---- Reaction Duel: the host starts each round, both tap when the pad turns green
+function reactionRound(g, k) {
+  const a = g.state?.[`r${k}_${g.a_id}`], b = g.state?.[`r${k}_${g.b_id}`];
+  const done = a != null && b != null;
+  return { a, b, done, winner: !done || a === b ? null : a < b ? g.a_id : g.b_id };
+}
+function reactionWins(g) {
+  let aw = 0, bw = 0;
+  for (let k = 1; k <= (g.state?.round || 0); k++) { const r = reactionRound(g, k); if (r.winner === g.a_id) aw++; else if (r.winner === g.b_id) bw++; }
+  return { aw, bw };
+}
+function renderReaction(g, area) {
+  const me = state.me.id, k = g.state?.round || 0, isHost = me === g.a_id;
+  const wins = reactionWins(g);
+  const sb = document.createElement("p"); sb.className = "duo-score";
+  sb.textContent = `${memberById(g.a_id)?.name || "Them"} ${wins.aw} – ${wins.bw} ${memberById(g.b_id)?.name || "Them"}`;
+  area.appendChild(sb);
+  const pad = document.createElement("div"), status = duoP("");
+  area.appendChild(pad); area.appendChild(status);
+  if (g.status === "done") { pad.className = "duo-pad idle"; pad.textContent = "Final"; return; }
+  if (!k) {
+    pad.className = "duo-pad idle";
+    if (isHost) { pad.textContent = "Start round 1"; pad.onclick = () => reactionStart(1); }
+    else pad.textContent = "Waiting for them to start";
+    return;
+  }
+  const cur = reactionRound(g, k), goAt = g.state?.[`go${k}`], mine = g.state?.[`r${k}_${me}`];
+  if (mine != null) {
+    pad.className = "duo-pad idle"; pad.textContent = mine >= TOO_EARLY ? "Too early!" : `${mine} ms`;
+    status.textContent = cur.done ? (cur.winner ? `Round ${k}: ${cur.winner === me ? "you" : "they"} faster` : `Round ${k}: a tie`) : "Waiting for them…";
+  } else if (goAt == null) {
+    pad.className = "duo-pad idle"; pad.textContent = "Get ready…";
+  } else {
+    const now = Date.now();
+    if (now < goAt) { pad.className = "duo-pad wait"; pad.textContent = "Wait for green…"; reactTimer = setTimeout(renderDuo, goAt - now); }
+    else { pad.className = "duo-pad go"; pad.textContent = "TAP!"; }
+    pad.onpointerdown = (e) => { e.preventDefault(); reactionTap(k, goAt); };
+  }
+  if (isHost && cur.done) reactionNext(g, k);
+}
+async function reactionStart(k) {
+  const g = duoOf(duoOpenId); if (!g) return;
+  try {
+    await api.duoSet(g.id, "round", k);
+    const row = await api.duoSet(g.id, `go${k}`, Date.now() + 2000 + Math.floor(Math.random() * 2000));
+    upsertDuo(row); api.notify(state.board.id, "duo", { game_id: g.id });
+  } catch (e) { duoNeedsDb(e); }
+}
+async function reactionTap(k, goAt) {
+  const g = duoOf(duoOpenId); if (!g) return;
+  const me = state.me.id;
+  if (g.state?.[`r${k}_${me}`] != null) return;
+  const now = Date.now(), val = now < goAt ? TOO_EARLY : Math.round(now - goAt);
+  try { const row = await api.duoSet(g.id, `r${k}_${me}`, val); upsertDuo(row); api.notify(state.board.id, "duo", { game_id: g.id }); }
+  catch (e) { duoNeedsDb(e); }
+}
+function reactionNext(g, k) {
+  const key = `${g.id}:${k}`;
+  if (reactStarted.has(key)) return;
+  reactStarted.add(key);
+  if (k < REACTION_ROUNDS) { setTimeout(() => reactionStart(k + 1), 1500); return; }
+  const w = reactionWins(g), winner = w.aw > w.bw ? g.a_id : w.bw > w.aw ? g.b_id : null;
+  setTimeout(async () => {
+    try { const row = await api.duoFinish(g.id, winner); upsertDuo(row); api.notify(state.board.id, "duo", { game_id: g.id }); }
+    catch (e) { duoNeedsDb(e); }
+  }, 1500);
+}
+
+// ---- Hangman: the picker sets a word, the other person guesses letters
+function renderHangman(g, area) {
+  const me = state.me.id, isPicker = me === g.a_id, isGuesser = me === g.b_id, mask = g.state?.mask;
+  if (g.status === "active" && mask == null) {
+    if (isPicker) {
+      const form = document.createElement("form"); form.className = "list-add";
+      const inp = document.createElement("input"); inp.placeholder = "Secret word (3–12 letters)"; inp.maxLength = 12; inp.autocomplete = "off"; inp.autocapitalize = "characters";
+      const b = document.createElement("button"); b.type = "submit"; b.className = "btn small primary"; b.textContent = "Set word";
+      form.append(inp, b);
+      form.onsubmit = (e) => { e.preventDefault(); duoHangmanWord(inp.value); };
+      area.appendChild(form);
+      area.appendChild(duoP("They can't see the word. Pick one you both know."));
+    } else area.appendChild(duoP(`Waiting for ${memberById(g.a_id)?.name || "them"} to pick a word…`));
+    return;
+  }
+  const m = document.createElement("div"); m.className = "hm-mask"; m.textContent = (mask || "").split("").join(" ");
+  area.appendChild(m);
+  const guessed = g.state?.guessed || "", wrong = g.state?.wrong || 0;
+  area.appendChild(duoP(`Wrong guesses: ${wrong} of 6`));
+  const canGuess = g.status === "active" && g.turn === me && isGuesser;
+  const keys = document.createElement("div"); keys.className = "duo-keys";
+  for (const L of "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = L;
+    b.disabled = !canGuess || guessed.includes(L);
+    if (guessed.includes(L)) b.className = (mask || "").includes(L) ? "hit" : "miss";
+    b.onclick = () => duoHangmanGuess(L);
+    keys.appendChild(b);
+  }
+  area.appendChild(keys);
+  if (g.status === "done") area.appendChild(duoP(`The word was ${g.state?.word || ""}`));
+  else if (!canGuess) area.appendChild(duoP(isGuesser ? "Waiting…" : `${memberById(g.b_id)?.name || "They"} is guessing`));
+}
+async function duoHangmanWord(word) {
+  const g = duoOf(duoOpenId); if (!g) return;
+  try { const row = await api.duoHangmanWord(g.id, word); upsertDuo(row); api.notify(state.board.id, "duo", { game_id: g.id }); }
+  catch (e) { duoNeedsDb(e); }
+}
+async function duoHangmanGuess(letter) {
+  const g = duoOf(duoOpenId); if (!g) return;
+  try {
+    const row = await api.duoHangmanGuess(g.id, letter); upsertDuo(row); api.notify(state.board.id, "duo", { game_id: g.id });
+    if (row.status === "done" && row.winner === state.me.id) rain("🎉", 10);
+  } catch (e) { duoNeedsDb(e); }
+}
+
+// ---- answering, quitting, rematch
 async function duoRespondUi(accept) {
   const g = duoOf(duoOpenId); if (!g) return;
   try { const row = await api.duoRespond(g.id, accept); upsertDuo(row); api.notify(state.board.id, "duo", { game_id: g.id }); }
@@ -5449,8 +5740,7 @@ async function duoQuitUi() {
 }
 async function duoRematchUi() {
   const g = duoOf(duoOpenId); if (!g) return;
-  const other = state.me.id === g.a_id ? g.b_id : g.a_id;
-  await duoChallenge(g.game, other);
+  await duoChallenge(g.game, state.me.id === g.a_id ? g.b_id : g.a_id);
 }
 
 async function tttChallenge(oppId) {
@@ -6390,6 +6680,9 @@ function wireStatic() {
   $("#sbSolo").onclick = () => games.boardGame && openGameOverlay(games.boardGame, "solo");
   $("#sbRace").onclick = () => games.boardGame && startRace(games.boardGame);
   $("#gameExit").onclick = () => closeGameOverlay();
+  $("#watchPrev").onclick = () => watchStep(-1);
+  $("#watchNext").onclick = () => watchStep(1);
+  $("#watchBack").onclick = closeWatch;
   $("#duoClose").onclick = closeDuo;
   $("#duoAccept").onclick = () => duoRespondUi(true);
   $("#duoDecline").onclick = () => duoRespondUi(false);

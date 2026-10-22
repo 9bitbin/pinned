@@ -729,6 +729,16 @@
       <div class="go-chips" id="raceChips"></div>
     </div>
     <iframe id="gameFrame" title="Game" allow="autoplay; fullscreen"></iframe>
+    <div class="watch-view" id="watchView" hidden>
+      <img id="watchImg" alt="Player's game">
+      <div class="watch-bar">
+        <button class="iconbtn" id="watchPrev" aria-label="Previous player">‹</button>
+        <b id="watchName"></b>
+        <button class="iconbtn" id="watchNext" aria-label="Next player">›</button>
+      </div>
+      <p class="muted" id="watchNote"></p>
+      <button class="btn small" id="watchBack">Back</button>
+    </div>
     <div class="go-count" id="gameCount" hidden></div>
     <div class="go-panel" id="soloEnd" hidden>
       <div class="go-card">
