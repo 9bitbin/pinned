@@ -1068,3 +1068,40 @@ html.no-deco .room-system, html.no-deco #starCanvas { display: none !important; 
 .rs-row { display: flex; gap: 8px; }
 .rs-row input { flex: 1; min-width: 0; font: inherit; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--surface-ink); }
 .room-planet.has-photo { background-size: cover; background-position: center; }
+
+/* Feedback cycle, chat replies, email change */
+.fb-row .chip { font-size: 18px; }
+.fb-toolbar { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; font-weight: 700; color: var(--muted); padding: 8px 0 4px; }
+.fb-toolbar label { display: flex; align-items: center; gap: 6px; }
+.fb-toolbar input { font: inherit; padding: 6px 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--surface-ink); }
+.fb-list, .fb-posts { display: grid; gap: 10px; padding: 8px 0; align-content: start; }
+.fb-item, .fb-card { display: grid; gap: 6px; width: 100%; text-align: left; border: 0; font: inherit; color: var(--surface-ink); background: var(--surface); border-radius: 16px; padding: 12px; box-shadow: 0 6px 14px -10px rgba(0,0,0,.45); }
+.fb-item.unread { outline: 2px solid var(--accent, #d9531e); }
+.fb-card.fb-root { background: color-mix(in srgb, var(--surface) 92%, var(--accent, #d9531e) 8%); }
+.fb-card.deleted .fb-body, .fb-item.deleted .fb-title { opacity: .7; font-style: italic; }
+.fb-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fb-top > small { color: var(--muted); font-weight: 700; font-size: 11px; flex: none; }
+.fb-who { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.fb-who b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-mask { font-size: 16px; }
+.fb-title { font-size: 15px; overflow-wrap: anywhere; }
+.fb-meta { color: var(--muted); font-size: 12px; font-weight: 700; }
+.fb-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
+.fb-acts { display: flex; gap: 12px; }
+.fb-acts button { border: 0; background: transparent; color: var(--accent, #d9531e); font: inherit; font-weight: 800; font-size: 12px; padding: 2px 0; cursor: pointer; }
+.fb-new { display: grid; gap: 8px; padding: 8px 0; }
+.fb-new input, .fb-new textarea { font: inherit; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--surface-ink); }
+.fb-new textarea { resize: vertical; }
+.fb-note { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.fb-anon { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--muted); }
+.fb-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.fb-composer { display: grid; gap: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+.fb-foot { padding-top: 8px; }
+.fb-foot .btn, .fb-foot button { width: 100%; }
+.fb-thread-wrap { display: grid; gap: 8px; }
+.reply-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 700; color: var(--muted); padding: 6px 10px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 80%, transparent); }
+.reply-bar span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reply-bar button { border: 0; background: transparent; font: inherit; font-weight: 900; color: var(--muted); cursor: pointer; }
+.quote { font-size: 12px; font-weight: 700; opacity: .8; border-left: 3px solid currentColor; padding: 2px 8px; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-reply { display: block; margin-top: 4px; border: 0; background: transparent; font: inherit; font-size: 11px; font-weight: 800; opacity: .65; padding: 0; cursor: pointer; }
+.setting-row { display: flex; gap: 8px; }

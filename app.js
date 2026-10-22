@@ -60,7 +60,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v49";
+const APP_VERSION = "soy-v50";
 
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
@@ -298,6 +298,12 @@ function createSupabaseApi() {
 
     // reactions / replies / answers / check-ins (v2 database upgrade)
     async listReactions(boardId) { return must(await sb.from("reactions").select("note_id,user_id,emoji").eq("board_id", boardId)); },
+    async listFeedbackThreads() { return must(await sb.from("feedback_threads_v").select("*").order("created_at", { ascending: false }).limit(300)); },
+    async listFeedbackPosts() { return must(await sb.from("feedback_posts_v").select("*").order("created_at", { ascending: true }).limit(3000)); },
+    async newFeedbackThread(title, body, anonymous) { must(await sb.rpc("feedback_new_thread", { p_title: title, p_body: body, p_anonymous: anonymous })); },
+    async replyFeedback(thread, parent, body, anonymous) { must(await sb.rpc("feedback_reply", { p_thread: thread, p_parent: parent, p_body: body, p_anonymous: anonymous })); },
+    async deleteFeedback(kind, id) { must(await sb.rpc("feedback_delete", { p_kind: kind, p_id: id })); },
+    async reportFeedback(kind, id, reason) { must(await sb.rpc("feedback_report", { p_kind: kind, p_id: id, p_reason: reason })); },
     async listScores(boardId) { return must(await sb.from("board_scores").select("user_id,game,score,created_at").eq("board_id", boardId).order("score", { ascending: false }).limit(5000)); },
     async submitScore(boardId, game, score) { must(await sb.from("board_scores").insert({ board_id: boardId, user_id: myId(), game, score })); },
     async addReaction(r) { must(await sb.from("reactions").insert(r)); },
@@ -391,7 +397,7 @@ function createSupabaseApi() {
 // Demo backend: localStorage + BroadcastChannel. Each browser tab is its own "person".
 function createDemoApi() {
   const KEY = "soy-demo-db";
-  const blank = () => ({ profiles: {}, boards: {}, members: [], notes: [], media: {}, reactions: [], replies: [], answers: [], pings: [], strokes: [], messages: [], reads: [], bgreqs: [], scores: [], ttt: [], c8: [] });
+  const blank = () => ({ profiles: {}, boards: {}, members: [], notes: [], media: {}, reactions: [], replies: [], answers: [], pings: [], strokes: [], messages: [], reads: [], bgreqs: [], scores: [], ttt: [], c8: [], fb: { threads: [], posts: [], reports: [] } });
   const canSee = (m) => !m.to_id || m.sender_id === meId() || m.to_id === meId();
   const db = () => ({ ...blank(), ...ls.get(KEY, {}) });
   const save = (d) => ls.set(KEY, d);
@@ -546,6 +552,34 @@ function createDemoApi() {
       const path = `avatars/${meId()}-${Date.now()}.jpg`; const d = db(); d.media[path] = dataUrl; save(d); return path;
     },
     async listReactions(boardId) { return db().reactions.filter((r) => r.board_id === boardId); },
+    _fbShape(d, row, isPost) {
+      const author = d.profiles[row.author_id] || {};
+      const deleted = !!row.deleted_at;
+      return {
+        id: row.id, thread_id: isPost ? row.thread_id : undefined, parent_post_id: isPost ? (row.parent_post_id || null) : undefined,
+        title: !isPost && !deleted ? row.title : (isPost ? undefined : null),
+        body: deleted ? null : row.body, anonymous: !!row.anonymous, created_at: row.created_at, deleted_at: row.deleted_at || null,
+        author_name: row.anonymous ? null : (author.name || "Someone"), author_avatar: row.anonymous ? null : (author.avatar_path || null),
+        is_mine: row.author_id === meId(),
+        reply_count: isPost ? undefined : d.fb.posts.filter((p) => p.thread_id === row.id && !p.deleted_at).length,
+      };
+    },
+    async listFeedbackThreads() { const d = db(); return d.fb.threads.map((t) => this._fbShape(d, t, false)).sort((a, b) => b.created_at.localeCompare(a.created_at)); },
+    async listFeedbackPosts() { const d = db(); return d.fb.posts.map((p) => this._fbShape(d, p, true)).sort((a, b) => a.created_at.localeCompare(b.created_at)); },
+    async newFeedbackThread(title, body, anonymous) { const d = db(); d.fb.threads.push({ id: uid(), author_id: meId(), title: title.trim().slice(0, 80), body: body.trim().slice(0, 2000), anonymous: !!anonymous, created_at: new Date().toISOString(), deleted_at: null }); save(d); },
+    async replyFeedback(thread, parent, body, anonymous) {
+      const d = db();
+      const t = d.fb.threads.find((x) => x.id === thread); if (!t || t.deleted_at) throw new Error("That thread was deleted");
+      if (parent && !d.fb.posts.some((p) => p.id === parent && p.thread_id === thread && !p.deleted_at)) throw new Error("That reply was deleted");
+      d.fb.posts.push({ id: uid(), thread_id: thread, parent_post_id: parent || null, author_id: meId(), body: body.trim().slice(0, 2000), anonymous: !!anonymous, created_at: new Date().toISOString(), deleted_at: null }); save(d);
+    },
+    async deleteFeedback(kind, id) {
+      const d = db(); const list = kind === "thread" ? d.fb.threads : d.fb.posts;
+      const row = list.find((x) => x.id === id && x.author_id === meId() && !x.deleted_at);
+      if (!row) throw new Error("You can only delete your own posts");
+      row.deleted_at = new Date().toISOString(); save(d);
+    },
+    async reportFeedback(kind, id, reason) { const d = db(); d.fb.reports.push({ id: uid(), kind, target_id: id, reporter_id: meId(), reason: reason.slice(0, 200), created_at: new Date().toISOString() }); save(d); },
     async listScores(boardId) { return db().scores.filter((s) => s.board_id === boardId).map((s) => ({ user_id: s.user_id, game: s.game, score: s.score, created_at: s.created_at })); },
     async submitScore(boardId, game, score) { const d = db(); d.scores.push({ id: uid(), board_id: boardId, user_id: meId(), game, score, created_at: new Date().toISOString() }); save(d); },
     async addReaction(r) { const d = db(); d.reactions.push(r); save(d); emit({ type: "reaction", row: r, del: false }); },
@@ -1116,6 +1150,7 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v50", date: "2026-10-22", title: "Feedback cycle, replies and email change", items: ["Feedback cycle in Messages: one shared space for everyone across all rooms, with threads and replies", "Post feedback as yourself or anonymously. Anonymous hides your name from other users", "Reply to chat messages, with the original quoted", "Report a post, or delete your own", "Export feedback as a CSV from the Feedback cycle screen", "Change your sign-in email from Account"] },
   { v: "soy-v49", date: "2026-10-22", title: "Rooms get names, photos and locks", items: ["Rename your room and add a room photo. Both show on the room list and at the top of the board, and update live", "Lock a room to stop new people joining with the code. Existing members are never locked out", "Room cards show the lock and the room code"] },
   { v: "soy-v48", date: "2026-10-22", title: "Scores tab", items: ["Scores tab in Games: each game's best run per person, with a podium for the top three", "Game scores are saved to the board and update every 15 seconds", "Quick Draw now reports its score too"] },
   { v: "soy-v47", date: "2026-10-22", title: "Games are back", items: ["Games button in the bottom bar, with 11 single-player games", "Bottom bar is centred; the + button moved into the right-hand tools column"] },
@@ -4234,6 +4269,7 @@ async function loadChats() {
     updateChatDot();
     if (!$("#chats").hidden) chat.peer ? renderThread() : renderThreadList();
   } catch { /* messages arrive with upgrade-v6.sql */ }
+  loadFeedback(false);
 }
 async function refreshReads() {
   if (!state.board) return;
@@ -4251,11 +4287,199 @@ function unreadIn(peer) {
 
 function updateChatDot() {
   const peers = new Set(state.msgs.map(threadOf));
-  $("#chatDot").hidden = ![...peers].some((p) => unreadIn(p) > 0);
+  $("#chatDot").hidden = !([...peers].some((p) => unreadIn(p) > 0) || feedbackUnread() > 0);
+}
+
+// ---------------------------------------------------------------- reply bar (chat)
+function updateReplyBar() {
+  const bar = $("#replyBar"); if (!bar) return;
+  const par = chat.replyTo ? state.msgs.find((x) => x.id === chat.replyTo) : null;
+  bar.hidden = !chat.replyTo;
+  if (chat.replyTo) $("#replyBarText").textContent = `Replying to ${par ? (par.sender_id === state.me.id ? "yourself" : memberById(par.sender_id)?.name || "someone") : "a message"}${par && par.body ? ": " + par.body.slice(0, 60) : ""}`;
+}
+
+// ---------------------------------------------------------------- Feedback cycle (shared across all rooms)
+const fb = { threads: [], posts: [], open: null, replyTo: null, view: "list", loaded: false, warned: false };
+const FB_SEEN_KEY = "pinned.feedback.seen";
+function fbSeen() { try { return localStorage.getItem(FB_SEEN_KEY) || ""; } catch { return ""; } }
+function fbMarkSeen() {
+  const latest = [...fb.threads, ...fb.posts].reduce((a, x) => (x.created_at > a ? x.created_at : a), "");
+  try { localStorage.setItem(FB_SEEN_KEY, latest || new Date().toISOString()); } catch { /* storage blocked */ }
+}
+function feedbackUnread() {
+  const seen = fbSeen();
+  return [...fb.threads, ...fb.posts].filter((x) => !x.is_mine && x.created_at > seen).length;
+}
+async function loadFeedback(render = true) {
+  if (!state.me) return;
+  try {
+    const [t, p] = await Promise.all([api.listFeedbackThreads(), api.listFeedbackPosts()]);
+    fb.threads = t; fb.posts = p; fb.loaded = true;
+    try { await ensureAvatars([...t, ...p].map((x) => ({ avatar_path: x.author_avatar }))); } catch { /* pictures are optional */ }
+    if (!fbSeen()) fbMarkSeen();
+  } catch (e) {
+    if (!fb.warned && /relation|schema cache|does not exist/i.test(e.message || "")) { fb.warned = true; toast("Feedback needs upgrade-v21.sql in Supabase", 5000); }
+  }
+  if (render) { renderFeedback(); if (!$("#chats").hidden && !$("#chatList").hidden) renderThreadList(); }
+  updateChatDot();
+}
+function feedbackRowEl() {
+  const li = document.createElement("li"); li.className = "fb-row";
+  const chip = document.createElement("span"); chip.className = "chip group"; chip.textContent = "📣";
+  const info = document.createElement("div"); info.className = "tinfo";
+  const nm = document.createElement("div"); nm.className = "tname"; const b = document.createElement("span"); b.textContent = "Feedback cycle"; nm.appendChild(b);
+  const lt = document.createElement("div"); lt.className = "tlast";
+  const live = fb.threads.filter((t) => !t.deleted_at).length;
+  lt.textContent = `All rooms · ${live} thread${live === 1 ? "" : "s"}`;
+  info.append(nm, lt); li.append(chip, info);
+  const n = feedbackUnread();
+  li.classList.toggle("unread", n > 0);
+  if (n) { const d = document.createElement("i"); d.className = "udot"; li.appendChild(d); }
+  li.onclick = openFeedback;
+  return li;
+}
+function fbWho(item) {
+  const w = el("span", "fb-who");
+  if (item.anonymous) { w.append(el("span", "fb-mask", "🎭"), el("b", null, "Anonymous")); return w; }
+  const url = item.author_avatar && state.urls[item.author_avatar];
+  const av = el("span", "sc-av"); av.style.background = "#ffe066";
+  if (url) av.style.backgroundImage = `url("${url.replace(/"/g, "%22")}")`; else av.textContent = (item.author_name || "?").slice(0, 1).toUpperCase();
+  w.append(av, el("b", null, item.author_name || "Someone"));
+  return w;
+}
+function openFeedback() {
+  $("#chatList").hidden = true; $("#chatThread").hidden = true; $("#feedbackView").hidden = false;
+  fb.open = null; fb.replyTo = null; fb.view = "list";
+  renderFeedback();
+  loadFeedback(true).then(() => { fbMarkSeen(); updateChatDot(); });
+}
+function closeFeedback() {
+  fb.open = null; fb.view = "list"; $("#feedbackView").hidden = true; $("#chatList").hidden = false;
+  renderThreadList();
+}
+function fbBack() {
+  if (fb.view === "new") { fb.view = "list"; return renderFeedback(); }
+  if (fb.open) { fb.open = null; fb.replyTo = null; return renderFeedback(); }
+  closeFeedback();
+}
+function renderFeedback() {
+  const v = $("#feedbackView"); if (v.hidden) return;
+  if (fb.open) return renderFbThread();
+  $("#fbTitle").textContent = "Feedback cycle";
+  const live = fb.threads.filter((t) => !t.deleted_at).length;
+  $("#fbSub").textContent = `All rooms · ${live} thread${live === 1 ? "" : "s"}`;
+  $("#fbThreadWrap").hidden = true;
+  $("#fbToolbar").hidden = false;
+  $("#fbExport").hidden = false;
+  $("#fbNew").hidden = fb.view !== "new";
+  $("#fbList").hidden = fb.view === "new";
+  $("#fbNewBtn").hidden = fb.view === "new";
+  const list = $("#fbList"); list.innerHTML = "";
+  if (!fb.threads.length) list.appendChild(el("p", "sc-empty", fb.loaded ? "No threads yet. Start the first one below." : "Loading…"));
+  const seen = fbSeen();
+  for (const t of fb.threads) {
+    const b = el("button", "fb-item");
+    if (t.deleted_at) b.classList.add("deleted");
+    if (!t.is_mine && t.created_at > seen) b.classList.add("unread");
+    const top = el("div", "fb-top"); top.append(fbWho(t), el("small", null, timeAgo(t.created_at)));
+    const n = t.reply_count || 0;
+    b.append(top, el("b", "fb-title", t.deleted_at ? "This post was deleted" : t.title), el("span", "fb-meta", `${n} repl${n === 1 ? "y" : "ies"}`));
+    b.onclick = () => { fb.open = t.id; fb.replyTo = null; renderFeedback(); };
+    list.appendChild(b);
+  }
+}
+function renderFbThread() {
+  const t = fb.threads.find((x) => x.id === fb.open);
+  if (!t) { fb.open = null; return renderFeedback(); }
+  $("#fbList").hidden = true; $("#fbNew").hidden = true; $("#fbNewBtn").hidden = true; $("#fbToolbar").hidden = true; $("#fbExport").hidden = true;
+  $("#fbThreadWrap").hidden = false;
+  $("#fbTitle").textContent = t.deleted_at ? "Deleted thread" : t.title;
+  $("#fbSub").textContent = t.anonymous ? "Anonymous thread" : `Started by ${t.author_name || "someone"}`;
+  const box = $("#fbPosts"); box.innerHTML = "";
+  box.appendChild(fbCard(t, true));
+  const replies = fb.posts.filter((p) => p.thread_id === t.id);
+  if (!replies.length) box.appendChild(el("p", "msg-time", "No replies yet. Be the first."));
+  for (const p of replies) box.appendChild(fbCard(p, false));
+  fbUpdateReplyBar();
+  box.scrollTop = 0;
+}
+function fbCard(item, isThread) {
+  const card = el("div", "fb-card" + (isThread ? " fb-root" : "") + (item.deleted_at ? " deleted" : ""));
+  const head = el("div", "fb-top"); head.append(fbWho(item), el("small", null, timeAgo(item.created_at)));
+  card.appendChild(head);
+  if (isThread && !item.deleted_at) card.appendChild(el("b", "fb-title", item.title));
+  card.appendChild(el("p", "fb-body", item.deleted_at ? "This post was deleted" : item.body));
+  if (!item.deleted_at) {
+    const acts = el("div", "fb-acts");
+    const reply = el("button", null, "Reply"); reply.type = "button";
+    reply.onclick = () => { fb.replyTo = isThread ? null : item.id; fbUpdateReplyBar(); $("#fbReplyInput").focus(); };
+    acts.appendChild(reply);
+    if (item.is_mine) { const del = el("button", null, "Delete"); del.type = "button"; del.onclick = () => fbDelete(isThread ? "thread" : "post", item.id); acts.appendChild(del); }
+    else { const rep = el("button", null, "Report"); rep.type = "button"; rep.onclick = () => fbReport(isThread ? "thread" : "post", item.id); acts.appendChild(rep); }
+    card.appendChild(acts);
+  }
+  return card;
+}
+function fbUpdateReplyBar() {
+  const par = fb.replyTo ? fb.posts.find((p) => p.id === fb.replyTo) : null;
+  $("#fbReplyBar").hidden = false;
+  $("#fbReplyBar").hidden = !fb.replyTo;
+  if (fb.replyTo) $("#fbReplyText").textContent = `Replying to ${par ? (par.anonymous ? "Anonymous" : par.author_name || "someone") : "a reply"}`;
+}
+async function fbSend() {
+  const body = $("#fbReplyInput").value.trim(); if (!body || !fb.open) return;
+  const btn = $("#fbReplySend"); busy(btn, true, "…");
+  try {
+    await api.replyFeedback(fb.open, fb.replyTo, body, $("#fbReplyAnon").checked);
+    $("#fbReplyInput").value = ""; fb.replyTo = null;
+    haptic(10);
+    await loadFeedback(true);
+  } catch (e) { toast(e.message || "Couldn't post that", 5000); }
+  busy(btn, false);
+}
+async function fbPostNew() {
+  const title = $("#fbNewTitle").value.trim(), body = $("#fbNewBody").value.trim();
+  if (!title || !body) return toast("Add a title and a message first");
+  const btn = $("#fbNewPost"); busy(btn, true, "Posting…");
+  try {
+    await api.newFeedbackThread(title, body, $("#fbNewAnon").checked);
+    $("#fbNewTitle").value = ""; $("#fbNewBody").value = ""; $("#fbNewAnon").checked = false;
+    fb.view = "list"; haptic(10);
+    await loadFeedback(true); toast("Posted to Feedback cycle");
+  } catch (e) { toast(e.message || "Couldn't post that", 5000); }
+  busy(btn, false);
+}
+async function fbDelete(kind, id) {
+  if (!confirm("Delete this? Others will see that it was deleted.")) return;
+  try { await api.deleteFeedback(kind, id); toast("Deleted"); await loadFeedback(true); }
+  catch (e) { toast(e.message || "Couldn't delete that", 5000); }
+}
+async function fbReport(kind, id) {
+  const reason = prompt("Why are you reporting this? (short)");
+  if (!reason || !reason.trim()) return;
+  try { await api.reportFeedback(kind, id, reason.trim().slice(0, 200)); toast("Thanks, we'll look at it"); }
+  catch (e) { toast(e.message || "Couldn't send the report", 5000); }
+}
+function fbCsvCell(v) { const s = v == null ? "" : String(v); return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }
+function fbExportCsv() {
+  const from = $("#fbFrom").value, to = $("#fbTo").value;
+  const inRange = (iso) => { const d = (iso || "").slice(0, 10); return (!from || d >= from) && (!to || d <= to); };
+  const titleOf = new Map(fb.threads.map((t) => [t.id, t.title]));
+  const author = (x) => (x.anonymous ? "Anonymous" : x.author_name || "");
+  const rows = [["type", "thread_title", "body", "posted_at", "author", "reply_to_id"]];
+  for (const t of fb.threads) if (!t.deleted_at && inRange(t.created_at)) rows.push(["thread", t.title, t.body, t.created_at, author(t), ""]);
+  for (const p of fb.posts) if (!p.deleted_at && inRange(p.created_at)) rows.push(["reply", titleOf.get(p.thread_id) || "", p.body, p.created_at, author(p), p.parent_post_id || ""]);
+  const csv = "﻿" + rows.map((r) => r.map(fbCsvCell).join(",")).join("\r\n") + "\r\n";
+  const a = document.createElement("a");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  a.href = url; a.download = `pinned-feedback-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  toast(`Exported ${rows.length - 1} row${rows.length === 2 ? "" : "s"}`);
 }
 
 function openChats() {
-  chat.peer = null;
+  chat.peer = null; $("#feedbackView").hidden = true; chat.replyTo = null; updateReplyBar();
   $("#chatList").hidden = false; $("#chatThread").hidden = true;
   renderThreadList();
   openSheet("chats");
@@ -4263,6 +4487,7 @@ function openChats() {
 
 function renderThreadList() {
   const ul = $("#threadList"); ul.innerHTML = "";
+  ul.appendChild(feedbackRowEl());
   const rows = [{ peer: "group", name: "Everyone", sub: `${state.members.length} people` },
     ...others().map((m) => ({ peer: m.id, name: m.name, m }))];
   const lastOf = (p) => { const list = state.msgs.filter((x) => threadOf(x) === p); return list[list.length - 1]; };
@@ -4289,7 +4514,7 @@ function renderThreadList() {
 }
 
 function openThread(peer) {
-  chat.peer = peer;
+  chat.peer = peer; chat.replyTo = null; updateReplyBar();
   $("#chatList").hidden = true; $("#chatThread").hidden = false;
   const m = memberById(peer);
   $("#threadName").textContent = peer === "group" ? "Everyone" : m?.name || "Chat";
@@ -4316,8 +4541,19 @@ function renderThread() {
     const el = document.createElement("div");
     el.className = "msg" + (m.sender_id === state.me.id ? " mine" : "") + (m._pending ? " pending" : "");
     if (chat.peer === "group" && m.sender_id !== state.me.id) { const by = document.createElement("span"); by.className = "by"; by.textContent = memberById(m.sender_id)?.name || "Someone"; el.appendChild(by); }
+    if (m.reply_to) {
+      const par = state.msgs.find((x) => x.id === m.reply_to);
+      const q = document.createElement("div"); q.className = "quote";
+      q.textContent = par ? `${par.sender_id === state.me.id ? "You" : memberById(par.sender_id)?.name || "Someone"}: ${(par.body || "📷 Photo").slice(0, 80)}` : "Original message";
+      el.appendChild(q);
+    }
     if (m.media_path) { const img = document.createElement("img"); img.alt = "Photo"; img.src = state.urls[m.media_path] || ""; el.appendChild(img); }
     if (m.body) el.appendChild(document.createTextNode(m.body));
+    if (!m._pending) {
+      const rb = document.createElement("button"); rb.type = "button"; rb.className = "msg-reply"; rb.textContent = "↩ Reply";
+      rb.onclick = (e) => { e.stopPropagation(); chat.replyTo = m.id; updateReplyBar(); $("#msgInput").focus(); };
+      el.appendChild(rb);
+    }
     box.appendChild(el);
   }
   // read receipt under your last message
@@ -4351,19 +4587,20 @@ async function sendChat(photo = null) {
   const peer = chat.peer; if (!peer) return;
   const btn = $("#msgSend"); busy(btn, true, "…");
   try {
-    const row = { board_id: state.board.id, sender_id: state.me.id, to_id: peer === "group" ? null : peer, body: body || null };
+    const row = { board_id: state.board.id, sender_id: state.me.id, to_id: peer === "group" ? null : peer, body: body || null, ...(chat.replyTo ? { reply_to: chat.replyTo } : {}) };
     if (photo) {
       row.media_path = await api.uploadMedia(state.board.id, photo, "jpg");
       state.urls[row.media_path] = URL.createObjectURL(photo);
     }
     const saved = await api.sendMessage(row);
     $("#msgInput").value = "";
+    chat.replyTo = null; updateReplyBar();
     haptic(10);
     onMessageEvent(saved);
     api.notify(state.board.id, "message", peer === "group" ? {} : { to: peer });
   } catch (e) {
     console.warn(e);
-    const row = { board_id: state.board.id, sender_id: state.me.id, to_id: peer === "group" ? null : peer, body: body || null };
+    const row = { board_id: state.board.id, sender_id: state.me.id, to_id: peer === "group" ? null : peer, body: body || null, ...(chat.replyTo ? { reply_to: chat.replyTo } : {}) };
     if (isNetworkError(e) && !photo && body) {
       const tempId = uid();
       $("#msgInput").value = "";
@@ -4964,13 +5201,13 @@ function renderMutes() {
 }
 
 async function renderAccount() {
-  const st = $("#acctStatus"), row = $("#acctLinkRow"), out = $("#logoutBtn");
-  st.textContent = "…"; row.hidden = true; out.hidden = true;
+  const st = $("#acctStatus"), row = $("#acctLinkRow"), out = $("#logoutBtn"), chg = $("#acctChangeOpen"), crow = $("#acctChangeRow");
+  st.textContent = "…"; row.hidden = true; out.hidden = true; chg.hidden = true; crow.hidden = true;
   try {
     const a = await api.account();
-    if (a.pending) { st.textContent = `Check ${a.pending} and tap the link to finish adding your email.`; row.hidden = false; }
-    else if (a.anonymous) { st.textContent = "No email yet. Add one so you can sign back in on a new phone."; row.hidden = false; }
-    else { st.textContent = `Signed in as ${a.email}`; out.hidden = false; }
+    if (a.pending) { st.textContent = `Check ${a.pending} and tap the link to finish updating your email.`; row.hidden = false; $("#acctEmail").value = a.pending; $("#acctLinkBtn").textContent = "Resend link"; }
+    else if (a.anonymous) { st.textContent = "No email yet. Add one so you can sign back in on a new phone."; row.hidden = false; $("#acctLinkBtn").textContent = "Add email"; }
+    else { st.textContent = `Signed in as ${a.email}`; out.hidden = false; chg.hidden = false; }
   } catch { st.textContent = ""; }
 }
 
@@ -4980,6 +5217,19 @@ async function onLinkEmail() {
   const btn = $("#acctLinkBtn"); busy(btn, true, "Sending…");
   try { await api.linkEmail(email); toast("Check your email and tap the link"); renderAccount(); }
   catch (e) { toast(e.message, 5000); }
+  busy(btn, false);
+}
+
+async function onChangeEmail() {
+  const email = $("#acctNewEmail").value.trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast("That email doesn't look right");
+  const btn = $("#acctChangeBtn"); busy(btn, true, "Sending…");
+  try {
+    await api.linkEmail(email);
+    $("#acctNewEmail").value = ""; $("#acctChangeRow").hidden = true;
+    toast("Check the new email and tap the link to confirm");
+    renderAccount();
+  } catch (e) { toast(e.message, 5000); }
   busy(btn, false);
 }
 
@@ -5331,6 +5581,20 @@ function wireStatic() {
   syncBoardUI();
   $("#memberChips").onclick = openPeople;
   $("#dockChats").onclick = openChats;
+  $("#fbBack").onclick = fbBack;
+  $("#fbExport").onclick = fbExportCsv;
+  $("#fbNewBtn").onclick = () => { fb.view = "new"; renderFeedback(); $("#fbNewTitle").focus(); };
+  $("#fbNewCancel").onclick = () => { fb.view = "list"; renderFeedback(); };
+  $("#fbNewPost").onclick = fbPostNew;
+  $("#fbReplySend").onclick = fbSend;
+  $("#fbReplyInput").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); fbSend(); } });
+  $("#fbReplyX").onclick = () => { fb.replyTo = null; fbUpdateReplyBar(); };
+  $("#fbFrom").onchange = () => {}; $("#fbTo").onchange = () => {};
+  $("#replyBarX").onclick = () => { chat.replyTo = null; updateReplyBar(); };
+  $("#acctChangeOpen").onclick = () => { $("#acctChangeRow").hidden = false; $("#acctChangeOpen").hidden = true; $("#acctNewEmail").focus(); };
+  $("#acctChangeBtn").onclick = onChangeEmail;
+  // feedback is shared, so refresh it on a timer while the app is open
+  setInterval(() => { if (state.me && !document.hidden) loadFeedback(true); }, 15000);
   // Phase 3: five-item dock. Check in and Today live behind More (their hidden originals keep their handlers).
   $("#dockNotes").onclick = () => { document.querySelectorAll(".sheet").forEach((el) => { if (!el.hidden && $("#" + el.id + "Backdrop")) closeSheet(el.id); }); };
   $("#dockMore").onclick = () => openSheet("more");

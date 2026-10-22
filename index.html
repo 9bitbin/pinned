@@ -540,6 +540,11 @@
         <input id="acctEmail" type="email" inputmode="email" autocomplete="email" autocapitalize="off" placeholder="you@example.com">
         <button class="btn small" id="acctLinkBtn">Add email</button>
       </div>
+      <div class="setting-row" id="acctChangeRow" hidden>
+        <input id="acctNewEmail" type="email" inputmode="email" autocomplete="email" autocapitalize="off" placeholder="new@example.com">
+        <button class="btn small" id="acctChangeBtn">Send link</button>
+      </div>
+      <button class="btn small" id="acctChangeOpen" hidden>Change email</button>
       <button class="btn small danger" id="logoutBtn" hidden>Log out of this phone</button>
       <p class="small-note privacy-link"><a href="privacy.html">Privacy and your data</a></p>
       </div>
@@ -653,6 +658,7 @@
         <button class="iconbtn" id="chatBack" aria-label="Back">‹</button>
         <div><b id="threadName"></b><small id="threadSub"></small></div>
       </div>
+      <div class="reply-bar" id="replyBar" hidden><span id="replyBarText"></span><button id="replyBarX" aria-label="Cancel reply">✕</button></div>
       <div class="msgs" id="msgList"></div>
       <p class="typing" id="threadTyping" hidden></p>
       <div class="msg-box">
@@ -661,6 +667,34 @@
         <input id="msgInput" maxlength="2000" placeholder="Message…" autocomplete="off">
         <button class="btn small primary" id="msgSend">Send</button>
       </div>
+    </div>
+    <div id="feedbackView" hidden>
+      <div class="thread-head">
+        <button class="iconbtn" id="fbBack" aria-label="Back">‹</button>
+        <div><b id="fbTitle">Feedback cycle</b><small id="fbSub">All rooms</small></div>
+        <button class="btn small" id="fbExport">Export CSV</button>
+      </div>
+      <div class="fb-toolbar" id="fbToolbar">
+        <label>From <input type="date" id="fbFrom"></label>
+        <label>To <input type="date" id="fbTo"></label>
+      </div>
+      <div class="fb-list" id="fbList"></div>
+      <div class="fb-new" id="fbNew" hidden>
+        <input id="fbNewTitle" maxlength="80" placeholder="Title" autocomplete="off">
+        <textarea id="fbNewBody" maxlength="2000" rows="4" placeholder="What's on your mind?"></textarea>
+        <label class="fb-anon"><input type="checkbox" id="fbNewAnon"> Post anonymously</label>
+        <small class="fb-note">Anonymous hides your name from other users. The app still records who posted so posts can be removed if they break the rules.</small>
+        <div class="fb-actions"><button class="btn small" id="fbNewCancel">Cancel</button><button class="btn small primary" id="fbNewPost">Post</button></div>
+      </div>
+      <div class="fb-thread-wrap" id="fbThreadWrap" hidden>
+        <div class="fb-posts" id="fbPosts"></div>
+        <div class="reply-bar" id="fbReplyBar" hidden><span id="fbReplyText"></span><button id="fbReplyX" aria-label="Cancel reply">✕</button></div>
+        <div class="fb-composer">
+          <label class="fb-anon"><input type="checkbox" id="fbReplyAnon"> Post anonymously</label>
+          <div class="msg-box"><input id="fbReplyInput" maxlength="2000" placeholder="Reply…" autocomplete="off"><button class="btn small primary" id="fbReplySend">Send</button></div>
+        </div>
+      </div>
+      <div class="fb-foot"><button class="btn primary" id="fbNewBtn">New thread</button></div>
     </div>
     <div class="sheet-actions"><button class="btn" id="chatsClose">Close</button></div>
   </section>
