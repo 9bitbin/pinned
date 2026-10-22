@@ -63,7 +63,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v42";
+const APP_VERSION = "soy-v43";
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
 let hapticsOn;
@@ -1240,6 +1240,9 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v43", date: "2026-10-21", title: "Games cleanup", items: [
+    "Removed Pin Drop and Hop. Their past scores are kept",
+  ] },
   { v: "soy-v42", date: "2026-10-21", title: "Watch other players in races", items: [
     "When you're out of a race, you automatically watch the best player still going",
     "Tap the arrows to watch the other players, or tap a name in the race bar",
@@ -4721,8 +4724,6 @@ function openSettings() {
 // ================================================================ games (Phase 3)
 const GAME_LIST = [
   { id: "kestrel", name: "Neon Kestrel", icon: "🦅", file: "games/neon-kestrel.html", blurb: "Himal's synthwave flyer. Tap to flap through the neon towers.", how: ["Tap, click or press Space to flap upward.", "Gravity pulls you down, so keep tapping to hold the line.", "Collect the stars ★ for points.", "Don't touch the neon towers."] },
-  { id: "pindrop", name: "Pin Drop", icon: "📌", file: "games/pin-drop.html", blurb: "Drop the swinging pin on a sliding bullseye. 10 drops.", how: ["Tap to drop the swinging pin onto the sliding bullseye.", "You get 10 drops.", "The closer to the centre, the more points."] },
-  { id: "hop", name: "Hop", icon: "🌙", file: "games/hop.html", blurb: "Hop stone to stone across the misty lake. Race on the same stones.", how: ["Hold to charge a jump. The meter swings back and forth.", "Release on the gold tick to land on the glowing stone.", "Perfect landings build a combo.", "Every stone +1, perfect +2, a firefly on a stone +1."] },
   { id: "plane", name: "Paper Plane", icon: "✈️", file: "games/paper-plane.html", blurb: "Hold to climb, let go to dive. Dodge pins, grab hearts.", how: ["Hold anywhere to climb. Let go to dive.", "Slip through the pin boards.", "Grab hearts ❤️ for points.", "Don't touch a pin or the desk."] },
   { id: "blocks", name: "Block Drop", icon: "🟦", file: "games/block-drop.html", blurb: "Stack falling blocks and clear lines. A race gets the same pieces.", how: ["Move falling blocks left and right, rotate them, and drop them into place.", "Fill a whole row to clear it. Four lines at once is a Quad.", "Keyboard: ← → to move, ↑ to rotate, ↓ soft drop, space to slam.", "On a phone, use the buttons below the board."] },
   { id: "typerace", name: "Type Race", icon: "⌨️", file: "games/type-race.html", blurb: "Type the passage fast and clean. Everyone gets the same text.", how: ["Tap the text and start typing the passage.", "Type it as fast and as cleanly as you can.", "Your score is net WPM: your speed minus your mistakes."] },
