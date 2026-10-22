@@ -377,7 +377,7 @@ input, textarea { font: inherit; -webkit-user-select: text; user-select: text; }
 }
 
 @media (min-width: 700px) {
-  .fab { right: calc(50vw - 300px); }
+  .boardtools { right: calc(50vw - 300px + 22px); }
 }
 [data-theme="dreamy"] .detail-body .note.paper, [data-theme="dreamy"] .detail-body .note.drawing {
   background: linear-gradient(var(--paper, var(--n1)), var(--paper, var(--n1))), linear-gradient(160deg, #a7b2d6, #6a7aa3);
@@ -490,7 +490,7 @@ input, textarea { font: inherit; -webkit-user-select: text; user-select: text; }
 
 /* dock */
 .dock {
-  position: fixed; left: 14px; bottom: calc(env(safe-area-inset-bottom) + 22px); z-index: 6;
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom) + 22px); z-index: 6;
   display: flex; gap: 4px; padding: 5px; border-radius: 22px;
   background: color-mix(in srgb, var(--surface) 80%, transparent);
   backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%);
@@ -502,7 +502,7 @@ input, textarea { font: inherit; -webkit-user-select: text; user-select: text; }
 .dock .lb { font-size: 10px; font-weight: 800; margin-top: 2px; color: var(--muted); }
 .dock .dot { position: absolute; top: 4px; right: 8px; width: 9px; height: 9px; border-radius: 50%; background: #e5484d; border: 2px solid var(--surface); }
 .dock .dot.live { background: #30a46c; animation: blip 1.4s infinite; }
-@media (min-width: 700px) { .dock { left: calc(50vw - 300px); } }
+
 
 /* mood on member chip */
 .chip { position: relative; }
@@ -1004,3 +1004,20 @@ html.no-deco .room-system, html.no-deco #starCanvas { display: none !important; 
 .list-row input { width: 22px; height: 22px; flex: none; }
 .list-add { display: flex; gap: 8px; margin-top: 10px; }
 .list-add input { flex: 1; min-width: 0; }
+
+/* ============ Games (single player, opened from the dock) ============ */
+/* The plus button sits at the bottom of the right-hand tools column. */
+.boardtools .fab { position: static; width: 56px; height: 56px; font-size: 30px; background: var(--accent); color: var(--accent-ink); box-shadow: 0 10px 20px -8px rgba(0,0,0,.55); }
+.games-screen { position: fixed; inset: 0; z-index: 25; background: var(--bg); display: flex; flex-direction: column; }
+.games-screen [hidden] { display: none !important; }
+.gs-bar { display: flex; align-items: center; gap: 10px; padding: calc(env(safe-area-inset-top) + 10px) 14px 10px; background: var(--surface); color: var(--surface-ink); border-bottom: 1px solid var(--line); }
+.gs-bar h2 { margin: 0; flex: 1; text-align: center; font-size: 18px; }
+.gs-back { border: 0; background: transparent; color: var(--accent); font: inherit; font-weight: 800; font-size: 16px; padding: 6px 8px; min-width: 72px; text-align: left; }
+.gs-spacer { min-width: 72px; }
+.gs-list { flex: 1; overflow: auto; padding: 16px; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; align-content: start; }
+.gs-card { border: 0; text-align: left; background: var(--surface); color: var(--surface-ink); border-radius: 18px; padding: 16px 14px; box-shadow: 0 8px 18px -10px rgba(0,0,0,.5); font: inherit; cursor: pointer; }
+.gs-card:active { transform: scale(.98); }
+.gs-card b { display: block; font-size: 16px; }
+.gs-card span { display: block; margin-top: 6px; font-size: 12px; line-height: 1.35; color: var(--muted); }
+.gs-play { flex: 1; display: flex; }
+#gsFrame { flex: 1; width: 100%; border: 0; background: #000; }

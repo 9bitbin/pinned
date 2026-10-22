@@ -60,7 +60,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v46";
+const APP_VERSION = "soy-v47";
 
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
@@ -1093,6 +1093,7 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v47", date: "2026-10-22", title: "Games are back", items: ["Games button in the bottom bar, with 11 single-player games", "Bottom bar is centred; the + button moved into the right-hand tools column"] },
   { v: "soy-v46", date: "2026-10-21", title: "Fresh start", items: ["A clean start: no games"] },
 ];
 const CREDITS = [
@@ -3000,6 +3001,52 @@ function tickNotes() {
 
 // ---------------------------------------------------------------- sheets
 function openSheet(name) { $("#" + name).hidden = false; $("#" + name + "Backdrop").hidden = false; }
+
+// ---- Games: single-player games in games/<slug>/index.html, opened in a full-screen panel ----
+const GAMES = [
+  { slug: "quick-draw", name: "Quick Draw", blurb: "Shoot when it turns green" },
+  { slug: "tower-tap", name: "Tower Tap", blurb: "Stack blocks as high as you can" },
+  { slug: "tetra-stack", name: "Tetra Stack", blurb: "Fill rows with falling blocks" },
+  { slug: "four-feud", name: "Four Feud", blurb: "Connect four against the computer" },
+  { slug: "box-claim", name: "Box Claim", blurb: "Claim boxes with lines" },
+  { slug: "word-gallows", name: "Word Gallows", blurb: "Guess the hidden word" },
+  { slug: "bullseye-drop", name: "Bullseye Drop", blurb: "Drop the pin on the bullseye" },
+  { slug: "matrix-flap", name: "Matrix Flap", blurb: "Flap through the green pipes" },
+  { slug: "paper-glide", name: "Paper Glide", blurb: "Glide through the pin boards" },
+  { slug: "lantern-hop", name: "Lantern Hop", blurb: "Hop stone to stone" },
+  { slug: "neon-kestrel", name: "Neon Kestrel", blurb: "Endless neon flyer" },
+];
+let gsPlaying = null;
+function renderGames() {
+  const list = $("#gsList");
+  if (list.childElementCount) return;
+  for (const g of GAMES) {
+    const b = document.createElement("button");
+    b.className = "gs-card";
+    b.innerHTML = `<b></b><span></span>`;
+    b.querySelector("b").textContent = g.name;
+    b.querySelector("span").textContent = g.blurb;
+    b.onclick = () => playGame(g);
+    list.appendChild(b);
+  }
+}
+function showGamesList() {
+  gsPlaying = null;
+  $("#gsFrame").src = "about:blank";   // stops the game and its sound
+  $("#gsPlay").hidden = true;
+  $("#gsList").hidden = false;
+  $("#gsTitle").textContent = "Games";
+}
+function openGames() { renderGames(); showGamesList(); $("#gamesScreen").hidden = false; }
+function closeGames() { showGamesList(); $("#gamesScreen").hidden = true; }
+function playGame(g) {
+  gsPlaying = g;
+  $("#gsList").hidden = true;
+  $("#gsPlay").hidden = false;
+  $("#gsTitle").textContent = g.name;
+  $("#gsFrame").src = `games/${g.slug}/index.html`;
+}
+function backFromGames() { if (gsPlaying) showGamesList(); else closeGames(); }
 function closeSheet(name) {
   $("#" + name).hidden = true; $("#" + name + "Backdrop").hidden = true;
   if (name === "detail") { detailId = null; if (detailAudio) { detailAudio.pause(); detailAudio = null; } $("#detailBody").innerHTML = ""; }
@@ -5046,6 +5093,8 @@ function wireStatic() {
   // Phase 3: five-item dock. Check in and Today live behind More (their hidden originals keep their handlers).
   $("#dockNotes").onclick = () => { document.querySelectorAll(".sheet").forEach((el) => { if (!el.hidden && $("#" + el.id + "Backdrop")) closeSheet(el.id); }); };
   $("#dockMore").onclick = () => openSheet("more");
+  $("#dockGames").onclick = openGames;
+  $("#gsBack").onclick = backFromGames;
   $("#moreBackdrop").onclick = () => closeSheet("more");
   $("#moreClose").onclick = () => closeSheet("more");
   $("#noteMenuBackdrop").onclick = () => closeSheet("noteMenu");

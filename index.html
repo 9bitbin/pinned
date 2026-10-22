@@ -148,6 +148,7 @@
       <button id="dockNotes" aria-label="Notes"  ><span class="ic"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 11L12 4l8.5 7"/><path d="M5.5 10v9.5h13V10"/><path d="M10 19.5v-5h4v5"/></svg></span><span class="lb">Notes</span></button>
       <button id="dockDoodle" aria-label="Draw together"><span class="ic"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M13.5 7.5l3 3"/></svg></span><span class="lb">Draw</span><i class="dot live" id="doodleDot" hidden></i></button>
       <button id="dockChats" aria-label="Messages"><span class="ic"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.6 8.6 0 0 1-3.6-.8L3 20l1.1-4.2A8.4 8.4 0 1 1 21 11.5z"/></svg></span><span class="lb">Chat</span><i class="dot" id="chatDot" hidden></i></button>
+      <button id="dockGames" aria-label="Games"><span class="ic"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 9h10a4 4 0 0 1 3.7 5.5l-1 2.3A2.5 2.5 0 0 1 17.4 18c-1 0-1.9-.6-2.3-1.5L14.6 15H9.4l-.5 1.5c-.4.9-1.3 1.5-2.3 1.5a2.5 2.5 0 0 1-2.3-3.2l-1-2.3A4 4 0 0 1 7 9z"/><path d="M8 11.5v2M7 12.5h2"/><path d="M15.5 12h.01M17.5 13.5h.01"/></svg></span><span class="lb">Games</span></button>
       <button id="dockMore" aria-label="More"  ><span class="ic"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5.5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18.5" cy="12" r="1.6"/></svg></span><span class="lb">More</span><i class="dot" id="moreDot" hidden></i></button>
     </nav>
     <div id="dockProxies" hidden>
@@ -160,6 +161,17 @@
       <h2>Note</h2>
       <div class="more-list" id="nmList"></div>
       <div class="sheet-actions"><button class="btn" id="nmClose">Cancel</button></div>
+    </section>
+    <section class="games-screen" id="gamesScreen" hidden aria-label="Games">
+      <header class="gs-bar">
+        <button class="gs-back" id="gsBack">‹ Back</button>
+        <h2 id="gsTitle">Games</h2>
+        <span class="gs-spacer" aria-hidden="true"></span>
+      </header>
+      <div class="gs-list" id="gsList"></div>
+      <div class="gs-play" id="gsPlay" hidden>
+        <iframe id="gsFrame" title="Game" allow="autoplay; fullscreen"></iframe>
+      </div>
     </section>
     <section class="sheet more" id="more" hidden aria-label="More">
       <h2>More</h2>
@@ -180,6 +192,7 @@
       <button id="toolFind" aria-label="Find someone" title="Find someone"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg></button>
       <button id="toolHome" aria-label="Back to the newest notes" title="Home"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 11L12 4l8.5 7"/><path d="M5.5 10v9.5h13V10"/><path d="M10 19.5v-5h4v5"/></svg></button>
       <button id="toolDraw" aria-label="Draw on the board" title="Draw on the board"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M13.5 7.5l3 3"/></svg></button>
+      <button class="fab" id="fab" aria-label="Add a note" title="Add a note">+</button>
     </div>
     <div class="drawbar" id="drawBar" hidden>
       <div class="pens" id="bPens"></div>
@@ -216,7 +229,6 @@
       <button id="sDone" data-for="both" class="primary">Done</button>
       <p class="selhint">Drag a corner to resize · top dot to rotate · two fingers to do both</p>
     </div>
-    <button class="fab" id="fab" aria-label="Add a note">+</button>
   </section>
 
   <!-- People panel -->
