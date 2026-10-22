@@ -110,7 +110,7 @@
   <section id="boardScreen" class="screen" hidden>
     <header class="topbar">
       <button class="who" id="memberChips" aria-label="Who's on the board"></button>
-      <div class="title">Pinned</div>
+      <button class="title room-head" id="roomHead" aria-label="Room name, photo and lock"><span class="rh-photo" id="rhPhoto" aria-hidden="true">🏠</span><span class="rh-name" id="rhName">Our room</span><i class="rh-lock" id="rhLock" hidden aria-label="Locked">🔒</i></button>
       <button class="iconbtn" id="openRooms" aria-label="Your rooms" title="Your rooms"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5.5"/><ellipse cx="12" cy="12" rx="10" ry="3.6" transform="rotate(-22 12 12)"/></svg></button>
       <button class="iconbtn" id="openSettings" aria-label="Settings"><i class="gear-dot" id="gearDot" hidden></i>
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
@@ -184,6 +184,24 @@
         <button class="more-row" data-proxy="openSettings"><span>Settings</span><i aria-hidden="true">›</i></button>
       </div>
       <div class="sheet-actions"><button class="btn" id="moreClose">Close</button></div>
+    </section>
+    <div class="sheet-backdrop" id="roomSheetBackdrop" hidden></div>
+    <section class="sheet more room-sheet" id="roomSheet" hidden aria-label="Room settings">
+      <h2>Room</h2>
+      <div class="room-sheet-top">
+        <button class="rs-photo" id="rsPhoto" aria-label="Change room photo">🏠</button>
+        <div class="rs-info"><b id="rsNameShow">Our room</b><small id="rsCode"></small></div>
+      </div>
+      <label class="rs-field">Room name
+        <span class="rs-row"><input id="rsName" maxlength="40" placeholder="Our room" autocomplete="off"><button class="btn small" id="rsSaveName">Save</button></span>
+      </label>
+      <div class="more-list">
+        <button class="more-row" id="rsPhotoBtn"><span>Change room photo</span><i aria-hidden="true">›</i></button>
+        <button class="more-row" id="rsRemovePhoto" hidden><span>Remove room photo</span><i aria-hidden="true">›</i></button>
+        <button class="more-row" id="rsLock"><span id="rsLockText">Lock room</span><i aria-hidden="true">›</i></button>
+      </div>
+      <input type="file" id="roomPhotoInput" accept="image/*" hidden>
+      <div class="sheet-actions"><button class="btn" id="roomSheetClose">Close</button></div>
     </section>
     <div class="histbar" id="histBar" hidden>
       <button id="histUndo" aria-label="Undo" title="Undo">↶</button>

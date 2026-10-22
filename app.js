@@ -60,7 +60,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v48";
+const APP_VERSION = "soy-v49";
 
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
@@ -183,7 +183,7 @@ function createSupabaseApi() {
       must(await sb.from("profiles").update(patch).eq("id", myId()));
     },
     async myBoards() {
-      let res = await sb.from("board_members").select("board_id, joined_at, bg, boards(id, code, created_by, bg_mode, bg)").eq("user_id", myId());
+      let res = await sb.from("board_members").select("board_id, joined_at, bg, boards(id, code, created_by, bg_mode, bg, name, photo_path, locked)").eq("user_id", myId());
       if (res.error) res = await sb.from("board_members").select("board_id, joined_at, boards(id, code, created_by)").eq("user_id", myId());
       return must(res).filter((r) => r.boards).map((r) => ({ ...r.boards, my_bg: r.bg || null, joined_at: r.joined_at }));
     },
@@ -194,16 +194,26 @@ function createSupabaseApi() {
       return must(await sb.from("profiles").select("id,name,color").in("id", ids));
     },
     async myBoard() {
-      let res = await sb.from("board_members").select("board_id, bg, boards(id, code, created_by, bg_mode, bg)").eq("user_id", myId()).order("joined_at", { ascending: false }).limit(1);
+      let res = await sb.from("board_members").select("board_id, bg, boards(id, code, created_by, bg_mode, bg, name, photo_path, locked)").eq("user_id", myId()).order("joined_at", { ascending: false }).limit(1);
       if (res.error) res = await sb.from("board_members").select("board_id, boards(id, code, created_by)").eq("user_id", myId()).order("joined_at", { ascending: false }).limit(1);
       const rows = must(res);
       return rows[0] ? { ...rows[0].boards, my_bg: rows[0].bg || null } : null;
     },
     async getBoard(boardId) {
-      const res = await sb.from("boards").select("id, code, created_by, bg_mode, bg").eq("id", boardId).single();
+      let res = await sb.from("boards").select("id, code, created_by, bg_mode, bg, name, photo_path, locked").eq("id", boardId).single();
+      if (res.error) res = await sb.from("boards").select("id, code, created_by, bg_mode, bg").eq("id", boardId).single();
       return res.error ? null : res.data;
     },
     async setBoardBg(boardId, mode, bg, setBg) { must(await sb.rpc("set_board_bg", { b: boardId, p_mode: mode, p_bg: bg, p_set_bg: setBg })); },
+    async renameRoom(boardId, name) { must(await sb.rpc("rename_room", { p_board: boardId, p_name: name })); },
+    async setRoomPhoto(boardId, path) { must(await sb.rpc("set_room_photo", { p_board: boardId, p_path: path })); },
+    async setRoomLock(boardId, locked) { must(await sb.rpc("set_room_lock", { p_board: boardId, p_locked: locked })); },
+    async uploadRoomPhoto(boardId, blob) {
+      const path = `${boardId}/room-${Date.now()}.jpg`;
+      must(await bucket().upload(path, blob, { contentType: "image/jpeg", upsert: false }));
+      return path;
+    },
+    async removeRoomFile(path) { try { await bucket().remove([path]); } catch { /* already gone */ } },
     async setMyBg(boardId, bg) { must(await sb.rpc("set_my_bg", { b: boardId, p_bg: bg })); },
     async requestBg(boardId, path, kind) { return must(await sb.from("bg_requests").insert({ board_id: boardId, user_id: myId(), media_path: path, kind }).select().single()); },
     async listBgRequests(boardId) { return must(await sb.from("bg_requests").select("*").eq("board_id", boardId).order("created_at", { ascending: false }).limit(30)); },
@@ -440,6 +450,14 @@ function createDemoApi() {
       if (b.created_by !== meId()) throw new Error("Only the board owner can change this");
       if (mode) b.bg_mode = mode; if (setBg) b.bg = bg; save(d); emit({ type: "board", row: b });
     },
+    async renameRoom(boardId, name) { const d = db(); const b = d.boards[boardId]; if (!b) throw new Error("No room"); b.name = (name || "").trim().slice(0, 40) || null; save(d); emit({ type: "board", row: b }); },
+    async setRoomPhoto(boardId, path) { const d = db(); const b = d.boards[boardId]; if (!b) throw new Error("No room"); b.photo_path = path || null; save(d); emit({ type: "board", row: b }); },
+    async setRoomLock(boardId, locked) { const d = db(); const b = d.boards[boardId]; if (!b) throw new Error("No room"); b.locked = !!locked; save(d); emit({ type: "board", row: b }); },
+    async uploadRoomPhoto(boardId, blob) {
+      const dataUrl = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(blob); });
+      const path = `${boardId}/room-${Date.now()}.jpg`; const d = db(); d.media[path] = dataUrl; save(d); return path;
+    },
+    async removeRoomFile(path) { const d = db(); delete d.media[path]; save(d); },
     async setMyBg(boardId, bg) { const d = db(); const m = d.members.find((x) => x.board_id === boardId && x.user_id === meId()); if (m) { m.bg = bg; save(d); } },
     async requestBg(boardId, path, kind) {
       const d = db(); const row = { id: uid(), board_id: boardId, user_id: meId(), media_path: path, kind, status: "pending", created_at: new Date().toISOString() };
@@ -471,6 +489,7 @@ function createDemoApi() {
       const b = Object.values(d.boards).find((x) => x.code === clean);
       if (!b) throw new Error("No board with that code");
       if (!d.members.some((m) => m.board_id === b.id && m.user_id === meId())) {
+        if (b.locked) throw new Error(LOCKED_MSG);
         if (d.members.filter((m) => m.board_id === b.id).length >= 10) throw new Error("That board is full (10 people max)");
         d.members.push({ board_id: b.id, user_id: meId(), joined_at: new Date().toISOString() }); save(d); emit({ type: "members" });
       }
@@ -1097,6 +1116,7 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v49", date: "2026-10-22", title: "Rooms get names, photos and locks", items: ["Rename your room and add a room photo. Both show on the room list and at the top of the board, and update live", "Lock a room to stop new people joining with the code. Existing members are never locked out", "Room cards show the lock and the room code"] },
   { v: "soy-v48", date: "2026-10-22", title: "Scores tab", items: ["Scores tab in Games: each game's best run per person, with a podium for the top three", "Game scores are saved to the board and update every 15 seconds", "Quick Draw now reports its score too"] },
   { v: "soy-v47", date: "2026-10-22", title: "Games are back", items: ["Games button in the bottom bar, with 11 single-player games", "Bottom bar is centred; the + button moved into the right-hand tools column"] },
   { v: "soy-v46", date: "2026-10-21", title: "Fresh start", items: ["A clean start: no games"] },
@@ -1347,6 +1367,8 @@ function markRoomOpened(boardId) {
 async function loadRooms() {
   const rows = await api.myBoards();
   const v = roomsStore();
+  const photos = rows.map((r) => r.photo_path).filter((p) => p && !state.urls[p]);
+  if (photos.length) { try { Object.assign(state.urls, await api.mediaUrls(photos)); } catch { /* photos are optional */ } }
   const people = await Promise.all(rows.map((r) => api.roomPeople(r.id).catch(() => [])));
   const list = rows.map((r, i) => ({ ...r, people: people[i], last: v.opened[r.id] || Date.parse(r.joined_at) || 0 }));
   list.sort((a, b) => b.last - a.last);
@@ -1381,6 +1403,7 @@ function renderRooms() {
   $("#menu").classList.toggle("editing", roomsState.edit);
 }
 function roomTitle(r) {
+  if (r.name) return r.name;
   const names = (r.people || []).map((p) => p.name).filter(Boolean);
   return names.length ? names.join(" & ") : "Waiting for your person";
 }
@@ -1395,9 +1418,11 @@ function roomCard(r, i) {
   orbit.style.setProperty("--spin", `${8 + (i % 3) * 3}s`);
   const moon = document.createElement("span"); moon.className = "room-moon"; orbit.appendChild(moon);
   const planet = document.createElement("span"); planet.className = "room-planet";
+  const pUrl = r.photo_path && state.urls[r.photo_path];
+  if (pUrl) { planet.classList.add("has-photo"); planet.style.backgroundImage = `url("${pUrl.replace(/"/g, "%22")}")`; }
   sys.append(orbit, planet);
   const name = document.createElement("span"); name.className = "room-name"; name.textContent = roomTitle(r);
-  const code = document.createElement("span"); code.className = "room-code"; code.textContent = fmtCode(r.code);
+  const code = document.createElement("span"); code.className = "room-code"; code.textContent = fmtCode(r.code) + (r.locked ? "  · 🔒 locked" : "");
   c.append(sys, name, code);
   if (roomsState.edit) {
     const x = document.createElement("span"); x.className = "room-x"; x.textContent = "×"; x.setAttribute("aria-label", "Hide this room");
@@ -1664,6 +1689,7 @@ async function openBoard(board) {
   applyBackground();
   loadChats();
   loadBgRequests();
+  renderRoomHead(); ensureRoomPhoto();
   api.subscribe(board.id, boardHandlers());
   live = api.live(board.id, state.me, { onMessage: onLiveMessage, onPresence: onPresence });
   api.touchSeen(board.id);
@@ -4429,10 +4455,53 @@ async function applyBackground() {
 function onBoardEvent(row) {
   if (!state.board || row.id !== state.board.id) return;
   const modeChanged = row.bg_mode !== state.board.bg_mode;
-  Object.assign(state.board, { bg_mode: row.bg_mode, bg: row.bg, created_by: row.created_by });
+  Object.assign(state.board, { bg_mode: row.bg_mode, bg: row.bg, created_by: row.created_by, name: row.name ?? null, photo_path: row.photo_path ?? null, locked: !!row.locked });
   applyBackground();
   if (modeChanged && !isOwner()) toast(row.bg_mode === "personal" ? "You can now pick your own background in Settings" : "The board has a shared background again");
   if (!$("#settings").hidden) renderBgSettings();
+  ensureRoomPhoto();   // also refreshes the header and the room sheet
+}
+
+// ---------------------------------------------------------------- room name, photo and lock
+const LOCKED_MSG = "This room is locked. Ask the people inside to unlock it.";
+const ROOM_NAME_MAX = 40;
+
+function renderRoomHead() {
+  const b = state.board; if (!b) return;
+  $("#rhName").textContent = (b.name || "").trim() || "Our room";
+  $("#rhLock").hidden = !b.locked;
+  const url = b.photo_path && state.urls[b.photo_path];
+  const ph = $("#rhPhoto");
+  ph.style.backgroundImage = url ? `url("${url.replace(/"/g, "%22")}")` : "";
+  ph.textContent = url ? "" : "🏠";
+}
+async function ensureRoomPhoto() {
+  const p = state.board?.photo_path;
+  if (p && !state.urls[p]) { try { Object.assign(state.urls, await api.mediaUrls([p])); } catch { /* shown without a photo */ } }
+  renderRoomHead();
+  if (!$("#roomSheet").hidden) renderRoomSheet();
+}
+function renderRoomSheet() {
+  const b = state.board; if (!b) return;
+  $("#rsNameShow").textContent = (b.name || "").trim() || "Our room";
+  $("#rsCode").textContent = "Code " + fmtCode(b.code);
+  $("#rsLockText").textContent = b.locked ? "Unlock room" : "Lock room";
+  $("#rsRemovePhoto").hidden = !b.photo_path;
+  const url = b.photo_path && state.urls[b.photo_path];
+  const p = $("#rsPhoto");
+  p.style.backgroundImage = url ? `url("${url.replace(/"/g, "%22")}")` : "";
+  p.textContent = url ? "" : "🏠";
+}
+function openRoomSheet() {
+  if (!state.board) return;
+  $("#rsName").value = (state.board.name || "").trim();
+  renderRoomSheet();
+  openSheet("roomSheet");
+}
+// runs one room change and shows the error if it fails
+async function roomChange(fn, okMsg) {
+  try { await fn(); if (okMsg) toast(okMsg); }
+  catch (e) { toast(e.message || "Couldn't save that"); }
 }
 
 async function loadBgRequests() {
@@ -5169,6 +5238,46 @@ function wireStatic() {
   $("#saveName").onclick = async () => {
     const name = $("#settingsName").value.trim(); if (!name) return;
     try { await api.updateProfile({ name }); state.me.name = name; await refreshMembers(); toast("Saved"); } catch (e) { toast(e.message); }
+  };
+  $("#roomHead").onclick = openRoomSheet;
+  $("#roomSheetClose").onclick = () => closeSheet("roomSheet");
+  $("#roomSheetBackdrop").onclick = () => closeSheet("roomSheet");
+  $("#rsSaveName").onclick = () => {
+    const name = $("#rsName").value.trim().slice(0, ROOM_NAME_MAX);
+    if (!name) return toast("Type a room name first");
+    roomChange(async () => {
+      await api.renameRoom(state.board.id, name);
+      state.board.name = name; renderRoomHead(); renderRoomSheet(); haptic(12);
+    }, "Room renamed");
+  };
+  $("#rsPhotoBtn").onclick = () => $("#roomPhotoInput").click();
+  $("#rsPhoto").onclick = () => $("#roomPhotoInput").click();
+  $("#roomPhotoInput").addEventListener("change", (e) => {
+    const f = e.target.files && e.target.files[0]; e.target.value = ""; if (!f) return;
+    roomChange(async () => {
+      const boardId = state.board.id, old = state.board.photo_path;
+      const blob = await compressImage(f, 512, 0.85);
+      const path = await api.uploadRoomPhoto(boardId, blob);
+      await api.setRoomPhoto(boardId, path);
+      const urls = await api.mediaUrls([path]); Object.assign(state.urls, urls);
+      state.board.photo_path = path;
+      if (old && old !== path) api.removeRoomFile(old);
+      renderRoomHead(); renderRoomSheet(); haptic(12);
+    }, "Room photo updated");
+  });
+  $("#rsRemovePhoto").onclick = () => roomChange(async () => {
+    const old = state.board.photo_path;
+    await api.setRoomPhoto(state.board.id, null);
+    state.board.photo_path = null;
+    if (old) api.removeRoomFile(old);
+    renderRoomHead(); renderRoomSheet();
+  }, "Room photo removed");
+  $("#rsLock").onclick = () => {
+    const want = !state.board.locked;
+    roomChange(async () => {
+      await api.setRoomLock(state.board.id, want);
+      state.board.locked = want; renderRoomHead(); renderRoomSheet(); haptic(12);
+    }, want ? "Room locked. Nobody new can join with the code." : "Room unlocked");
   };
   $("#avatarEdit").onclick = () => $("#avatarInput").click();
   $("#avatarInput").addEventListener("change", async (e) => {
