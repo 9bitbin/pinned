@@ -1,3 +1,5 @@
+// solo only: races, challenges and Play together are paused. Set to false to bring them back.
+const SOLO_ONLY = true;
 import { C8 } from "./c8.js";
 import { haversine, bearing, compassOf, fmtDist, fmtAcc, buildMapModel } from "./map.js";
 // Pinned: shared sticky-note board for two
@@ -32,7 +34,7 @@ const PING_TEXT = {
 const PING_EMOJI = Object.fromEntries([...FEELINGS, ...MOODS].map(([k, e]) => [k, e]));
 const MUTE_TYPES = [["message", "Messages"], ["reaction", "Reactions"], ["reply", "Replies"], ["ping", "Check-ins"],
   ["answer", "Daily question answers"], ["doodle", "Draw-together invites"], ["bgrequest", "Background requests (owner)"], ["bgreply", "Background replies"],
-  ["game", "Race invites"], ["lead", "Someone beats your best score"], ["ttt", "Tic-tac-toe"], ["duo", "Play together games"]];
+  ["game", "Race invites"], ["lead", "Someone beats your best score"], ["ttt", "Tic-tac-toe"], ["duo", "Play together games"]].filter(([k]) => !SOLO_ONLY || !["game", "ttt", "duo"].includes(k));
 const QUESTIONS = [
   "What's a small thing I do that makes your day better?", "If we could teleport anywhere for one day, where would we go?",
   "What song reminds you of us?", "What's your favorite memory of us so far?", "What's something you've never told me but want to?",
@@ -63,7 +65,8 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v43";
+const APP_VERSION = "soy-v45";
+
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
 let hapticsOn;
@@ -1240,6 +1243,19 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v45", date: "2026-10-21", title: "Solo only for now", items: [
+    "Every game is solo for now. Races, Play together and challenges are paused",
+    "Race button is gone from Neon Kestrel, Paper Plane, Block Drop, Type Race, Polyglot and Flappy Matrix",
+    "Tic-tac-toe and Crazy 8s: Challenge is paused. vs Computer still works",
+    "Games menu: no Play together card, no Race invites or challenge rows; Tic-tac-toe and Crazy 8s show Play vs Computer",
+    "Game pages: Duo and Group options removed from How to play",
+    "Settings: Race invites, Tic-tac-toe and Play together alerts removed",
+    "Scores and Play solo are unchanged",
+  ] },
+  { v: "soy-v44", date: "2026-10-21", title: "Solo first for the newer games", items: [
+    "Connect Four, Dots and Boxes, Reaction Duel, Hangman and Stack 3D play solo for now",
+    "Online play (Play together) is paused and comes back later",
+  ] },
   { v: "soy-v43", date: "2026-10-21", title: "Games cleanup", items: [
     "Removed Pin Drop and Hop. Their past scores are kept",
   ] },
@@ -4723,14 +4739,14 @@ function openSettings() {
 
 // ================================================================ games (Phase 3)
 const GAME_LIST = [
-  { id: "kestrel", name: "Neon Kestrel", icon: "🦅", file: "games/neon-kestrel.html", blurb: "Himal's synthwave flyer. Tap to flap through the neon towers.", how: ["Tap, click or press Space to flap upward.", "Gravity pulls you down, so keep tapping to hold the line.", "Collect the stars ★ for points.", "Don't touch the neon towers."] },
-  { id: "plane", name: "Paper Plane", icon: "✈️", file: "games/paper-plane.html", blurb: "Hold to climb, let go to dive. Dodge pins, grab hearts.", how: ["Hold anywhere to climb. Let go to dive.", "Slip through the pin boards.", "Grab hearts ❤️ for points.", "Don't touch a pin or the desk."] },
-  { id: "blocks", name: "Block Drop", icon: "🟦", file: "games/block-drop.html", blurb: "Stack falling blocks and clear lines. A race gets the same pieces.", how: ["Move falling blocks left and right, rotate them, and drop them into place.", "Fill a whole row to clear it. Four lines at once is a Quad.", "Keyboard: ← → to move, ↑ to rotate, ↓ soft drop, space to slam.", "On a phone, use the buttons below the board."] },
-  { id: "typerace", name: "Type Race", icon: "⌨️", file: "games/type-race.html", blurb: "Type the passage fast and clean. Everyone gets the same text.", how: ["Tap the text and start typing the passage.", "Type it as fast and as cleanly as you can.", "Your score is net WPM: your speed minus your mistakes."] },
-  { id: "speak", name: "Polyglot", icon: "🗣️", file: "games/polyglot.html", blurb: "Say phrases in another language. Voice-scored (or practice mode on iPhone).", how: ["Listen to the phrase, then say it out loud in the language.", "The closer and quicker you are, the higher your score.", "5 rounds. On iPhone you can practise without scoring."] },
-  { id: "flappy", name: "Flappy Matrix", icon: "🟩", file: "games/flappy-matrix.html", blurb: "Flap through the falling code. Matrix mode or classic, with its own soundtrack.", how: ["Tap, click or press Space to flap through the falling code.", "Pass between the pipes to score.", "Choose Matrix or Classic in the menu. Press P or Esc to pause."] },
-  { id: "connect4", name: "Connect Four", icon: "🔴", file: "games/connect-four.html", blurb: "Drop discs and line up four before the computer does.", race: false, how: ["Tap a column to drop your disc into it.", "Line up four of your colour in a row, a column or a diagonal to win.", "Solo plays against the computer. Duo and group play come with online play."] },
-  { id: "dots", name: "Dots and Boxes", icon: "⬛", file: "games/dots-and-boxes.html", blurb: "Draw lines between dots. Close a box to claim it and go again.", race: false, how: ["Tap the gap between two dots to draw a line.", "Complete the fourth side of a box to claim it, then you go again.", "The player with the most boxes at the end wins. Solo plays against the computer."] },
+  { id: "kestrel", name: "Neon Kestrel", icon: "🦅", file: "games/neon-kestrel.html", race: false, blurb: "Himal's synthwave flyer. Tap to flap through the neon towers.", how: ["Tap, click or press Space to flap upward.", "Gravity pulls you down, so keep tapping to hold the line.", "Collect the stars ★ for points.", "Don't touch the neon towers."] },
+  { id: "plane", name: "Paper Plane", icon: "✈️", file: "games/paper-plane.html", race: false, blurb: "Hold to climb, let go to dive. Dodge pins, grab hearts.", how: ["Hold anywhere to climb. Let go to dive.", "Slip through the pin boards.", "Grab hearts ❤️ for points.", "Don't touch a pin or the desk."] },
+  { id: "blocks", name: "Block Drop", icon: "🟦", file: "games/block-drop.html", race: false, blurb: "Stack falling blocks and clear lines.", how: ["Move falling blocks left and right, rotate them, and drop them into place.", "Fill a whole row to clear it. Four lines at once is a Quad.", "Keyboard: ← → to move, ↑ to rotate, ↓ soft drop, space to slam.", "On a phone, use the buttons below the board."] },
+  { id: "typerace", name: "Type Race", icon: "⌨️", file: "games/type-race.html", race: false, blurb: "Type the passage fast and clean.", how: ["Tap the text and start typing the passage.", "Type it as fast and as cleanly as you can.", "Your score is net WPM: your speed minus your mistakes."] },
+  { id: "speak", name: "Polyglot", icon: "🗣️", file: "games/polyglot.html", race: false, blurb: "Say phrases in another language. Voice-scored (or practice mode on iPhone).", how: ["Listen to the phrase, then say it out loud in the language.", "The closer and quicker you are, the higher your score.", "5 rounds. On iPhone you can practise without scoring."] },
+  { id: "flappy", name: "Flappy Matrix", icon: "🟩", file: "games/flappy-matrix.html", race: false, blurb: "Flap through the falling code. Matrix mode or classic, with its own soundtrack.", how: ["Tap, click or press Space to flap through the falling code.", "Pass between the pipes to score.", "Choose Matrix or Classic in the menu. Press P or Esc to pause."] },
+  { id: "connect4", name: "Connect Four", icon: "🔴", file: "games/connect-four.html", blurb: "Drop discs and line up four before the computer does.", race: false, how: ["Tap a column to drop your disc into it.", "Line up four of your colour in a row, a column or a diagonal to win.", "Plays against the computer."] },
+  { id: "dots", name: "Dots and Boxes", icon: "⬛", file: "games/dots-and-boxes.html", blurb: "Draw lines between dots. Close a box to claim it and go again.", race: false, how: ["Tap the gap between two dots to draw a line.", "Complete the fourth side of a box to claim it, then you go again.", "The player with the most boxes at the end wins. Plays against the computer."] },
   { id: "reaction", name: "Reaction Duel", icon: "🚦", file: "games/reaction-duel.html", blurb: "Wait for the light to turn green, then tap as fast as you can.", race: false, how: ["Wait while the light is red. Tapping early is a false start.", "When it turns green, tap as fast as you can.", "Faster reactions score more points."] },
   { id: "hangman", name: "Hangman", icon: "🔤", file: "games/hangman.html", blurb: "Guess the hidden word one letter at a time before the drawing is finished.", race: false, how: ["Tap letters on the keyboard to guess.", "Each wrong guess adds a part to the drawing.", "Guess the word before the drawing is finished. Fewer wrong guesses score more."] },
   { id: "stack", name: "Stack 3D", icon: "🧱", file: "games/stack-3d.html", blurb: "Tap to drop each block onto the one below. Build the tallest tower you can.", race: false, how: ["Tap to drop the swinging block.", "Land it on the tower. Any overhang gets chopped off.", "Every block that lands adds to your score. Miss the tower and the game is over."] },
@@ -4745,8 +4761,8 @@ function openHowTo(gameId) {
   $("#howTitle").textContent = `${g.icon} ${g.name}`;
   const ul = $("#howList"); ul.innerHTML = "";
   for (const line of g.how?.length ? g.how : [g.blurb]) { const li = document.createElement("li"); li.textContent = line; ul.appendChild(li); }
-  const wrap = $("#howModes"); wrap.innerHTML = "";
-  const duoLive = !!DUO[gameId];
+  const wrap = $("#howModes"); wrap.innerHTML = ""; wrap.hidden = SOLO_ONLY;
+  const duoLive = DUO_ONLINE && !!DUO[gameId];
   for (const [label, live] of [["Solo · 1 player", true], [duoLive ? "Duo · 2 players, online" : "Duo · 2 players", duoLive], ["Group · 3 to 10 players", false]]) {
     const b = document.createElement("button"); b.type = "button"; b.className = "mode-chip";
     b.textContent = label; b.disabled = !live; b.setAttribute("aria-pressed", String(live));
@@ -4858,7 +4874,7 @@ function renderGames() {
 function renderRaceBanner() {
   const el = $("#raceBanner"), r = games.race;
   el.hidden = true; el.innerHTML = "";
-  if (!r) return;
+  if (!r || SOLO_ONLY) return;
   const g = gameById(r.game); if (!g) return;
   const host = r.host === state.me.id ? "You" : (memberById(r.host)?.name || "Someone");
   if (r.phase === "lobby") {
@@ -5068,6 +5084,7 @@ const ghostOf = (pl) => ({ id: pl.id, name: memberById(pl.id)?.name || "Friend",
 const openMsg = (r) => ({ game: r.game, seed: r.seed, host: r.host, wait: Math.max(0, r.deadline - Date.now()), players: [...r.players.keys()] });
 
 function startRace(gameId) {
+  if (SOLO_ONLY) return toast("Races are paused. Solo play for now.");
   const r = games.race;
   if (r && r.phase === "lobby") return r.game === gameId ? joinRace() : toast(`Finish the ${gameById(r.game).name} race first`);
   if (r && (r.phase === "count" || r.phase === "run")) return toast("A race is on right now. You'll be in the next one.");
@@ -5090,6 +5107,7 @@ function joinRace() {
 }
 
 function onRaceMsg(m) {
+  if (SOLO_ONLY) return;
   if (!m.u || m.u === state.me?.id) return;
   let r = games.race;
   const same = r && r.rid === m.rid;
@@ -5354,8 +5372,21 @@ function tttStatusText(g) {
   return "";
 }
 
+// solo-only cards: title, one line, and vs Computer
+function renderSoloOnlyCard(card, icon, name, line, onPlay) {
+  card.innerHTML = "";
+  const top = mk("div", "gc-top");
+  top.appendChild(mk("span", "gc-ic", icon));
+  const t = mk("div"); t.appendChild(mk("b", null, name)); t.appendChild(mk("small", null, line)); top.appendChild(t);
+  card.appendChild(top);
+  const acts = mk("div", "gc-actions");
+  const play = mk("button", "btn small primary", "Play vs Computer"); play.onclick = onPlay;
+  acts.appendChild(play); card.appendChild(acts);
+}
+
 function renderTttCard() {
   const card = $("#tttCard"); card.innerHTML = "";
+  if (SOLO_ONLY) return renderSoloOnlyCard(card, "❌⭕", "Tic-tac-toe", "Play against the computer.", () => openCpu());
   const top = mk("div", "gc-top");
   top.appendChild(mk("span", "gc-ic", "❌⭕"));
   const t = mk("div"); t.appendChild(mk("b", null, "Tic-tac-toe")); t.appendChild(mk("small", null, "Challenge someone on the board, or play the computer.")); top.appendChild(t);
@@ -5375,6 +5406,7 @@ function renderTttCard() {
   const cpu = mk("button", "btn small", "vs Computer"); cpu.onclick = () => openCpu();
   const ch = mk("button", "btn small primary", "Challenge");
   ch.disabled = !others().length || !games.v7;
+  ch.hidden = SOLO_ONLY;
   ch.onclick = () => { if (others().length === 1) tttChallenge(others()[0].id); else { games.picking = !games.picking; renderGames(); } };
   acts.append(cpu, ch);
   card.appendChild(acts);
@@ -5409,11 +5441,12 @@ const DUO = {
   hangman: { name: "Hangman", icon: "🔤" },
 };
 const REACTION_ROUNDS = 3, TOO_EARLY = 99999;
+const DUO_ONLINE = false;   // solo first: set to true to bring back Play together
 let duoGames = [], duoOpenId = null, reactTimer = null;
 const reactStarted = new Set();
 
 async function loadDuo() {
-  if (!state.board || isDemo) return;
+  if (!state.board || isDemo || !DUO_ONLINE) return;
   try { duoGames = await api.duoList(state.board.id); } catch { duoGames = []; }
 }
 function duoOf(id) { return duoGames.find((g) => g.id === id); }
@@ -5452,7 +5485,7 @@ function onDuoEvent(row) {
   upsertDuo(row);
   const me = state.me.id, opp = row.a_id === me ? row.b_id : row.a_id, name = memberById(opp)?.name || "Someone";
   const mine = row.a_id === me || row.b_id === me, label = DUO[row.game]?.name || "a game";
-  if (mine && duoOpenId !== row.id) {
+  if (mine && duoOpenId !== row.id && DUO_ONLINE) {
     if (row.status === "invited" && row.b_id === me && !prev) toast(`${DUO[row.game]?.icon || "🎲"} ${name} challenged you to ${label}. Tap 🎮 Games.`, 5000);
     else if (row.status === "active" && prev?.status === "invited" && row.a_id === me) toast(`${name} accepted! Let's play ${label}.`, 4000);
     else if (row.status === "active" && row.turn === me && prev?.turn !== me) toast(`Your move in ${label}`, 3000);
@@ -5461,6 +5494,15 @@ function onDuoEvent(row) {
 }
 
 function renderDuoCards(list) {
+  if (SOLO_ONLY) return;
+  if (!DUO_ONLINE) {
+    const soon = mk("div", "game-card");
+    const top = mk("div", "gc-top");
+    top.appendChild(mk("span", "gc-ic", "🤝"));
+    const t = mk("div"); t.appendChild(mk("b", null, "Play together")); t.appendChild(mk("small", null, "Online games with your partner are coming later."));
+    top.appendChild(t); soon.appendChild(top); list.appendChild(soon);
+    return;
+  }
   const card = mk("div", "game-card");
   const top = mk("div", "gc-top");
   top.appendChild(mk("span", "gc-ic", "🤝"));
@@ -5745,6 +5787,7 @@ async function duoRematchUi() {
 }
 
 async function tttChallenge(oppId) {
+  if (SOLO_ONLY) return toast("Challenges are paused. Play vs Computer for now.");
   try {
     const g = await api.tttChallenge(state.board.id, oppId);
     upsertTtt(g); api.notify(state.board.id, "ttt", { game_id: g.id });
@@ -5913,6 +5956,7 @@ function c8StatusText(g) {
 
 function renderC8Card() {
   const card = $("#c8Card"); card.innerHTML = "";
+  if (SOLO_ONLY) return renderSoloOnlyCard(card, "🃏", "Crazy 8s", "Match suit or rank. 8s are wild. Play against the computer.", () => openC8Cpu());
   const top = mk("div", "gc-top");
   top.appendChild(mk("span", "gc-ic", "🃏"));
   const t = mk("div"); t.appendChild(mk("b", null, "Crazy 8s")); t.appendChild(mk("small", null, "Match suit or rank. 8s are wild. First to empty their hand wins.")); top.appendChild(t);
@@ -5930,6 +5974,7 @@ function renderC8Card() {
   const cpu = mk("button", "btn small", "vs Computer"); cpu.onclick = () => openC8Cpu();
   const ch = mk("button", "btn small primary", "Challenge");
   ch.disabled = !others().length || games.v8 === false;
+  ch.hidden = SOLO_ONLY;
   ch.onclick = () => { if (others().length === 1) c8Challenge(others()[0].id); else { games.c8pick = !games.c8pick; renderGames(); } };
   acts.append(cpu, ch); card.appendChild(acts);
   if (games.c8pick && others().length > 1) {
@@ -5954,6 +5999,7 @@ function renderC8Card() {
 }
 
 async function c8Challenge(oppId) {
+  if (SOLO_ONLY) return toast("Challenges are paused. Play vs Computer for now.");
   try {
     const g = await api.c8Challenge(state.board.id, oppId);
     upsertC8(g); api.notify(state.board.id, "c8", { game_id: g.id });
