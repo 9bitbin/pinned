@@ -1017,6 +1017,7 @@ html.no-deco .room-system, html.no-deco #starCanvas { display: none !important; 
 .gs-list { flex: 1; overflow: auto; padding: 16px; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; align-content: start; }
 .gs-card { border: 0; text-align: left; background: var(--surface); color: var(--surface-ink); border-radius: 18px; padding: 16px 14px; box-shadow: 0 8px 18px -10px rgba(0,0,0,.5); font: inherit; cursor: pointer; }
 .gs-card:active { transform: scale(.98); }
+.gs-ic { display: grid; place-items: center; width: 48px; height: 48px; margin-bottom: 10px; border-radius: 14px; font-style: normal; font-size: 26px; background: var(--line); }
 .gs-card b { display: block; font-size: 16px; }
 .gs-card span { display: block; margin-top: 6px; font-size: 12px; line-height: 1.35; color: var(--muted); }
 .gs-play { flex: 1; display: flex; }

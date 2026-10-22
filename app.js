@@ -3004,17 +3004,17 @@ function openSheet(name) { $("#" + name).hidden = false; $("#" + name + "Backdro
 
 // ---- Games: single-player games in games/<slug>/index.html, opened in a full-screen panel ----
 const GAMES = [
-  { slug: "quick-draw", name: "Quick Draw", blurb: "Shoot when it turns green" },
-  { slug: "tower-tap", name: "Tower Tap", blurb: "Stack blocks as high as you can" },
-  { slug: "tetra-stack", name: "Tetra Stack", blurb: "Fill rows with falling blocks" },
-  { slug: "four-feud", name: "Four Feud", blurb: "Connect four against the computer" },
-  { slug: "box-claim", name: "Box Claim", blurb: "Claim boxes with lines" },
-  { slug: "word-gallows", name: "Word Gallows", blurb: "Guess the hidden word" },
-  { slug: "bullseye-drop", name: "Bullseye Drop", blurb: "Drop the pin on the bullseye" },
-  { slug: "matrix-flap", name: "Matrix Flap", blurb: "Flap through the green pipes" },
-  { slug: "paper-glide", name: "Paper Glide", blurb: "Glide through the pin boards" },
-  { slug: "lantern-hop", name: "Lantern Hop", blurb: "Hop stone to stone" },
-  { slug: "neon-kestrel", name: "Neon Kestrel", blurb: "Endless neon flyer" },
+  { slug: "quick-draw", icon: "🔫", name: "Quick Draw", blurb: "Shoot when it turns green" },
+  { slug: "tower-tap", icon: "🏗️", name: "Tower Tap", blurb: "Stack blocks as high as you can" },
+  { slug: "tetra-stack", icon: "🧱", name: "Tetra Stack", blurb: "Fill rows with falling blocks" },
+  { slug: "four-feud", icon: "🔴", name: "Four Feud", blurb: "Connect four against the computer" },
+  { slug: "box-claim", icon: "📦", name: "Box Claim", blurb: "Claim boxes with lines" },
+  { slug: "word-gallows", icon: "🔤", name: "Word Gallows", blurb: "Guess the hidden word" },
+  { slug: "bullseye-drop", icon: "🎯", name: "Bullseye Drop", blurb: "Drop the pin on the bullseye" },
+  { slug: "matrix-flap", icon: "🐦", name: "Matrix Flap", blurb: "Flap through the green pipes" },
+  { slug: "paper-glide", icon: "✈️", name: "Paper Glide", blurb: "Glide through the pin boards" },
+  { slug: "lantern-hop", icon: "🏮", name: "Lantern Hop", blurb: "Hop stone to stone" },
+  { slug: "neon-kestrel", icon: "🌃", name: "Neon Kestrel", blurb: "Endless neon flyer" },
 ];
 let gsPlaying = null;
 function renderGames() {
@@ -3023,7 +3023,8 @@ function renderGames() {
   for (const g of GAMES) {
     const b = document.createElement("button");
     b.className = "gs-card";
-    b.innerHTML = `<b></b><span></span>`;
+    b.innerHTML = `<i class="gs-ic" aria-hidden="true"></i><b></b><span></span>`;
+    b.querySelector(".gs-ic").textContent = g.icon;
     b.querySelector("b").textContent = g.name;
     b.querySelector("span").textContent = g.blurb;
     b.onclick = () => playGame(g);
