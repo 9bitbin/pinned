@@ -60,7 +60,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v55";
+const APP_VERSION = "soy-v56";
 
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
@@ -1182,6 +1182,7 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v56", date: "2026-10-22", title: "Parry Brawl menu", items: ["Main menu: Play, Multiplayer (coming soon), Settings, How to play", "Settings: music, sound effects, narrator and sound on or off, saved on this device", "How to play lists the moves and buttons", "Esc returns to the menu during a match"] },
   { v: "soy-v55", date: "2026-10-22", title: "Parry Brawl upgrade", items: ["More detailed fighters with a topknot, headband, scarf, hakama and sword", "Generated Japanese-style techno music", "Spoken narrator welcome on the title screen (press N to replay)", "Mouse controls: left click slashes, right click heavy, aim above for an upward smash"] },
   { v: "soy-v54", date: "2026-10-22", title: "Parry Brawl", items: ["New game: Parry Brawl, a platform fighter against the CPU with parries", "Parry the CPU's attacks to stun it and get a punish window"] },
   { v: "soy-v53", date: "2026-10-22", title: "Callout shapes", items: ["Speech bubble, oval speech bubble and thought bubble on the board shapes gallery"] },
