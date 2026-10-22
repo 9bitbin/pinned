@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="en">
+<head>
+<!--
+  ================================================================
+  Parry Brawl
+  ================================================================
+   A side-view platform fighter in the style of Brawlhalla. You fight one computer opponent.
+   Each fighter has 3 stocks. Knock the other off the stage to take a stock. Damage builds up
+   as a percentage, and the higher it is, the further hits send a fighter flying.
+   Parry (L): press it a split second before an attack lands. If it lands inside your shield
+   window, the hit is blocked, the attacker is stunned, and your next hit does extra damage.
+   Scoring: each knockout +100, each stock left +250, winning +500.
+   Controls: A/D or arrows move. W, Up or Space jump (twice in the air). S + jump drops through a ledge.
+   J light attack. K heavy attack (Up + K for an upward smash). L parry. M mute. Enter or click starts.
+   Single player. Best score is saved on this device.
+  ================================================================
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Parry Brawl</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0e0a24; touch-action: none;
+    -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; background: #0e0a24; }
+</style>
+</head>
+<body>
+<canvas id="c" width="960" height="540"></canvas>
+<script src="../shared/solo.js"></script>
+<script>
+const cv = document.getElementById("c"), g = cv.getContext("2d");
+const W = 960, H = 540;
+const G = 0.55, MAXFALL = 14, SPEED = 4.2;
+const PLATS = [
+  { x: 200, y: 400, w: 560, solid: true },    // main stage
+  { x: 300, y: 262, w: 150, solid: false },   // ledges: stand on them, S + jump drops through
+  { x: 510, y: 262, w: 150, solid: false },
+];
+const BLAST = { l: -150, r: W + 150, t: -340, b: H + 220 };
+const PARRY_WINDOW = 9, PARRY_TOTAL = 26, PARRY_STUN = 42, PUNISH = 40;
+const ATK = {
+  light: { startup: 6,  active: 5, total: 18, w: 58, h: 34, oy: -46, base: 3.2, dmg: 5,  hitstun: 12 },
+  heavy: { startup: 14, active: 6, total: 38, w: 78, h: 44, oy: -52, base: 6.5, dmg: 12, hitstun: 18 },
+  up:    { startup: 12, active: 6, total: 34, w: 56, h: 84, oy: -118, base: 7.5, dmg: 12, hitstun: 18, up: true },
+};
+const AI = { parryChance: 0.45 };
+const KEYS = { ArrowLeft: "l", KeyA: "l", ArrowRight: "r", KeyD: "r", ArrowUp: "u", KeyW: "u", ArrowDown: "d", KeyS: "d",
+  Space: "jump", KeyJ: "light", KeyK: "heavy", KeyL: "parry" };
+const BUFFERED = ["jump", "light", "heavy", "parry"];
+
+let state = "title", tick = 0, shake = 0, texts = [], sparks = [], overAt = 0, lastScore = 0, lastWin = false;
+const held = { l: false, r: false, u: false, d: false };
+let muted = false; try { muted = localStorage.getItem("pinned.parry.mute") === "1"; } catch (e) {}
+let ac = null;
+function setMuted(m) {
+  muted = m; try { localStorage.setItem("pinned.parry.mute", m ? "1" : "0"); } catch (e) {}
+  if (musicBus) musicBus.gain.value = m ? 0 : 0.32;
+  if (m && "speechSynthesis" in window) speechSynthesis.cancel();
+}
+
+function makeFighter(name, color, isAI) {
+  return { name, color, isAI, x: 0, y: 0, vx: 0, vy: 0, face: 1, grounded: false, plat: null, jumps: 2,
+    dmg: 0, stocks: 3, kos: 0, state: "free", t: 0, stunT: 0, kind: null, hitThisAtk: false,
+    invuln: 0, punish: 0, dropT: 0, flash: 0, lastHitBy: null, lastHitTick: -999,
+    buf: { jump: 0, light: 0, heavy: 0, parry: 0 }, in: { l: false, r: false, u: false, d: false },
+    think: 0, cool: 0, move: 0, aimUp: false };
+}
+const player = makeFighter("You", "#4cc9f0", false);
+const ai = makeFighter("CPU", "#ef476f", true);
+
+function spawn(f, x, face) {
+  Object.assign(f, { x, y: 400, vx: 0, vy: 0, face, grounded: true, plat: PLATS[0], jumps: 2, dmg: 0, stocks: 3, kos: 0,
+    state: "free", t: 0, stunT: 0, kind: null, hitThisAtk: false, invuln: 60, punish: 0, dropT: 0, flash: 0,
+    lastHitBy: null, lastHitTick: -999, buf: { jump: 0, light: 0, heavy: 0, parry: 0 }, in: { l: false, r: false, u: false, d: false },
+    think: 0, cool: 30, move: 0 });
+}
+spawn(player, 340, 1);
+spawn(ai, 620, -1);
+
+function startMatch() { spawn(player, 340, 1); spawn(ai, 620, -1); texts = []; sparks = []; tick = 0; state = "play"; }
+
+// ---- input
+addEventListener("keydown", (e) => {
+  ensureAudio();
+  if (e.code === "KeyM") { setMuted(!muted); return; }
+  if (e.code === "KeyN" && state === "title") { narrate(true); return; }
+  if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.code)) e.preventDefault();
+  if (state !== "play") {
+    const ready = state === "title" || performance.now() - overAt > 800;
+    if (ready && !e.repeat && (e.code === "Enter" || e.code === "Space" || KEYS[e.code])) startMatch();
+    return;
+  }
+  const k = KEYS[e.code]; if (!k) return;
+  if (k === "l" || k === "r" || k === "u" || k === "d") held[k] = true;
+  else if (!e.repeat) player.buf[k] = 8;   // buffered for 8 frames, so a press just before you're free still counts
+});
+addEventListener("keyup", (e) => { const k = KEYS[e.code]; if (k === "l" || k === "r" || k === "u" || k === "d") held[k] = false; });
+addEventListener("blur", () => { for (const k in held) held[k] = false; });
+// ---- mouse: left click slashes, right click is a heavy (aim above you for an upward smash)
+const mouse = { x: W / 2, y: H / 2, in: false };
+function toWorld(cx, cy) {
+  const r = cv.getBoundingClientRect(), s = Math.min(r.width / W, r.height / H);
+  return { x: (cx - r.left - (r.width - W * s) / 2) / s, y: (cy - r.top - (r.height - H * s) / 2) / s };
+}
+cv.addEventListener("mousemove", (e) => { const p = toWorld(e.clientX, e.clientY); mouse.x = p.x; mouse.y = p.y; mouse.in = true; });
+cv.addEventListener("mouseleave", () => { mouse.in = false; });
+cv.addEventListener("mousedown", (e) => {
+  ensureAudio();
+  const ready = state === "title" || (state === "over" && performance.now() - overAt > 800);
+  if (ready) { startMatch(); return; }
+  if (state !== "play") return;
+  const p = toWorld(e.clientX, e.clientY); mouse.x = p.x; mouse.y = p.y;
+  if (e.button === 0) player.buf.light = 8;
+  else if (e.button === 2) { player.buf.heavy = 8; player.aimUp = mouse.y < player.y - 60; }
+});
+cv.addEventListener("contextmenu", (e) => e.preventDefault());
+
+// ---- sound (tiny beeps, muted with M)
+function beep(f, d = 0.08, type = "square", v = 0.05) {
+  if (muted) return;
+  try {
+    ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+    const o = ac.createOscillator(), gn = ac.createGain();
+    o.type = type; o.frequency.value = f; gn.gain.value = v;
+    o.connect(gn); gn.connect(ac.destination); o.start();
+    gn.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + d); o.stop(ac.currentTime + d);
+  } catch (e) {}
+}
+
+// ---- music: a generated techno loop with taiko-style hits and an in-sen (Japanese) scale. No sample files.
+let musicBus = null, musicOn = false, mNext = 0, mStep = 0, mNoise = null;
+const BPM = 140, STEP_T = 60 / BPM / 4;
+const IN = [0, 1, 5, 7, 8];                                    // in-sen scale steps
+const BASS = [0, -1, 0, 1, -1, 0, -1, 4, 0, -1, 0, 1, -1, 3, -1, 1];   // bass riff (scale steps, -1 = rest)
+const LEAD = [2, 4, 3, 0, 1, 4, 2, 3];
+function ensureAudio() {
+  try {
+    if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+    if (ac.state === "suspended") ac.resume();
+    if (!musicBus) {
+      musicBus = ac.createGain(); musicBus.gain.value = muted ? 0 : 0.32; musicBus.connect(ac.destination);
+      mNoise = ac.createBuffer(1, ac.sampleRate * 0.2, ac.sampleRate);
+      const d = mNoise.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      musicOn = true; mNext = ac.currentTime + 0.1; mStep = 0; musicTick();
+    }
+  } catch (e) {}
+  narrate();
+}
+function musicTick() {
+  if (!musicOn || !ac) return;
+  while (mNext < ac.currentTime + 0.15) { schedule(mStep, mNext); mNext += STEP_T; mStep = (mStep + 1) % 64; }
+  setTimeout(musicTick, 25);
+}
+function schedule(s, t) {
+  const b = s % 16, bar = Math.floor(s / 16) % 4;
+  if (b % 4 === 0) kick(t);
+  if (b % 2 === 1) hat(t, b === 3 || b === 11 ? 0.09 : 0.05);
+  if (b === 0 && bar % 2 === 0) taiko(t, 1);
+  if (b === 8) taiko(t, 0.7);
+  if (BASS[b] >= 0) bass(t, 55 * Math.pow(2, IN[BASS[b]] / 12) * (bar === 3 ? 2 : 1));
+  if (b === 6 || b === 14) lead(t, 440 * Math.pow(2, IN[LEAD[Math.floor(s / 8) % LEAD.length]] / 12));
+}
+function kick(t) {
+  const o = ac.createOscillator(), gn = ac.createGain();
+  o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(42, t + 0.12);
+  gn.gain.setValueAtTime(0.9, t); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+  o.connect(gn); gn.connect(musicBus); o.start(t); o.stop(t + 0.2);
+}
+function hat(t, v) {
+  const src = ac.createBufferSource(), f = ac.createBiquadFilter(), gn = ac.createGain();
+  src.buffer = mNoise; f.type = "highpass"; f.frequency.value = 7000;
+  gn.gain.setValueAtTime(v, t); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+  src.connect(f); f.connect(gn); gn.connect(musicBus); src.start(t); src.stop(t + 0.06);
+}
+function taiko(t, v) {
+  const o = ac.createOscillator(), gn = ac.createGain();
+  o.frequency.setValueAtTime(260, t); o.frequency.exponentialRampToValueAtTime(70, t + 0.2);
+  gn.gain.setValueAtTime(0.6 * v, t); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+  o.connect(gn); gn.connect(musicBus); o.start(t); o.stop(t + 0.32);
+  const src = ac.createBufferSource(), f = ac.createBiquadFilter(), n = ac.createGain();
+  src.buffer = mNoise; f.type = "bandpass"; f.frequency.value = 900;
+  n.gain.setValueAtTime(0.35 * v, t); n.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+  src.connect(f); f.connect(n); n.connect(musicBus); src.start(t); src.stop(t + 0.1);
+}
+function bass(t, f0) {
+  const o = ac.createOscillator(), flt = ac.createBiquadFilter(), gn = ac.createGain();
+  o.type = "sawtooth"; o.frequency.value = f0;
+  flt.type = "lowpass"; flt.frequency.setValueAtTime(900, t); flt.frequency.exponentialRampToValueAtTime(200, t + 0.12);
+  gn.gain.setValueAtTime(0.2, t); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+  o.connect(flt); flt.connect(gn); gn.connect(musicBus); o.start(t); o.stop(t + 0.16);
+}
+function lead(t, f0) {
+  const o = ac.createOscillator(), gn = ac.createGain();
+  o.type = "square"; o.frequency.value = f0;
+  gn.gain.setValueAtTime(0.05, t); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+  o.connect(gn); gn.connect(musicBus); o.start(t); o.stop(t + 0.22);
+}
+
+// ---- narrator: a slow, deep voice for the welcome. Voices differ by device, so this picks the deepest-sounding one available.
+let narrated = false;
+function narrate(again) {
+  if (!("speechSynthesis" in window) || muted) return;
+  if (narrated && !again) return;
+  narrated = true;
+  const speak = () => {
+    const voices = speechSynthesis.getVoices().filter((v) => /^en/i.test(v.lang));
+    const deep = voices.find((v) => /male|david|daniel|mark|george|james|alex|fred|google uk english male/i.test(v.name)) || voices[0];
+    const u = new SpeechSynthesisUtterance("Welcome, warriors... to... PARRY... BRAWL!");
+    u.rate = 0.78; u.pitch = 0.5; u.volume = 1; u.lang = "en-US";
+    if (deep) u.voice = deep;
+    speechSynthesis.cancel(); speechSynthesis.speak(u);
+  };
+  if (speechSynthesis.getVoices().length) speak();
+  else speechSynthesis.onvoiceschanged = () => { speechSynthesis.onvoiceschanged = null; speak(); };
+}
+
+// ---- state timers
+function tickState(f) {
+  f.t++;
+  if (f.invuln > 0) f.invuln--;
+  if (f.punish > 0) f.punish--;
+  if (f.dropT > 0) f.dropT--;
+  if (f.flash > 0) f.flash--;
+  if ((f.state === "hurt" || f.state === "stun") && f.t >= f.stunT) f.state = "free";
+  else if (f.state === "atk" && f.t >= ATK[f.kind].total) f.state = "free";
+  else if (f.state === "parry" && f.t >= PARRY_TOTAL) f.state = "free";
+}
+
+// ---- actions (only when free: not in an attack, parry, hit or stun)
+function act(f) {
+  if (f.state !== "free") return;
+  const b = f.buf;
+  if (b.parry > 0) { b.parry = 0; f.state = "parry"; f.t = 0; return; }
+  if (b.heavy > 0) { b.heavy = 0; const up = f.in.u || f.aimUp; f.aimUp = false; return startAtk(f, up ? "up" : "heavy"); }
+  if (b.light > 0) { b.light = 0; return startAtk(f, "light"); }
+  if (b.jump > 0) { b.jump = 0; doJump(f); }
+}
+function startAtk(f, kind) { f.state = "atk"; f.kind = kind; f.t = 0; f.hitThisAtk = false; }
+function doJump(f) {
+  if (f.grounded) {
+    if (f.in.d && f.plat && !f.plat.solid) { f.dropT = 14; f.grounded = false; f.plat = null; f.vy = 1; return; }
+    f.vy = -11; f.grounded = false; f.plat = null; f.jumps = 1;
+  } else if (f.jumps > 0) { f.vy = -9.5; f.jumps--; }
+}
+
+// ---- movement and collision with the platforms (from above only)
+function physics(f) {
+  const dir = (f.in.r ? 1 : 0) - (f.in.l ? 1 : 0);
+  if (f.state === "free") {
+    if (f.grounded) f.vx = dir * SPEED;
+    else { f.vx += dir * 0.4; f.vx = Math.max(-SPEED * 1.05, Math.min(SPEED * 1.05, f.vx)); if (!dir) f.vx *= 0.96; }
+    if (dir && !f.isAI) f.face = dir;
+  } else if (f.state === "atk") f.vx *= 0.8;
+  else if (f.state === "parry") f.vx *= 0.5;
+  else f.vx *= f.grounded ? 0.9 : 0.985;
+
+  if (f.grounded) {
+    f.vy = 0;
+    const p = f.plat;
+    if (!p || f.x < p.x - 18 || f.x > p.x + p.w + 18) { f.grounded = false; f.plat = null; }
+  } else {
+    f.vy = Math.min(MAXFALL, f.vy + (f.in.d && f.vy > 0 ? G * 2 : G));
+  }
+  const prevY = f.y;
+  f.x += f.vx;
+  if (f.grounded) { f.y = f.plat.y; return; }
+  f.y += f.vy;
+  if (f.vy >= 0) for (const p of PLATS) {
+    if (f.x > p.x - 18 && f.x < p.x + p.w + 18 && prevY <= p.y + 0.01 && f.y >= p.y) {
+      if (!p.solid && f.dropT > 0) continue;
+      f.y = p.y; f.vy = 0; f.grounded = true; f.jumps = 2; f.plat = p; break;
+    }
+  }
+}
+
+// ---- hits: boxes, parry, damage and knockback
+function overlap(a, b) { return a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0; }
+function atkBox(a, cfg) {
+  if (cfg.up) return { x0: a.x - 28, x1: a.x + 28, y0: a.y - 118, y1: a.y - 34 };
+  const x0 = a.face > 0 ? a.x + 6 : a.x - 6 - cfg.w;
+  return { x0, x1: x0 + cfg.w, y0: a.y + cfg.oy, y1: a.y + cfg.oy + cfg.h };
+}
+function bodyBox(f) { return { x0: f.x - 18, x1: f.x + 18, y0: f.y - 62, y1: f.y }; }
+
+function resolveHits(a, b) {
+  if (a.state !== "atk" || a.hitThisAtk) return;
+  const cfg = ATK[a.kind];
+  if (a.t < cfg.startup || a.t >= cfg.startup + cfg.active) return;
+  if (!overlap(atkBox(a, cfg), bodyBox(b))) return;
+  a.hitThisAtk = true;
+  // parry: the hit lands inside the defender's shield window
+  if (b.state === "parry" && b.t >= 1 && b.t <= PARRY_WINDOW) {
+    a.state = "stun"; a.t = 0; a.stunT = PARRY_STUN; a.vx = -a.face * 3;
+    b.punish = PUNISH;
+    addText(b.x, b.y - 92, "PARRY!", "#ffe066", 1.2);
+    burst(b.x + b.face * 26, b.y - 40, "#ffe066", 14);
+    beep(990, 0.12, "triangle", 0.08); shake = 3;
+    return;
+  }
+  if (b.invuln > 0) return;
+  const mult = a.punish > 0 ? 1.3 : 1;     // the punish after a parry
+  a.punish = 0;
+  b.dmg += cfg.dmg * mult;
+  const kb = cfg.base + b.dmg * 0.09;      // higher damage means further knockback
+  const dir = b.x >= a.x ? 1 : -1;
+  if (cfg.up) { b.vx = dir * 0.8; b.vy = -kb * 1.1; }
+  else { b.vx = dir * kb * 0.9; b.vy = -kb * 0.45; }
+  b.state = "hurt"; b.t = 0; b.stunT = cfg.hitstun + Math.round(kb * 1.5); b.kind = null;
+  b.grounded = false; b.plat = null; b.y -= 2; b.flash = 6;
+  b.lastHitBy = a; b.lastHitTick = tick;
+  burst(b.x, b.y - 36, "#ffffff", 10);
+  shake = cfg.up ? 6 : 4; beep(180, 0.09, "square", 0.06);
+}
+
+// ---- knockouts, stocks and respawn
+function ko(f) {
+  f.stocks--;
+  const killer = f.lastHitBy;
+  if (killer && tick - f.lastHitTick < 240) killer.kos++;
+  shake = 10; beep(160, 0.35, "sawtooth", 0.07);
+  addText(clamp(f.x, 90, W - 90), 130, "KO!", "#ff7a7a", 1.6);
+  burst(clamp(f.x, 0, W), clamp(f.y, 0, H), "#ffb3b3", 24);
+  if (f.stocks <= 0) return;   // the match ends in update()
+  Object.assign(f, { x: 480, y: -40, vx: 0, vy: 0, face: f.isAI ? -1 : 1, grounded: false, plat: null, jumps: 2,
+    dmg: 0, state: "free", t: 0, kind: null, hitThisAtk: false, invuln: 120, lastHitBy: null,
+    buf: { jump: 0, light: 0, heavy: 0, parry: 0 } });
+}
+
+// ---- the computer opponent
+function aiThink(a, p) {
+  const dx = p.x - a.x, dy = p.y - a.y, dist = Math.abs(dx);
+  a.in = { l: false, r: false, u: false, d: false };
+  if (a.state === "free") a.face = dx >= 0 ? 1 : -1;
+  // 1) try to parry the player's attack just before it lands
+  if (p.state === "atk" && a.state === "free" && dist < 150 && p.t === ATK[p.kind].startup - 3 && Math.random() < AI.parryChance) a.buf.parry = 8;
+  // 2) pick a movement direction every 10 to 19 frames
+  a.think--;
+  if (a.think <= 0) {
+    a.think = 10 + Math.floor(Math.random() * 10);
+    a.move = dist > 120 ? Math.sign(dx) : (dist < 50 && Math.random() < 0.5 ? -Math.sign(dx) : 0);
+  }
+  let move = a.state === "free" ? a.move : 0;
+  if (a.grounded && ((a.x < 240 && move < 0) || (a.x > 720 && move > 0))) move = -move;   // stay on the stage
+  if (!a.grounded && (a.x < 220 || a.x > 740)) {   // recover toward the middle
+    move = a.x < 480 ? 1 : -1;
+    if (a.jumps > 0 && a.vy > -1 && Math.random() < 0.25) a.buf.jump = 8;
+  }
+  if (a.state === "free" && dy < -90 && a.grounded && Math.random() < 0.03) a.buf.jump = 8;
+  a.in.l = move < 0; a.in.r = move > 0;
+  // 3) attack when close
+  a.cool = Math.max(0, a.cool - 1);
+  if (a.state === "free" && a.cool === 0 && dist < 105 && Math.random() < 0.1) {
+    if (Math.random() < 0.4) { a.in.u = dy < -60; a.buf.heavy = 8; }
+    else a.buf.light = 8;
+    a.cool = 26 + Math.floor(Math.random() * 30);
+  }
+}
+
+// ---- one fixed step of the game (60 per second)
+function update() {
+  tick++;
+  player.in = { l: held.l, r: held.r, u: held.u, d: held.d };
+  // with no move key held, the fighter turns to face the mouse, so slashes go where you point
+  if (player.state === "free" && !held.l && !held.r && mouse.in && Math.abs(mouse.x - player.x) > 20) player.face = mouse.x > player.x ? 1 : -1;
+  aiThink(ai, player);
+  for (const f of [player, ai]) tickState(f);
+  act(player); act(ai);
+  physics(player); physics(ai);
+  // fighters can't stand inside each other
+  const sep = ai.x - player.x;
+  if (Math.abs(sep) < 34 && Math.abs(player.y - ai.y) < 40) {
+    const push = ((34 - Math.abs(sep)) / 2) * (sep >= 0 ? 1 : -1);
+    player.x -= push; ai.x += push;
+  }
+  resolveHits(player, ai); resolveHits(ai, player);
+  for (const f of [player, ai]) if (f.x < BLAST.l || f.x > BLAST.r || f.y > BLAST.b || f.y < BLAST.t) ko(f);
+  for (const f of [player, ai]) for (const k of BUFFERED) if (f.buf[k] > 0) f.buf[k]--;
+  for (const s of sparks) { s.x += s.vx; s.y += s.vy; s.vy += 0.15; s.life--; }
+  sparks = sparks.filter((s) => s.life > 0);
+  for (const t of texts) { t.y -= 0.8; t.life--; }
+  texts = texts.filter((t) => t.life > 0);
+  shake *= 0.85;
+  if (player.stocks <= 0 || ai.stocks <= 0) endMatch();
+}
+
+function endMatch() {
+  state = "over"; overAt = performance.now();
+  const win = ai.stocks <= 0 && player.stocks > 0;
+  lastWin = win;
+  lastScore = (win ? 500 : 0) + Math.max(0, player.stocks) * 250 + player.kos * 100;
+  if (lastScore > bestRead()) bestSave(lastScore);
+  PB.send("over", { score: lastScore });
+}
+function bestRead() { try { return +(localStorage.getItem("pinned.parry.best") || 0); } catch (e) { return 0; } }
+function bestSave(v) { try { localStorage.setItem("pinned.parry.best", String(v)); } catch (e) {} }
+
+// ---- drawing helpers
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function rr(x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+function addText(x, y, s, c, size = 1) { texts.push({ x, y, s, c, life: 50, size }); }
+function burst(x, y, c, n) {
+  for (let i = 0; i < n; i++) { const a = Math.random() * 6.28, s = 1 + Math.random() * 4; sparks.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 1, life: 24 + Math.random() * 12, c }); }
+}
+
+function drawBackground() {
+  const gr = g.createLinearGradient(0, 0, 0, H);
+  gr.addColorStop(0, "#2a1d52"); gr.addColorStop(0.6, "#4b2a6b"); gr.addColorStop(1, "#1a1036");
+  g.fillStyle = gr; g.fillRect(0, 0, W, H);
+  g.fillStyle = "rgba(255,240,200,.9)"; g.beginPath(); g.arc(790, 110, 46, 0, 6.28); g.fill();
+  g.fillStyle = "rgba(20,12,40,.55)"; g.beginPath(); g.moveTo(0, H);
+  for (let x = 0; x <= W; x += 20) g.lineTo(x, 380 + Math.sin(x * 0.01) * 26 + Math.sin(x * 0.027) * 12);
+  g.lineTo(W, H); g.fill();
+  g.fillStyle = "rgba(10,6,25,.7)"; g.beginPath(); g.moveTo(0, H);
+  for (let x = 0; x <= W; x += 20) g.lineTo(x, 450 + Math.sin(x * 0.015 + 2) * 18);
+  g.lineTo(W, H); g.fill();
+}
+function drawPlatforms() {
+  for (const p of PLATS) {
+    g.fillStyle = p.solid ? "#5b3f2f" : "#8a6a4a";
+    rr(p.x, p.y, p.w, p.solid ? 60 : 14, 8); g.fill();
+    g.fillStyle = p.solid ? "#8fd17a" : "#c9a577";
+    g.fillRect(p.x + 4, p.y, p.w - 8, 6);
+  }
+}
+const PAL = {
+  player: { gi: "#1f5f8b", gi2: "#3b8fc7", trim: "#f3f7ff", sash: "#f3f7ff", scarf: "#4cc9f0", hakama: "#1d2a44", hair: "#2a1a14", band: "#f3f7ff" },
+  cpu:    { gi: "#6e1a2b", gi2: "#9c2f45", trim: "#e0b04a", sash: "#e0b04a", scarf: "#ff4d6d", hakama: "#24111a", hair: "#14101c", band: "#e0b04a" },
+};
+function drawFighter(f) {
+  const x = f.x, y = f.y, P = f.isAI ? PAL.cpu : PAL.player;
+  const moving = f.grounded && Math.abs(f.vx) > 0.8;
+  const run = moving ? Math.sin(tick * 0.3) : 0;
+  const breath = f.grounded && f.state === "free" ? Math.sin(tick * 0.08) * 0.7 : 0;
+  const lean = f.state === "atk" ? 0.16 : f.state === "hurt" ? -0.22 : f.state === "parry" ? 0.05 : 0;
+  const A = f.state === "atk" && f.kind ? ATK[f.kind] : null;
+  const active = !!A && f.t >= A.startup && f.t < A.startup + A.active;
+  g.save();
+  g.globalAlpha = f.invuln > 0 && Math.floor(f.invuln / 5) % 2 === 0 ? 0.35 : 1;
+  if (active) { const b = atkBox(f, A); g.fillStyle = "rgba(255,255,255,.22)"; g.fillRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0); }
+  g.translate(x, y); g.scale(f.face, 1);
+
+  // shadow
+  g.fillStyle = "rgba(0,0,0,.25)"; g.beginPath(); g.ellipse(0, 1, 20, 4, 0, 0, 6.28); g.fill();
+  // scarf streaming behind the neck
+  g.strokeStyle = P.scarf; g.lineCap = "round"; g.lineWidth = 5;
+  g.beginPath(); g.moveTo(-3, -64);
+  g.quadraticCurveTo(-20, -62 + Math.sin(tick * 0.25) * 4, -36, -52 + Math.sin(tick * 0.2 + 1) * 6); g.stroke();
+  // hakama (wide trousers), with a run cycle, and sandals
+  const la = run * 6;
+  g.fillStyle = P.hakama;
+  g.beginPath(); g.moveTo(-13, -32); g.lineTo(-2, -32); g.lineTo(-3 - la, 0); g.lineTo(-17 - la, 0); g.closePath(); g.fill();
+  g.beginPath(); g.moveTo(2, -32); g.lineTo(13, -32); g.lineTo(17 + la, 0); g.lineTo(3 + la, 0); g.closePath(); g.fill();
+  g.strokeStyle = "rgba(255,255,255,.14)"; g.lineWidth = 1; g.beginPath(); g.moveTo(0, -32); g.lineTo(0, -6); g.stroke();
+  g.fillStyle = "#3b2a1e"; g.fillRect(-20 - la, -2, 10, 3); g.fillRect(5 + la, -2, 12, 3);
+
+  // upper body: leans into attacks and flinches back when hit
+  g.save();
+  g.translate(0, -30 + breath); g.rotate(lean);
+  const tg = g.createLinearGradient(-14, 0, 14, 0); tg.addColorStop(0, P.gi); tg.addColorStop(1, P.gi2);
+  g.fillStyle = tg;
+  g.beginPath(); g.moveTo(-13, -36); g.lineTo(13, -36); g.lineTo(12, -1); g.lineTo(-12, -1); g.closePath(); g.fill();
+  g.strokeStyle = P.trim; g.lineWidth = 2; g.beginPath(); g.moveTo(-7, -36); g.lineTo(1, -22); g.lineTo(9, -36); g.stroke();
+  g.fillStyle = P.sash; g.fillRect(-13, -12, 26, 5); g.fillRect(-16, -12, 4, 9);
+  // shoulders: dark armour with gold trim for the CPU, padded sleeves for you
+  g.fillStyle = f.isAI ? "#3a0d18" : P.gi2;
+  rr(-17, -38, 10, 8, 3); g.fill(); rr(8, -38, 11, 8, 3); g.fill();
+  if (f.isAI) { g.strokeStyle = P.trim; g.lineWidth = 1.5; g.beginPath(); g.moveTo(-16, -33); g.lineTo(-8, -33); g.moveTo(9, -33); g.lineTo(18, -33); g.stroke(); }
+  // back arm
+  g.strokeStyle = P.gi; g.lineWidth = 6; g.lineCap = "round";
+  g.beginPath(); g.moveTo(-10, -30); g.lineTo(-14 - la * 0.4, -16); g.stroke();
+  // sword arm and sword
+  let hand = { x: 17, y: -14 }, tip = { x: 38, y: -36 };
+  if (f.state === "atk") {
+    if (f.kind === "light") { hand = { x: 22, y: -12 }; tip = { x: 60, y: -8 }; }
+    else if (f.kind === "up") { hand = { x: 14, y: -18 }; tip = { x: 12, y: -66 }; }
+    else { hand = { x: 18, y: -20 }; tip = { x: 54, y: 8 }; }
+  } else if (f.state === "parry") { hand = { x: 12, y: -36 }; tip = { x: 14, y: -76 }; }
+  else if (f.state === "hurt") { hand = { x: 14, y: -26 }; tip = { x: 30, y: -48 }; }
+  g.strokeStyle = P.gi2; g.lineWidth = 7; g.beginPath(); g.moveTo(9, -29); g.lineTo(hand.x, hand.y); g.stroke();
+  const dx = tip.x - hand.x, dy = tip.y - hand.y, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len, nx = -uy, ny = ux;
+  g.strokeStyle = "#2a1a14"; g.lineWidth = 3.5; g.beginPath(); g.moveTo(hand.x - ux * 7, hand.y - uy * 7); g.lineTo(hand.x, hand.y); g.stroke();
+  g.strokeStyle = "#d6b04a"; g.lineWidth = 3; g.beginPath(); g.moveTo(hand.x + nx * 6, hand.y + ny * 6); g.lineTo(hand.x - nx * 6, hand.y - ny * 6); g.stroke();
+  if (active) { g.shadowColor = "#ffffff"; g.shadowBlur = 10; }
+  g.strokeStyle = "#e6ecf7"; g.lineWidth = 3.2; g.beginPath(); g.moveTo(hand.x, hand.y); g.lineTo(tip.x, tip.y); g.stroke();
+  g.strokeStyle = "rgba(255,255,255,.95)"; g.lineWidth = 1; g.beginPath(); g.moveTo(hand.x + nx * 0.8, hand.y + ny * 0.8); g.lineTo(tip.x + nx * 0.8, tip.y + ny * 0.8); g.stroke();
+  g.shadowBlur = 0;
+  g.fillStyle = "#f2d6b8"; g.beginPath(); g.arc(hand.x, hand.y, 3.6, 0, 6.28); g.fill();
+
+  // head: skin, hair, topknot, bangs, headband with a flapping tail, eyes and brows
+  g.fillStyle = "#f2d6b8"; g.beginPath(); g.arc(2, -46, 11.5, 0, 6.28); g.fill();
+  g.fillStyle = P.hair;
+  g.beginPath(); g.arc(1, -47, 12.5, Math.PI * 0.98, Math.PI * 2.0); g.fill();
+  g.beginPath(); g.arc(-3, -58, 5, 0, 6.28); g.fill();
+  g.beginPath(); g.moveTo(-9, -48); g.quadraticCurveTo(0, -54, 11, -50); g.lineTo(9, -43); g.quadraticCurveTo(0, -47, -7, -41); g.closePath(); g.fill();
+  g.fillStyle = P.band; g.fillRect(-10, -52, 22, 3.5);
+  g.beginPath(); g.moveTo(-10, -51); g.lineTo(-24, -50 + Math.sin(tick * 0.3) * 2.5); g.lineTo(-10, -46); g.closePath(); g.fill();
+  g.fillStyle = "#15101f";
+  g.beginPath(); g.ellipse(6, -44, 1.8, 2.4, 0, 0, 6.28); g.fill();
+  g.beginPath(); g.ellipse(10, -44, 1.8, 2.4, 0, 0, 6.28); g.fill();
+  g.fillStyle = "#ffffff"; g.fillRect(5.3, -45, 0.9, 0.9); g.fillRect(9.3, -45, 0.9, 0.9);
+  g.strokeStyle = f.isAI ? "#14101c" : P.hair; g.lineWidth = 1.6; g.beginPath();
+  if (f.isAI) { g.moveTo(4, -49); g.lineTo(11, -47); } else { g.moveTo(4, -48); g.lineTo(11, -48.5); }
+  g.stroke();
+  g.strokeStyle = "#7a3b2e"; g.lineWidth = 1.2; g.beginPath(); g.moveTo(6, -38); g.lineTo(10, -38); g.stroke();
+  g.restore();
+
+  // parry shield, bright while its window is open
+  if (f.state === "parry") {
+    const open = f.t >= 1 && f.t <= PARRY_WINDOW;
+    g.strokeStyle = open ? "#ffe066" : "#9bd4ff"; g.lineWidth = open ? 5 : 3;
+    g.beginPath(); g.arc(6, -30, 34, 0, 6.28); g.stroke();
+  }
+  if (f.flash > 0) { g.fillStyle = "rgba(255,255,255,.55)"; rr(-16, -46, 32, 46, 9); g.fill(); }
+  g.restore();
+
+  const pct = Math.round(f.dmg);
+  g.textAlign = "center"; g.font = "bold 16px system-ui, sans-serif";
+  g.fillStyle = pct >= 100 ? "#ff6b6b" : pct >= 50 ? "#ffb347" : "#ffffff";
+  g.fillText(`${pct}%`, x, y - 102);
+}
+function drawEffects() {
+  for (const s of sparks) { g.globalAlpha = Math.min(1, s.life / 20); g.fillStyle = s.c; g.beginPath(); g.arc(s.x, s.y, 3, 0, 6.28); g.fill(); }
+  g.globalAlpha = 1;
+  g.textAlign = "center";
+  for (const t of texts) { g.globalAlpha = Math.min(1, t.life / 25); g.fillStyle = t.c; g.font = `bold ${Math.round(26 * t.size)}px system-ui, sans-serif`; g.fillText(t.s, t.x, t.y); }
+  g.globalAlpha = 1;
+}
+function drawHUD() {
+  hudFor(player, 24, "left"); hudFor(ai, W - 24, "right");
+  g.textAlign = "center"; g.fillStyle = "rgba(255,255,255,.6)"; g.font = "13px system-ui, sans-serif";
+  g.fillText("Mouse: left slash · right heavy · L parry · M mute", W / 2, H - 12);
+}
+function hudFor(f, x, side) {
+  g.save(); g.textAlign = side === "left" ? "left" : "right";
+  g.font = "bold 18px system-ui, sans-serif"; g.fillStyle = f.color; g.fillText(f.name, x, 34);
+  g.font = "bold 28px system-ui, sans-serif"; g.fillStyle = "#ffffff"; g.fillText(`${Math.round(f.dmg)}%`, x, 66);
+  for (let i = 0; i < 3; i++) {
+    const sx = side === "left" ? x + 6 + i * 20 : x - 6 - i * 20;
+    g.fillStyle = i < f.stocks ? f.color : "rgba(255,255,255,.2)";
+    g.beginPath(); g.arc(sx, 84, 7, 0, 6.28); g.fill();
+  }
+  g.restore();
+}
+function drawTitle() {
+  g.fillStyle = "rgba(10,6,25,.7)"; g.fillRect(0, 0, W, H);
+  g.textAlign = "center";
+  g.fillStyle = "#ffe066"; g.font = "bold 64px system-ui, sans-serif"; g.fillText("PARRY BRAWL", W / 2, 150);
+  g.fillStyle = "#f4eefc"; g.font = "18px system-ui, sans-serif";
+  const lines = [
+    "A / D or arrows: move      W, Up or Space: jump (twice in the air)",
+    "S + jump: drop through a ledge",
+    "Mouse: left click slashes · right click heavy · right click above you for an upward smash",
+    "Keys: J light · K heavy · L parry. Press it a split second before a hit lands.",
+    "A successful parry stuns the attacker and gives you a punish window.",
+    "Knock the CPU off the stage to take all 3 of its stocks.",
+  ];
+  lines.forEach((l, i) => g.fillText(l, W / 2, 220 + i * 30));
+  g.fillStyle = "#ffe066"; g.font = "bold 22px system-ui, sans-serif"; g.fillText("Press Enter or click to start", W / 2, 470);
+  g.fillStyle = "rgba(255,255,255,.6)"; g.font = "14px system-ui, sans-serif"; g.fillText("N replays the narrator · M mutes", W / 2, 500);
+}
+function drawOver() {
+  g.fillStyle = "rgba(10,6,25,.75)"; g.fillRect(0, 0, W, H);
+  g.textAlign = "center";
+  g.fillStyle = lastWin ? "#8fd17a" : "#ef476f"; g.font = "bold 56px system-ui, sans-serif";
+  g.fillText(lastWin ? "You win!" : "CPU wins", W / 2, 190);
+  g.fillStyle = "#ffffff"; g.font = "24px system-ui, sans-serif";
+  g.fillText(`Score ${lastScore}`, W / 2, 250);
+  g.fillText(`Knockouts ${player.kos}   ·   Stocks left ${Math.max(0, player.stocks)}`, W / 2, 290);
+  g.fillStyle = "#cfc6e6"; g.font = "18px system-ui, sans-serif"; g.fillText(`Best ${bestRead()}`, W / 2, 330);
+  g.fillStyle = "#ffe066"; g.font = "bold 22px system-ui, sans-serif"; g.fillText("Press Enter or click to play again", W / 2, 400);
+}
+
+function draw() {
+  g.save();
+  if (shake > 0.3) g.translate((Math.random() - 0.5) * shake * 2, (Math.random() - 0.5) * shake * 2);
+  drawBackground(); drawPlatforms();
+  drawFighter(player); drawFighter(ai);
+  drawEffects();
+  if (state !== "title") drawHUD();
+  g.restore();
+  if (state === "title") drawTitle();
+  else if (state === "over") drawOver();
+}
+
+// ---- main loop: fixed 60 steps per second, drawn every frame
+let last = performance.now(), acc = 0;
+const STEP = 1000 / 60;
+function loop(now) {
+  acc += Math.min(100, now - last); last = now;
+  while (acc >= STEP) { if (state === "play") update(); acc -= STEP; }
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

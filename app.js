@@ -60,7 +60,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v53";
+const APP_VERSION = "soy-v55";
 
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
@@ -1182,6 +1182,8 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v55", date: "2026-10-22", title: "Parry Brawl upgrade", items: ["More detailed fighters with a topknot, headband, scarf, hakama and sword", "Generated Japanese-style techno music", "Spoken narrator welcome on the title screen (press N to replay)", "Mouse controls: left click slashes, right click heavy, aim above for an upward smash"] },
+  { v: "soy-v54", date: "2026-10-22", title: "Parry Brawl", items: ["New game: Parry Brawl, a platform fighter against the CPU with parries", "Parry the CPU's attacks to stun it and get a punish window"] },
   { v: "soy-v53", date: "2026-10-22", title: "Callout shapes", items: ["Speech bubble, oval speech bubble and thought bubble on the board shapes gallery"] },
   { v: "soy-v52", date: "2026-10-22", title: "Shapes and brush size", items: ["Shapes gallery on the board: line, arrow, rectangle, rounded rectangle, oval, triangle, right triangle, diamond, pentagon, hexagon, star and heart", "Drag out a shape; it saves like a pen line, so undo and erase work", "Brush size is now a slider on the board (1 to 24)"] },
   { v: "soy-v51", date: "2026-10-22", title: "Moderation and the Pinned name", items: ["Moderators (set in the database) can review reported feedback, hide or restore posts, and dismiss reports", "Hidden posts show a notice instead of their text, and are left out of exports", "One report per person per post", "App renamed to Pinned in the setup guide and notifications"] },
@@ -3187,6 +3189,7 @@ const GAMES = [
   { slug: "paper-glide", icon: "✈️", name: "Paper Glide", blurb: "Glide through the pin boards" },
   { slug: "lantern-hop", icon: "🏮", name: "Lantern Hop", blurb: "Hop stone to stone" },
   { slug: "neon-kestrel", icon: "🌃", name: "Neon Kestrel", blurb: "Endless neon flyer" },
+  { slug: "parry-brawl", icon: "⚔️", name: "Parry Brawl", blurb: "Platform fights vs the CPU, with parries" },
 ];
 let gsPlaying = null;        // game open in the iframe
 let gsMode = "games";        // games | play | scores | board

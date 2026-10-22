@@ -15,6 +15,7 @@ Each game lives in its own folder with an index.html. The header comment at the 
 | paper-glide/ | Paper Glide | Hold-to-climb flyer. (formerly Paper Plane) |
 | lantern-hop/ | Lantern Hop | Charge-and-hop game. (formerly Hop) |
 | neon-kestrel/ | Neon Kestrel | Endless one-button flyer. Largest game. |
+| parry-brawl/ | Parry Brawl | Platform fighter vs the CPU. Parry to stun and punish. |
 
 ## Shared files (games/shared/)
 - solo.js: single-player stand-in for the old multiplayer bridge. Race is always off.
