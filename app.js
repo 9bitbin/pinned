@@ -4738,19 +4738,7 @@ function openSettings() {
 }
 
 // ================================================================ games (Phase 3)
-const GAME_LIST = [
-  { id: "kestrel", name: "Neon Kestrel", icon: "🦅", file: "games/neon-kestrel.html", race: false, blurb: "Himal's synthwave flyer. Tap to flap through the neon towers.", how: ["Tap, click or press Space to flap upward.", "Gravity pulls you down, so keep tapping to hold the line.", "Collect the stars ★ for points.", "Don't touch the neon towers."] },
-  { id: "plane", name: "Paper Plane", icon: "✈️", file: "games/paper-plane.html", race: false, blurb: "Hold to climb, let go to dive. Dodge pins, grab hearts.", how: ["Hold anywhere to climb. Let go to dive.", "Slip through the pin boards.", "Grab hearts ❤️ for points.", "Don't touch a pin or the desk."] },
-  { id: "blocks", name: "Block Drop", icon: "🟦", file: "games/block-drop.html", race: false, blurb: "Stack falling blocks and clear lines.", how: ["Move falling blocks left and right, rotate them, and drop them into place.", "Fill a whole row to clear it. Four lines at once is a Quad.", "Keyboard: ← → to move, ↑ to rotate, ↓ soft drop, space to slam.", "On a phone, use the buttons below the board."] },
-  { id: "typerace", name: "Type Race", icon: "⌨️", file: "games/type-race.html", race: false, blurb: "Type the passage fast and clean.", how: ["Tap the text and start typing the passage.", "Type it as fast and as cleanly as you can.", "Your score is net WPM: your speed minus your mistakes."] },
-  { id: "speak", name: "Polyglot", icon: "🗣️", file: "games/polyglot.html", race: false, blurb: "Say phrases in another language. Voice-scored (or practice mode on iPhone).", how: ["Listen to the phrase, then say it out loud in the language.", "The closer and quicker you are, the higher your score.", "5 rounds. On iPhone you can practise without scoring."] },
-  { id: "flappy", name: "Flappy Matrix", icon: "🟩", file: "games/flappy-matrix.html", race: false, blurb: "Flap through the falling code. Matrix mode or classic, with its own soundtrack.", how: ["Tap, click or press Space to flap through the falling code.", "Pass between the pipes to score.", "Choose Matrix or Classic in the menu. Press P or Esc to pause."] },
-  { id: "connect4", name: "Connect Four", icon: "🔴", file: "games/connect-four.html", blurb: "Drop discs and line up four before the computer does.", race: false, how: ["Tap a column to drop your disc into it.", "Line up four of your colour in a row, a column or a diagonal to win.", "Plays against the computer."] },
-  { id: "dots", name: "Dots and Boxes", icon: "⬛", file: "games/dots-and-boxes.html", blurb: "Draw lines between dots. Close a box to claim it and go again.", race: false, how: ["Tap the gap between two dots to draw a line.", "Complete the fourth side of a box to claim it, then you go again.", "The player with the most boxes at the end wins. Plays against the computer."] },
-  { id: "reaction", name: "Reaction Duel", icon: "🚦", file: "games/reaction-duel.html", blurb: "Wait for the light to turn green, then tap as fast as you can.", race: false, how: ["Wait while the light is red. Tapping early is a false start.", "When it turns green, tap as fast as you can.", "Faster reactions score more points."] },
-  { id: "hangman", name: "Hangman", icon: "🔤", file: "games/hangman.html", blurb: "Guess the hidden word one letter at a time before the drawing is finished.", race: false, how: ["Tap letters on the keyboard to guess.", "Each wrong guess adds a part to the drawing.", "Guess the word before the drawing is finished. Fewer wrong guesses score more."] },
-  { id: "stack", name: "Stack 3D", icon: "🧱", file: "games/stack-3d.html", blurb: "Tap to drop each block onto the one below. Build the tallest tower you can.", race: false, how: ["Tap to drop the swinging block.", "Land it on the tower. Any overhang gets chopped off.", "Every block that lands adds to your score. Miss the tower and the game is over."] },
-];const gameById = (id) => GAME_LIST.find((g) => g.id === id);
+const GAME_LIST = [];const gameById = (id) => GAME_LIST.find((g) => g.id === id);
 
 // ---- How to play (shown before every game) ----
 // Solo works now. Duo and group (2-10 players) appear as online play is added (see the roadmap in UPDATE-LOG).
@@ -4867,8 +4855,6 @@ function renderGames() {
     card.appendChild(acts);
     list.appendChild(card);
   }
-  renderTttCard();
-  renderC8Card();
 }
 
 function renderRaceBanner() {
