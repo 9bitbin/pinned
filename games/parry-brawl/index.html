@@ -49,13 +49,20 @@ const KEYS = { ArrowLeft: "l", KeyA: "l", ArrowRight: "r", KeyD: "r", ArrowUp: "
   Space: "jump", KeyJ: "light", KeyK: "heavy", KeyL: "parry" };
 const BUFFERED = ["jump", "light", "heavy", "parry"];
 
-let state = "title", tick = 0, shake = 0, texts = [], sparks = [], overAt = 0, lastScore = 0, lastWin = false;
+let state = "menu", tick = 0, shake = 0, texts = [], sparks = [], overAt = 0, lastScore = 0, lastWin = false;
 const held = { l: false, r: false, u: false, d: false };
 let muted = false; try { muted = localStorage.getItem("pinned.parry.mute") === "1"; } catch (e) {}
+const DEFAULT_SETTINGS = { music: 0.8, sfx: 0.8, narrator: true };
+let settings = { ...DEFAULT_SETTINGS };
+try { settings = { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("pinned.parry.settings") || "{}") }; } catch (e) {}
+let menuIdx = 0, setIdx = 0, menuNote = "", menuNoteT = 0, drag = null;
+const hits = [];   // clickable areas on the menu screen being shown
+function saveSettings() { try { localStorage.setItem("pinned.parry.settings", JSON.stringify(settings)); } catch (e) {} }
+function applyMusicVol() { if (musicBus) musicBus.gain.value = muted ? 0 : 0.32 * settings.music; }
 let ac = null;
 function setMuted(m) {
   muted = m; try { localStorage.setItem("pinned.parry.mute", m ? "1" : "0"); } catch (e) {}
-  if (musicBus) musicBus.gain.value = m ? 0 : 0.32;
+  applyMusicVol();
   if (m && "speechSynthesis" in window) speechSynthesis.cancel();
 }
 
@@ -84,35 +91,50 @@ function startMatch() { spawn(player, 340, 1); spawn(ai, 620, -1); texts = []; s
 addEventListener("keydown", (e) => {
   ensureAudio();
   if (e.code === "KeyM") { setMuted(!muted); return; }
-  if (e.code === "KeyN" && state === "title") { narrate(true); return; }
-  if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.code)) e.preventDefault();
-  if (state !== "play") {
-    const ready = state === "title" || performance.now() - overAt > 800;
-    if (ready && !e.repeat && (e.code === "Enter" || e.code === "Space" || KEYS[e.code])) startMatch();
+  const arrowish = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.code);
+  if (state === "play") {
+    if (e.code === "Escape") { state = "menu"; for (const k in held) held[k] = false; return; }
+    if (arrowish) e.preventDefault();
+    const k = KEYS[e.code]; if (!k) return;
+    if (k === "l" || k === "r" || k === "u" || k === "d") held[k] = true;
+    else if (!e.repeat) player.buf[k] = 8;   // buffered for 8 frames, so a press just before you're free still counts
     return;
   }
-  const k = KEYS[e.code]; if (!k) return;
-  if (k === "l" || k === "r" || k === "u" || k === "d") held[k] = true;
-  else if (!e.repeat) player.buf[k] = 8;   // buffered for 8 frames, so a press just before you're free still counts
+  if (arrowish) e.preventDefault();
+  if (state === "over") {
+    if (e.code === "Escape") { state = "menu"; return; }
+    if (!e.repeat && performance.now() - overAt > 800 && (e.code === "Enter" || e.code === "Space")) startMatch();
+    return;
+  }
+  menuKey(e);
 });
 addEventListener("keyup", (e) => { const k = KEYS[e.code]; if (k === "l" || k === "r" || k === "u" || k === "d") held[k] = false; });
 addEventListener("blur", () => { for (const k in held) held[k] = false; });
-// ---- mouse: left click slashes, right click is a heavy (aim above you for an upward smash)
+// ---- mouse: in a match, left click slashes and right click is a heavy (aim above you for an upward smash). Menus are clickable.
 const mouse = { x: W / 2, y: H / 2, in: false };
 function toWorld(cx, cy) {
   const r = cv.getBoundingClientRect(), s = Math.min(r.width / W, r.height / H);
   return { x: (cx - r.left - (r.width - W * s) / 2) / s, y: (cy - r.top - (r.height - H * s) / 2) / s };
 }
-cv.addEventListener("mousemove", (e) => { const p = toWorld(e.clientX, e.clientY); mouse.x = p.x; mouse.y = p.y; mouse.in = true; });
+function hitAt(p) { for (const h of hits) if (p.x >= h.x && p.x <= h.x + h.w && p.y >= h.y && p.y <= h.y + h.h) return h; return null; }
+cv.addEventListener("mousemove", (e) => {
+  const p = toWorld(e.clientX, e.clientY); mouse.x = p.x; mouse.y = p.y; mouse.in = true;
+  if (drag && (e.buttons & 1)) { drag.click(p.x); return; }
+  if (state !== "play") { const h = hitAt(p); if (h && h.idx !== undefined) { if (state === "menu") menuIdx = h.idx; if (state === "settings") setIdx = h.idx; } }
+});
 cv.addEventListener("mouseleave", () => { mouse.in = false; });
+addEventListener("mouseup", () => { drag = null; });
 cv.addEventListener("mousedown", (e) => {
   ensureAudio();
-  const ready = state === "title" || (state === "over" && performance.now() - overAt > 800);
-  if (ready) { startMatch(); return; }
-  if (state !== "play") return;
   const p = toWorld(e.clientX, e.clientY); mouse.x = p.x; mouse.y = p.y;
-  if (e.button === 0) player.buf.light = 8;
-  else if (e.button === 2) { player.buf.heavy = 8; player.aimUp = mouse.y < player.y - 60; }
+  if (state === "play") {
+    if (e.button === 0) player.buf.light = 8;
+    else if (e.button === 2) { player.buf.heavy = 8; player.aimUp = mouse.y < player.y - 60; }
+    return;
+  }
+  if (state === "over") { if (performance.now() - overAt > 800) startMatch(); return; }
+  const h = hitAt(p);
+  if (h) { h.click(p.x); if (h.drag) drag = h; }
 });
 cv.addEventListener("contextmenu", (e) => e.preventDefault());
 
@@ -122,7 +144,7 @@ function beep(f, d = 0.08, type = "square", v = 0.05) {
   try {
     ac = ac || new (window.AudioContext || window.webkitAudioContext)();
     const o = ac.createOscillator(), gn = ac.createGain();
-    o.type = type; o.frequency.value = f; gn.gain.value = v;
+    o.type = type; o.frequency.value = f; gn.gain.value = v * settings.sfx;
     o.connect(gn); gn.connect(ac.destination); o.start();
     gn.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + d); o.stop(ac.currentTime + d);
   } catch (e) {}
@@ -139,7 +161,7 @@ function ensureAudio() {
     if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
     if (ac.state === "suspended") ac.resume();
     if (!musicBus) {
-      musicBus = ac.createGain(); musicBus.gain.value = muted ? 0 : 0.32; musicBus.connect(ac.destination);
+      musicBus = ac.createGain(); musicBus.gain.value = muted ? 0 : 0.32 * settings.music; musicBus.connect(ac.destination);
       mNoise = ac.createBuffer(1, ac.sampleRate * 0.2, ac.sampleRate);
       const d = mNoise.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
       musicOn = true; mNext = ac.currentTime + 0.1; mStep = 0; musicTick();
@@ -200,7 +222,7 @@ function lead(t, f0) {
 // ---- narrator: a slow, deep voice for the welcome. Voices differ by device, so this picks the deepest-sounding one available.
 let narrated = false;
 function narrate(again) {
-  if (!("speechSynthesis" in window) || muted) return;
+  if (!("speechSynthesis" in window) || muted || !settings.narrator) return;
   if (narrated && !again) return;
   narrated = true;
   const speak = () => {
@@ -542,22 +564,119 @@ function hudFor(f, x, side) {
   }
   g.restore();
 }
-function drawTitle() {
+// ---- menus: main menu, settings and how to play. Each can be used with the keyboard or the mouse.
+const MENU = [
+  { label: "Play", run: () => startMatch() },
+  { label: "Multiplayer (coming soon)", run: () => flashNote("Multiplayer is coming soon"), dim: true },
+  { label: "Settings", run: () => { state = "settings"; setIdx = 0; } },
+  { label: "How to play", run: () => { state = "help"; } },
+];
+const SETROWS = ["music", "sfx", "narrator", "sound", "back"];
+const HELP = [
+  ["Move", ["A / D or ← → to walk", "W / ↑ / Space jump, twice in the air", "S + jump drops through a ledge"]],
+  ["Slash", ["J or left click: quick light attack"]],
+  ["Heavy", ["K or right click: slow, big knockback", "Up + K, or right click above you: upward smash"]],
+  ["Parry", ["L: press just before a hit lands", "It blocks the hit, stuns the attacker, and boosts your next hit"]],
+  ["Aim", ["No move key held? You turn to face the mouse"]],
+  ["Win", ["Knock the CPU off the stage to take its 3 stocks", "Higher damage sends fighters flying further"]],
+  ["Keys", ["M mute · N narrator · Esc back to the menu in a match"]],
+];
+function flashNote(s) { menuNote = s; menuNoteT = 150; }
+function setSetting(k, v) { settings[k] = Math.round(clamp(v, 0, 1) * 20) / 20; saveSettings(); if (k === "music") applyMusicVol(); }
+function adjustRow(k, dir) {
+  if (k === "music" || k === "sfx") {
+    if (dir) setSetting(k, settings[k] + dir * 0.1);
+    if (k === "sfx") beep(660, 0.08, "triangle", 0.08);   // a sample so you can hear the level
+  } else if (k === "narrator") { settings.narrator = !settings.narrator; saveSettings(); }
+  else if (k === "sound") setMuted(!muted);
+  else if (k === "back") state = "menu";
+}
+function menuKey(e) {
+  const c = e.code;
+  const up = c === "ArrowUp" || c === "KeyW", down = c === "ArrowDown" || c === "KeyS";
+  const left = c === "ArrowLeft" || c === "KeyA", right = c === "ArrowRight" || c === "KeyD";
+  const ok = c === "Enter" || c === "Space" || c === "KeyJ", back = c === "Escape" || c === "Backspace";
+  if (c === "KeyN") { narrate(true); return; }
+  if (state === "menu") {
+    if (up) menuIdx = (menuIdx + MENU.length - 1) % MENU.length;
+    else if (down) menuIdx = (menuIdx + 1) % MENU.length;
+    else if (ok && !e.repeat) MENU[menuIdx].run();
+  } else if (state === "settings") {
+    if (up) setIdx = (setIdx + SETROWS.length - 1) % SETROWS.length;
+    else if (down) setIdx = (setIdx + 1) % SETROWS.length;
+    else if (left || right) adjustRow(SETROWS[setIdx], right ? 1 : -1);
+    else if (ok && !e.repeat) adjustRow(SETROWS[setIdx], 0);
+    else if (back) state = "menu";
+  } else if (state === "help") {
+    if (back || (ok && !e.repeat)) state = "menu";
+  }
+}
+function btn(x, y, w, h, label, { sel = false, dim = false, idx, onClick } = {}) {
+  g.save();
+  g.fillStyle = sel ? "rgba(255,224,102,.22)" : "rgba(255,255,255,.07)";
+  g.strokeStyle = sel ? "#ffe066" : "rgba(255,255,255,.25)"; g.lineWidth = sel ? 3 : 2;
+  rr(x, y, w, h, 14); g.fill(); g.stroke();
+  g.textAlign = "center"; g.textBaseline = "middle";
+  g.fillStyle = dim ? "rgba(255,255,255,.4)" : sel ? "#ffe066" : "#f4eefc";
+  g.font = "bold 22px system-ui, sans-serif"; g.fillText(label, x + w / 2, y + h / 2);
+  g.restore();
+  if (onClick) hits.push({ x, y, w, h, idx, click: onClick });
+}
+function drawMenu() {
   g.fillStyle = "rgba(10,6,25,.7)"; g.fillRect(0, 0, W, H);
-  g.textAlign = "center";
-  g.fillStyle = "#ffe066"; g.font = "bold 64px system-ui, sans-serif"; g.fillText("PARRY BRAWL", W / 2, 150);
-  g.fillStyle = "#f4eefc"; g.font = "18px system-ui, sans-serif";
-  const lines = [
-    "A / D or arrows: move      W, Up or Space: jump (twice in the air)",
-    "S + jump: drop through a ledge",
-    "Mouse: left click slashes · right click heavy · right click above you for an upward smash",
-    "Keys: J light · K heavy · L parry. Press it a split second before a hit lands.",
-    "A successful parry stuns the attacker and gives you a punish window.",
-    "Knock the CPU off the stage to take all 3 of its stocks.",
-  ];
-  lines.forEach((l, i) => g.fillText(l, W / 2, 220 + i * 30));
-  g.fillStyle = "#ffe066"; g.font = "bold 22px system-ui, sans-serif"; g.fillText("Press Enter or click to start", W / 2, 470);
-  g.fillStyle = "rgba(255,255,255,.6)"; g.font = "14px system-ui, sans-serif"; g.fillText("N replays the narrator · M mutes", W / 2, 500);
+  g.textAlign = "center"; g.textBaseline = "alphabetic";
+  g.fillStyle = "#ffe066"; g.font = "bold 64px system-ui, sans-serif"; g.fillText("PARRY BRAWL", W / 2, 130);
+  g.fillStyle = "rgba(244,238,252,.8)"; g.font = "18px system-ui, sans-serif"; g.fillText("A platform fighter. Parry to win.", W / 2, 170);
+  MENU.forEach((m, i) => btn(W / 2 - 150, 210 + i * 64, 300, 52, m.label, { sel: menuIdx === i, dim: !!m.dim, idx: i, onClick: m.run }));
+  if (menuNoteT > 0) { g.fillStyle = "#ffe066"; g.font = "bold 18px system-ui, sans-serif"; g.fillText(menuNote, W / 2, 482); }
+  g.fillStyle = "rgba(255,255,255,.55)"; g.font = "14px system-ui, sans-serif";
+  g.fillText("↑ ↓ choose · Enter select · N narrator · M mute", W / 2, 512);
+}
+function drawSettings() {
+  g.fillStyle = "rgba(10,6,25,.95)"; g.fillRect(0, 0, W, H);
+  g.textAlign = "center"; g.textBaseline = "alphabetic";
+  g.fillStyle = "#ffe066"; g.font = "bold 44px system-ui, sans-serif"; g.fillText("Settings", W / 2, 96);
+  const labels = { music: "Music", sfx: "Sound effects", narrator: "Narrator", sound: "Sound", back: "Back" };
+  SETROWS.forEach((k, i) => {
+    const x = W / 2 - 280, y = 130 + i * 64, w = 560, h = 52, sel = setIdx === i;
+    g.save();
+    g.fillStyle = sel ? "rgba(255,224,102,.18)" : "rgba(255,255,255,.07)";
+    g.strokeStyle = sel ? "#ffe066" : "rgba(255,255,255,.2)"; g.lineWidth = 2;
+    rr(x, y, w, h, 12); g.fill(); g.stroke();
+    g.restore();
+    g.textBaseline = "middle"; g.font = "bold 22px system-ui, sans-serif"; g.fillStyle = "#f4eefc";
+    if (k === "back") { g.textAlign = "center"; g.fillText(labels[k], W / 2, y + h / 2); }
+    else if (k === "music" || k === "sfx") {
+      g.textAlign = "left"; g.fillText(labels[k], x + 22, y + h / 2);
+      const tx = x + 250, tw = 220, ty = y + h / 2, v = settings[k];
+      g.fillStyle = "rgba(255,255,255,.2)"; rr(tx, ty - 4, tw, 8, 4); g.fill();
+      g.fillStyle = "#ffe066"; rr(tx, ty - 4, Math.max(8, tw * v), 8, 4); g.fill();
+      g.fillStyle = "#ffffff"; g.beginPath(); g.arc(tx + tw * v, ty, 9, 0, 6.28); g.fill();
+      g.textAlign = "right"; g.fillStyle = "#f4eefc"; g.fillText(`${Math.round(v * 100)}%`, x + w - 22, ty);
+      hits.push({ x: tx - 12, y, w: tw + 24, h, drag: true, click: (px) => setSetting(k, (px - tx) / tw) });
+    } else {
+      g.textAlign = "left"; g.fillText(labels[k], x + 22, y + h / 2);
+      g.textAlign = "right";
+      g.fillText(k === "narrator" ? (settings.narrator ? "On" : "Off") : (muted ? "Off" : "On"), x + w - 22, y + h / 2);
+    }
+    hits.push({ x, y, w, h, idx: i, click: () => { setIdx = i; if (k === "back") state = "menu"; else if (k === "narrator" || k === "sound") adjustRow(k, 0); } });
+  });
+  g.textAlign = "center"; g.textBaseline = "alphabetic"; g.fillStyle = "rgba(255,255,255,.55)"; g.font = "14px system-ui, sans-serif";
+  g.fillText("← → change · Enter toggle · Esc back", W / 2, 490);
+}
+function drawHelp() {
+  g.fillStyle = "rgba(10,6,25,.95)"; g.fillRect(0, 0, W, H);
+  g.textAlign = "center"; g.textBaseline = "alphabetic";
+  g.fillStyle = "#ffe066"; g.font = "bold 44px system-ui, sans-serif"; g.fillText("How to play", W / 2, 84);
+  let y = 124;
+  g.textAlign = "left";
+  for (const [label, lines] of HELP) {
+    g.fillStyle = "#ffe066"; g.font = "bold 16px system-ui, sans-serif"; g.fillText(label, 150, y);
+    g.fillStyle = "#f4eefc"; g.font = "16px system-ui, sans-serif";
+    lines.forEach((l, i) => g.fillText(l, 290, y + i * 20));
+    y += lines.length * 20 + 8;
+  }
+  btn(W / 2 - 110, 452, 220, 48, "Back", { sel: true, onClick: () => { state = "menu"; } });
 }
 function drawOver() {
   g.fillStyle = "rgba(10,6,25,.75)"; g.fillRect(0, 0, W, H);
@@ -568,18 +687,21 @@ function drawOver() {
   g.fillText(`Score ${lastScore}`, W / 2, 250);
   g.fillText(`Knockouts ${player.kos}   ·   Stocks left ${Math.max(0, player.stocks)}`, W / 2, 290);
   g.fillStyle = "#cfc6e6"; g.font = "18px system-ui, sans-serif"; g.fillText(`Best ${bestRead()}`, W / 2, 330);
-  g.fillStyle = "#ffe066"; g.font = "bold 22px system-ui, sans-serif"; g.fillText("Press Enter or click to play again", W / 2, 400);
+  g.fillStyle = "#ffe066"; g.font = "bold 22px system-ui, sans-serif"; g.fillText("Press Enter or click to play again · Esc for menu", W / 2, 400);
 }
 
 function draw() {
+  hits.length = 0;
   g.save();
   if (shake > 0.3) g.translate((Math.random() - 0.5) * shake * 2, (Math.random() - 0.5) * shake * 2);
   drawBackground(); drawPlatforms();
   drawFighter(player); drawFighter(ai);
   drawEffects();
-  if (state !== "title") drawHUD();
+  if (state === "play" || state === "over") drawHUD();
   g.restore();
-  if (state === "title") drawTitle();
+  if (state === "menu") drawMenu();
+  else if (state === "settings") drawSettings();
+  else if (state === "help") drawHelp();
   else if (state === "over") drawOver();
 }
 
@@ -589,6 +711,7 @@ const STEP = 1000 / 60;
 function loop(now) {
   acc += Math.min(100, now - last); last = now;
   while (acc >= STEP) { if (state === "play") update(); acc -= STEP; }
+  if (menuNoteT > 0) menuNoteT--;
   draw();
   requestAnimationFrame(loop);
 }
