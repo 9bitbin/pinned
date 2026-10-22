@@ -60,7 +60,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v47";
+const APP_VERSION = "soy-v48";
 
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
@@ -288,6 +288,8 @@ function createSupabaseApi() {
 
     // reactions / replies / answers / check-ins (v2 database upgrade)
     async listReactions(boardId) { return must(await sb.from("reactions").select("note_id,user_id,emoji").eq("board_id", boardId)); },
+    async listScores(boardId) { return must(await sb.from("board_scores").select("user_id,game,score,created_at").eq("board_id", boardId).order("score", { ascending: false }).limit(5000)); },
+    async submitScore(boardId, game, score) { must(await sb.from("board_scores").insert({ board_id: boardId, user_id: myId(), game, score })); },
     async addReaction(r) { must(await sb.from("reactions").insert(r)); },
     async removeReaction(noteId, emoji) { must(await sb.from("reactions").delete().eq("note_id", noteId).eq("user_id", myId()).eq("emoji", emoji)); },
     async listReplies(boardId) { return must(await sb.from("replies").select("*").eq("board_id", boardId).order("created_at")); },
@@ -525,6 +527,8 @@ function createDemoApi() {
       const path = `avatars/${meId()}-${Date.now()}.jpg`; const d = db(); d.media[path] = dataUrl; save(d); return path;
     },
     async listReactions(boardId) { return db().reactions.filter((r) => r.board_id === boardId); },
+    async listScores(boardId) { return db().scores.filter((s) => s.board_id === boardId).map((s) => ({ user_id: s.user_id, game: s.game, score: s.score, created_at: s.created_at })); },
+    async submitScore(boardId, game, score) { const d = db(); d.scores.push({ id: uid(), board_id: boardId, user_id: meId(), game, score, created_at: new Date().toISOString() }); save(d); },
     async addReaction(r) { const d = db(); d.reactions.push(r); save(d); emit({ type: "reaction", row: r, del: false }); },
     async removeReaction(noteId, emoji) {
       const d = db(); const row = { note_id: noteId, user_id: meId(), emoji };
@@ -1093,6 +1097,7 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v48", date: "2026-10-22", title: "Scores tab", items: ["Scores tab in Games: each game's best run per person, with a podium for the top three", "Game scores are saved to the board and update every 15 seconds", "Quick Draw now reports its score too"] },
   { v: "soy-v47", date: "2026-10-22", title: "Games are back", items: ["Games button in the bottom bar, with 11 single-player games", "Bottom bar is centred; the + button moved into the right-hand tools column"] },
   { v: "soy-v46", date: "2026-10-21", title: "Fresh start", items: ["A clean start: no games"] },
 ];
@@ -3016,38 +3021,164 @@ const GAMES = [
   { slug: "lantern-hop", icon: "🏮", name: "Lantern Hop", blurb: "Hop stone to stone" },
   { slug: "neon-kestrel", icon: "🌃", name: "Neon Kestrel", blurb: "Endless neon flyer" },
 ];
-let gsPlaying = null;
+let gsPlaying = null;        // game open in the iframe
+let gsMode = "games";        // games | play | scores | board
+let gsBoardGame = null;      // game whose board is open in the Scores tab
+let scoresData = [];         // every saved score for this board
+const PENDING_KEY = "pinned.scores.pending";
+
+function el(tag, cls, text) { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+
 function renderGames() {
   const list = $("#gsList");
   if (list.childElementCount) return;
   for (const g of GAMES) {
-    const b = document.createElement("button");
-    b.className = "gs-card";
-    b.innerHTML = `<i class="gs-ic" aria-hidden="true"></i><b></b><span></span>`;
-    b.querySelector(".gs-ic").textContent = g.icon;
-    b.querySelector("b").textContent = g.name;
-    b.querySelector("span").textContent = g.blurb;
+    const b = el("button", "gs-card");
+    b.append(el("i", "gs-ic", g.icon), el("b", null, g.name), el("span", null, g.blurb));
     b.onclick = () => playGame(g);
     list.appendChild(b);
   }
 }
+function setGsTabs(on) {
+  $("#gsTabs").hidden = !on;
+  $("#gsTabGames").classList.toggle("on", on === "games");
+  $("#gsTabScores").classList.toggle("on", on === "scores");
+}
 function showGamesList() {
-  gsPlaying = null;
-  $("#gsFrame").src = "about:blank";   // stops the game and its sound
-  $("#gsPlay").hidden = true;
-  $("#gsList").hidden = false;
-  $("#gsTitle").textContent = "Games";
+  gsMode = "games"; gsPlaying = null;
+  $("#gsFrame").src = "about:blank";          // stops the game and its sound
+  $("#gsPlay").hidden = true; $("#gsScores").hidden = true; $("#gsList").hidden = false;
+  setGsTabs("games"); $("#gsTitle").textContent = "Games";
+}
+function showScoresList() {
+  gsMode = "scores"; gsBoardGame = null; gsPlaying = null;
+  $("#gsFrame").src = "about:blank";
+  $("#gsPlay").hidden = true; $("#gsList").hidden = true; $("#gsScores").hidden = false;
+  setGsTabs("scores"); $("#gsTitle").textContent = "Scores";
+  renderScores(); loadScores();
 }
 function openGames() { renderGames(); showGamesList(); $("#gamesScreen").hidden = false; }
-function closeGames() { showGamesList(); $("#gamesScreen").hidden = true; }
+function closeGames() { gsMode = "games"; $("#gsFrame").src = "about:blank"; $("#gamesScreen").hidden = true; }
 function playGame(g) {
-  gsPlaying = g;
-  $("#gsList").hidden = true;
-  $("#gsPlay").hidden = false;
-  $("#gsTitle").textContent = g.name;
+  gsMode = "play"; gsPlaying = g;
+  $("#gsList").hidden = true; $("#gsScores").hidden = true; $("#gsPlay").hidden = false;
+  setGsTabs(null); $("#gsTitle").textContent = g.name;
   $("#gsFrame").src = `games/${g.slug}/index.html`;
 }
-function backFromGames() { if (gsPlaying) showGamesList(); else closeGames(); }
+function backFromGames() {
+  if (gsMode === "play") return showGamesList();
+  if (gsMode === "board") return showScoresList();
+  closeGames();
+}
+
+// ---- Scores: each person's best run per game, shared by everyone on the board ----
+function scoreAvatar(m) {
+  const a = el("span", "sc-av");
+  const url = m && m.avatar_path && state.urls[m.avatar_path];
+  a.style.background = BRIGHT[m && m.color] || BRIGHT.c1;
+  if (url) a.style.backgroundImage = `url("${url}")`;
+  else a.textContent = ((m && m.name) || "?").slice(0, 1).toUpperCase();
+  return a;
+}
+function scoreName(id) {
+  if (state.me && id === state.me.id) return "You";
+  const m = memberById(id);
+  return m ? m.name : "Someone";
+}
+// best run per person for one game, highest first
+function bestRows(slug) {
+  const best = new Map();
+  for (const r of scoresData) {
+    if (r.game !== slug) continue;
+    const cur = best.get(r.user_id);
+    if (!cur || r.score > cur.score) best.set(r.user_id, { user_id: r.user_id, score: r.score, at: r.created_at });
+  }
+  return [...best.values()].sort((a, b) => b.score - a.score);
+}
+function renderScores() {
+  const wrap = $("#gsScores");
+  wrap.innerHTML = "";
+  if (gsMode === "board" && gsBoardGame) return renderBoard(wrap, gsBoardGame);
+  for (const g of GAMES) {
+    const rows = bestRows(g.slug);
+    const top = rows[0];
+    const mine = rows.find((r) => state.me && r.user_id === state.me.id);
+    const row = el("button", "sc-row");
+    const info = el("span", "sc-name");
+    info.append(el("b", null, g.name), el("small", null, top ? `${scoreName(top.user_id)} leads · You ${mine ? mine.score : "—"}` : "No scores yet"));
+    const lead = el("span", "sc-lead");
+    if (top) lead.append(scoreAvatar(memberById(top.user_id)), el("span", null, String(top.score)));
+    else lead.append(el("span", null, "—"));
+    row.append(el("i", "gs-ic", g.icon), info, lead);
+    row.onclick = () => openScoreBoard(g);
+    wrap.appendChild(row);
+  }
+}
+function openScoreBoard(g) { gsMode = "board"; gsBoardGame = g; $("#gsTitle").textContent = g.name; renderScores(); }
+function renderBoard(wrap, g) {
+  const back = el("button", "sc-back", "‹ All scores");
+  back.onclick = () => { gsMode = "scores"; gsBoardGame = null; $("#gsTitle").textContent = "Scores"; renderScores(); };
+  wrap.appendChild(back);
+  const rows = bestRows(g.slug);
+  if (!rows.length) { wrap.appendChild(el("p", "sc-empty", `No scores yet. Play ${g.name} to get on the board.`)); return; }
+  // podium: 2nd, 1st, 3rd
+  const pod = el("div", "sc-podium");
+  for (const i of [1, 0, 2]) {
+    const r = rows[i]; if (!r) continue;
+    const p = el("div", "sc-pod");
+    p.append(scoreAvatar(memberById(r.user_id)), el("b", null, scoreName(r.user_id)), el("small", null, `${r.score} pts`), el("div", `sc-stand r${i + 1}`, String(i + 1)));
+    pod.appendChild(p);
+  }
+  wrap.appendChild(pod);
+  // everyone else, numbered
+  rows.forEach((r, i) => {
+    if (i < 3) return;
+    const it = el("div", "sc-item" + (state.me && r.user_id === state.me.id ? " me" : ""));
+    const who = el("span", "sc-who");
+    const date = new Date(r.at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    who.append(document.createTextNode(scoreName(r.user_id)), el("small", null, date));
+    it.append(el("span", "sc-rank", String(i + 1)), scoreAvatar(memberById(r.user_id)), who, el("span", "sc-pts", String(r.score)));
+    wrap.appendChild(it);
+  });
+}
+
+async function loadScores() {
+  if (!state.board) return;
+  await flushScores();
+  try { scoresData = await api.listScores(state.board.id); } catch { /* keep what we have */ }
+  if (!$("#gamesScreen").hidden && (gsMode === "scores" || gsMode === "board")) renderScores();
+}
+function loadPending() { try { return JSON.parse(localStorage.getItem(PENDING_KEY) || "[]"); } catch { return []; } }
+function savePending(list) { try { localStorage.setItem(PENDING_KEY, JSON.stringify(list)); } catch { /* storage blocked */ } }
+// sends any scores that did not go through yet (e.g. when offline)
+async function flushScores() {
+  const list = loadPending();
+  if (!list.length || !state.board) return;
+  const left = [];
+  for (const it of list) {
+    if (it.boardId !== state.board.id) { left.push(it); continue; }
+    try { await api.submitScore(it.boardId, it.game, it.score); } catch { left.push(it); }
+  }
+  savePending(left);
+}
+async function saveScore(g, score) {
+  if (!state.board) return;
+  const s = Math.round(score);
+  if (!Number.isFinite(s) || s < 0) return;
+  savePending([...loadPending(), { boardId: state.board.id, game: g.slug, score: s }]);
+  await flushScores();
+  toast(`Saved ${s} in ${g.name}`);
+  loadScores();
+}
+// games report their score when a run ends (postMessage from the game's iframe)
+window.addEventListener("message", (e) => {
+  const d = e.data;
+  if (!gsPlaying || e.origin !== location.origin || e.source !== $("#gsFrame").contentWindow) return;
+  if (!d || d.pinned !== 1 || d.t !== "over" || typeof d.score !== "number") return;
+  saveScore(gsPlaying, d.score);
+});
+// keep the Scores tab fresh while it is open
+setInterval(() => { if (!$("#gamesScreen").hidden && (gsMode === "scores" || gsMode === "board")) loadScores(); }, 15000);
 function closeSheet(name) {
   $("#" + name).hidden = true; $("#" + name + "Backdrop").hidden = true;
   if (name === "detail") { detailId = null; if (detailAudio) { detailAudio.pause(); detailAudio = null; } $("#detailBody").innerHTML = ""; }
@@ -5096,6 +5227,8 @@ function wireStatic() {
   $("#dockMore").onclick = () => openSheet("more");
   $("#dockGames").onclick = openGames;
   $("#gsBack").onclick = backFromGames;
+  $("#gsTabGames").onclick = showGamesList;
+  $("#gsTabScores").onclick = showScoresList;
   $("#moreBackdrop").onclick = () => closeSheet("more");
   $("#moreClose").onclick = () => closeSheet("more");
   $("#noteMenuBackdrop").onclick = () => closeSheet("noteMenu");

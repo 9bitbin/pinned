@@ -5,7 +5,9 @@
  * solo version of it:
  *   - race is always false, so every game plays as a normal single-player game
  *   - there are no ghosts (no other players to show)
- *   - state(), send() and on() do nothing
+ *   - send(t, data) reports a finished run to the Pinned app (only when the game
+ *     is inside the app's Scores panel, which is an iframe). Otherwise it does nothing
+ *   - state() and on() do nothing
  *   - rng(seed) is a small seeded random-number generator the games use for layouts
  */
 (function () {
@@ -21,7 +23,12 @@
   window.PB = {
     embed: false, race: false, mode: "solo", seed: 0, color: "#ff8fb1", name: "",
     rng, ghosts: new Map(),
-    send() {}, state() {}, on() {},
+    send(t, data) {
+      // Report the run to the page that holds this game (the Scores panel).
+      if (window.parent === window) return;
+      try { window.parent.postMessage({ pinned: 1, t, ...(data || {}) }, location.origin); } catch (e) { /* ignore */ }
+    },
+    state() {}, on() {},
     ghostD: (g) => g.d, ghostY: (g) => g.y,
   };
 })();

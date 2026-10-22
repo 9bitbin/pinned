@@ -155,6 +155,8 @@ function finish() {
   const avg = Math.round(times.reduce((a, b) => a + b, 0) / times.length);
   const score = scoreFor(avg);
   saveBest(score);
+  // Report the score to the Pinned app's Scores panel (only when inside it).
+  if (window.parent !== window) { try { window.parent.postMessage({ pinned: 1, t: 'over', score }, location.origin); } catch (e) { /* ignore */ } }
   setPad('wait', `Average ${avg} ms`);
   info.textContent = `Your times: ${times.join(' · ')} ms`;
   bestEl.textContent = `Score ${score} · Best ${readBest()}`;
