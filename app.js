@@ -60,7 +60,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v50";
+const APP_VERSION = "soy-v51";
 
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
@@ -304,6 +304,14 @@ function createSupabaseApi() {
     async replyFeedback(thread, parent, body, anonymous) { must(await sb.rpc("feedback_reply", { p_thread: thread, p_parent: parent, p_body: body, p_anonymous: anonymous })); },
     async deleteFeedback(kind, id) { must(await sb.rpc("feedback_delete", { p_kind: kind, p_id: id })); },
     async reportFeedback(kind, id, reason) { must(await sb.rpc("feedback_report", { p_kind: kind, p_id: id, p_reason: reason })); },
+    async isFeedbackAdmin() { const res = await sb.rpc("is_feedback_admin"); return !res.error && res.data === true; },
+    async adminListReports() {
+      const rows = must(await sb.rpc("admin_list_reports")) || [];
+      return rows.map((r) => ({ kind: r.out_kind, target_id: r.out_target_id, body: r.out_body, title: r.out_title, anonymous: !!r.out_anonymous, author_name: r.out_author_name, reasons: r.out_reasons || [], count: r.out_count, first_reported: r.out_first_reported, hidden: !!r.out_hidden, thread_id: r.out_thread_id }));
+    },
+    async adminHide(kind, id) { must(await sb.rpc("admin_hide_post", { p_kind: kind, p_id: id })); },
+    async adminRestore(kind, id) { must(await sb.rpc("admin_restore_post", { p_kind: kind, p_id: id })); },
+    async adminDismiss(kind, id) { must(await sb.rpc("admin_dismiss_reports", { p_kind: kind, p_id: id })); },
     async listScores(boardId) { return must(await sb.from("board_scores").select("user_id,game,score,created_at").eq("board_id", boardId).order("score", { ascending: false }).limit(5000)); },
     async submitScore(boardId, game, score) { must(await sb.from("board_scores").insert({ board_id: boardId, user_id: myId(), game, score })); },
     async addReaction(r) { must(await sb.from("reactions").insert(r)); },
@@ -557,8 +565,8 @@ function createDemoApi() {
       const deleted = !!row.deleted_at;
       return {
         id: row.id, thread_id: isPost ? row.thread_id : undefined, parent_post_id: isPost ? (row.parent_post_id || null) : undefined,
-        title: !isPost && !deleted ? row.title : (isPost ? undefined : null),
-        body: deleted ? null : row.body, anonymous: !!row.anonymous, created_at: row.created_at, deleted_at: row.deleted_at || null,
+        title: !isPost && !deleted && !row.hidden_at ? row.title : (isPost ? undefined : null),
+        body: deleted || row.hidden_at ? null : row.body, anonymous: !!row.anonymous, created_at: row.created_at, deleted_at: row.deleted_at || null, is_hidden: !!row.hidden_at,
         author_name: row.anonymous ? null : (author.name || "Someone"), author_avatar: row.anonymous ? null : (author.avatar_path || null),
         is_mine: row.author_id === meId(),
         reply_count: isPost ? undefined : d.fb.posts.filter((p) => p.thread_id === row.id && !p.deleted_at).length,
@@ -579,7 +587,31 @@ function createDemoApi() {
       if (!row) throw new Error("You can only delete your own posts");
       row.deleted_at = new Date().toISOString(); save(d);
     },
-    async reportFeedback(kind, id, reason) { const d = db(); d.fb.reports.push({ id: uid(), kind, target_id: id, reporter_id: meId(), reason: reason.slice(0, 200), created_at: new Date().toISOString() }); save(d); },
+    async isFeedbackAdmin() { return true; },
+    async adminListReports() {
+      const d = db(); const targets = new Map();
+      for (const r of d.fb.reports) {
+        const key = r.kind + "|" + r.target_id;
+        if (!targets.has(key)) targets.set(key, { kind: r.kind, id: r.target_id, reports: [] });
+        targets.get(key).reports.push(r);
+      }
+      const out = [];
+      for (const t of targets.values()) {
+        const row = (t.kind === "thread" ? d.fb.threads : d.fb.posts).find((x) => x.id === t.id);
+        if (!row || row.deleted_at) continue;
+        const open = t.reports.filter((x) => x.status === "open");
+        if (!open.length && !row.hidden_at) continue;
+        const author = d.profiles[row.author_id] || {};
+        out.push({ kind: t.kind, target_id: t.id, body: row.body, title: t.kind === "thread" ? row.title : null, anonymous: !!row.anonymous,
+          author_name: row.anonymous ? null : (author.name || "Someone"), reasons: t.reports.map((x) => x.reason), count: t.reports.length,
+          first_reported: t.reports.map((x) => x.created_at).sort()[0], hidden: !!row.hidden_at, thread_id: t.kind === "post" ? row.thread_id : t.id });
+      }
+      return out.sort((a, b) => b.count - a.count);
+    },
+    async adminHide(kind, id) { const d = db(); const row = (kind === "thread" ? d.fb.threads : d.fb.posts).find((x) => x.id === id); if (!row) throw new Error("Not found"); row.hidden_at = new Date().toISOString(); row.hidden_by = meId(); d.fb.reports.forEach((r) => { if (r.kind === kind && r.target_id === id && r.status === "open") { r.status = "actioned"; r.resolved_at = new Date().toISOString(); } }); save(d); },
+    async adminRestore(kind, id) { const d = db(); const row = (kind === "thread" ? d.fb.threads : d.fb.posts).find((x) => x.id === id); if (!row) throw new Error("Not found"); row.hidden_at = null; row.hidden_by = null; save(d); },
+    async adminDismiss(kind, id) { const d = db(); d.fb.reports.forEach((r) => { if (r.kind === kind && r.target_id === id && r.status === "open") { r.status = "dismissed"; r.resolved_at = new Date().toISOString(); } }); save(d); },
+    async reportFeedback(kind, id, reason) { const d = db(); if (d.fb.reports.some((r) => r.kind === kind && r.target_id === id && r.reporter_id === meId())) throw new Error("You already reported this"); d.fb.reports.push({ id: uid(), kind, target_id: id, reporter_id: meId(), reason: reason.slice(0, 200), created_at: new Date().toISOString(), status: "open" }); save(d); },
     async listScores(boardId) { return db().scores.filter((s) => s.board_id === boardId).map((s) => ({ user_id: s.user_id, game: s.game, score: s.score, created_at: s.created_at })); },
     async submitScore(boardId, game, score) { const d = db(); d.scores.push({ id: uid(), board_id: boardId, user_id: meId(), game, score, created_at: new Date().toISOString() }); save(d); },
     async addReaction(r) { const d = db(); d.reactions.push(r); save(d); emit({ type: "reaction", row: r, del: false }); },
@@ -1150,6 +1182,7 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v51", date: "2026-10-22", title: "Moderation and the Pinned name", items: ["Moderators (set in the database) can review reported feedback, hide or restore posts, and dismiss reports", "Hidden posts show a notice instead of their text, and are left out of exports", "One report per person per post", "App renamed to Pinned in the setup guide and notifications"] },
   { v: "soy-v50", date: "2026-10-22", title: "Feedback cycle, replies and email change", items: ["Feedback cycle in Messages: one shared space for everyone across all rooms, with threads and replies", "Post feedback as yourself or anonymously. Anonymous hides your name from other users", "Reply to chat messages, with the original quoted", "Report a post, or delete your own", "Export feedback as a CSV from the Feedback cycle screen", "Change your sign-in email from Account"] },
   { v: "soy-v49", date: "2026-10-22", title: "Rooms get names, photos and locks", items: ["Rename your room and add a room photo. Both show on the room list and at the top of the board, and update live", "Lock a room to stop new people joining with the code. Existing members are never locked out", "Room cards show the lock and the room code"] },
   { v: "soy-v48", date: "2026-10-22", title: "Scores tab", items: ["Scores tab in Games: each game's best run per person, with a podium for the top three", "Game scores are saved to the board and update every 15 seconds", "Quick Draw now reports its score too"] },
@@ -4379,11 +4412,11 @@ function renderFeedback() {
   const seen = fbSeen();
   for (const t of fb.threads) {
     const b = el("button", "fb-item");
-    if (t.deleted_at) b.classList.add("deleted");
+    if (t.deleted_at || t.is_hidden) b.classList.add("deleted");
     if (!t.is_mine && t.created_at > seen) b.classList.add("unread");
     const top = el("div", "fb-top"); top.append(fbWho(t), el("small", null, timeAgo(t.created_at)));
     const n = t.reply_count || 0;
-    b.append(top, el("b", "fb-title", t.deleted_at ? "This post was deleted" : t.title), el("span", "fb-meta", `${n} repl${n === 1 ? "y" : "ies"}`));
+    b.append(top, el("b", "fb-title", t.deleted_at ? "This post was deleted" : t.is_hidden ? "Hidden by moderators" : t.title), el("span", "fb-meta", `${n} repl${n === 1 ? "y" : "ies"}`));
     b.onclick = () => { fb.open = t.id; fb.replyTo = null; renderFeedback(); };
     list.appendChild(b);
   }
@@ -4393,7 +4426,7 @@ function renderFbThread() {
   if (!t) { fb.open = null; return renderFeedback(); }
   $("#fbList").hidden = true; $("#fbNew").hidden = true; $("#fbNewBtn").hidden = true; $("#fbToolbar").hidden = true; $("#fbExport").hidden = true;
   $("#fbThreadWrap").hidden = false;
-  $("#fbTitle").textContent = t.deleted_at ? "Deleted thread" : t.title;
+  $("#fbTitle").textContent = t.deleted_at ? "Deleted thread" : t.is_hidden ? "Hidden thread" : t.title;
   $("#fbSub").textContent = t.anonymous ? "Anonymous thread" : `Started by ${t.author_name || "someone"}`;
   const box = $("#fbPosts"); box.innerHTML = "";
   box.appendChild(fbCard(t, true));
@@ -4407,16 +4440,18 @@ function fbCard(item, isThread) {
   const card = el("div", "fb-card" + (isThread ? " fb-root" : "") + (item.deleted_at ? " deleted" : ""));
   const head = el("div", "fb-top"); head.append(fbWho(item), el("small", null, timeAgo(item.created_at)));
   card.appendChild(head);
-  if (isThread && !item.deleted_at) card.appendChild(el("b", "fb-title", item.title));
-  card.appendChild(el("p", "fb-body", item.deleted_at ? "This post was deleted" : item.body));
+  if (isThread && !item.deleted_at && !item.is_hidden) card.appendChild(el("b", "fb-title", item.title));
+  card.appendChild(el("p", "fb-body", item.deleted_at ? "This post was deleted" : item.is_hidden ? "Hidden by moderators" : item.body));
   if (!item.deleted_at) {
     const acts = el("div", "fb-acts");
-    const reply = el("button", null, "Reply"); reply.type = "button";
-    reply.onclick = () => { fb.replyTo = isThread ? null : item.id; fbUpdateReplyBar(); $("#fbReplyInput").focus(); };
-    acts.appendChild(reply);
+    if (!item.is_hidden) {
+      const reply = el("button", null, "Reply"); reply.type = "button";
+      reply.onclick = () => { fb.replyTo = isThread ? null : item.id; fbUpdateReplyBar(); $("#fbReplyInput").focus(); };
+      acts.appendChild(reply);
+    }
     if (item.is_mine) { const del = el("button", null, "Delete"); del.type = "button"; del.onclick = () => fbDelete(isThread ? "thread" : "post", item.id); acts.appendChild(del); }
-    else { const rep = el("button", null, "Report"); rep.type = "button"; rep.onclick = () => fbReport(isThread ? "thread" : "post", item.id); acts.appendChild(rep); }
-    card.appendChild(acts);
+    else if (!item.is_hidden) { const rep = el("button", null, "Report"); rep.type = "button"; rep.onclick = () => fbReport(isThread ? "thread" : "post", item.id); acts.appendChild(rep); }
+    if (acts.childElementCount) card.appendChild(acts);
   }
   return card;
 }
@@ -4467,8 +4502,8 @@ function fbExportCsv() {
   const titleOf = new Map(fb.threads.map((t) => [t.id, t.title]));
   const author = (x) => (x.anonymous ? "Anonymous" : x.author_name || "");
   const rows = [["type", "thread_title", "body", "posted_at", "author", "reply_to_id"]];
-  for (const t of fb.threads) if (!t.deleted_at && inRange(t.created_at)) rows.push(["thread", t.title, t.body, t.created_at, author(t), ""]);
-  for (const p of fb.posts) if (!p.deleted_at && inRange(p.created_at)) rows.push(["reply", titleOf.get(p.thread_id) || "", p.body, p.created_at, author(p), p.parent_post_id || ""]);
+  for (const t of fb.threads) if (!t.deleted_at && !t.is_hidden && inRange(t.created_at)) rows.push(["thread", t.title, t.body, t.created_at, author(t), ""]);
+  for (const p of fb.posts) if (!p.deleted_at && !p.is_hidden && inRange(p.created_at)) rows.push(["reply", titleOf.get(p.thread_id) || "", p.body, p.created_at, author(p), p.parent_post_id || ""]);
   const csv = "﻿" + rows.map((r) => r.map(fbCsvCell).join(",")).join("\r\n") + "\r\n";
   const a = document.createElement("a");
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -4478,8 +4513,61 @@ function fbExportCsv() {
   toast(`Exported ${rows.length - 1} row${rows.length === 2 ? "" : "s"}`);
 }
 
+// ---------------------------------------------------------------- moderation (feedback admins only)
+async function renderModRow() {
+  try { $("#modOpen").hidden = !(await api.isFeedbackAdmin()); }
+  catch { $("#modOpen").hidden = true; }
+}
+async function openModeration() {
+  closeSheet("settings");
+  openChats();
+  $("#chatList").hidden = true; $("#chatThread").hidden = true; $("#feedbackView").hidden = true;
+  $("#modView").hidden = false;
+  await loadMod();
+}
+function closeModeration() { $("#modView").hidden = true; $("#chatList").hidden = false; renderThreadList(); }
+async function loadMod() {
+  const list = $("#modList"); list.innerHTML = "";
+  list.appendChild(el("p", "sc-empty", "Loading…"));
+  let rows;
+  try { rows = await api.adminListReports(); }
+  catch (e) { list.innerHTML = ""; list.appendChild(el("p", "sc-empty", e.message || "Couldn't load reports")); return; }
+  list.innerHTML = "";
+  $("#modSub").textContent = `${rows.length} post${rows.length === 1 ? "" : "s"} to review`;
+  if (!rows.length) list.appendChild(el("p", "sc-empty", "No open reports."));
+  for (const r of rows) list.appendChild(modCard(r));
+}
+function modCard(r) {
+  const card = el("div", "fb-card" + (r.hidden ? " deleted" : ""));
+  const head = el("div", "fb-top");
+  head.append(el("b", null, r.kind === "thread" ? "Thread" : "Reply"), el("small", null, `${r.count} report${r.count === 1 ? "" : "s"}`));
+  card.appendChild(head);
+  if (r.title) card.appendChild(el("b", "fb-title", r.title));
+  card.appendChild(el("p", "fb-body", r.body || "(no text)"));
+  card.appendChild(el("small", "fb-meta", r.anonymous ? "Anonymous author (hidden from moderators)" : `By ${r.author_name || "someone"}`));
+  const reasons = el("ul", "mod-reasons");
+  for (const x of r.reasons) reasons.appendChild(el("li", null, x));
+  card.appendChild(reasons);
+  card.appendChild(el("small", "fb-meta", `First report ${timeAgo(r.first_reported)}${r.hidden ? " · Currently hidden" : ""}`));
+  const acts = el("div", "fb-acts");
+  const main = el("button", null, r.hidden ? "Restore" : "Hide");
+  main.type = "button"; main.onclick = () => modAct(r.hidden ? "restore" : "hide", r);
+  const dis = el("button", null, "Dismiss reports"); dis.type = "button"; dis.onclick = () => modAct("dismiss", r);
+  acts.append(main, dis); card.appendChild(acts);
+  return card;
+}
+async function modAct(action, r) {
+  try {
+    if (action === "hide") await api.adminHide(r.kind, r.target_id);
+    else if (action === "restore") await api.adminRestore(r.kind, r.target_id);
+    else await api.adminDismiss(r.kind, r.target_id);
+    toast(action === "hide" ? "Hidden from everyone" : action === "restore" ? "Restored" : "Reports dismissed");
+    await loadMod(); await loadFeedback(true);
+  } catch (e) { toast(e.message || "Couldn't do that", 5000); }
+}
+
 function openChats() {
-  chat.peer = null; $("#feedbackView").hidden = true; chat.replyTo = null; updateReplyBar();
+  chat.peer = null; $("#feedbackView").hidden = true; $("#modView").hidden = true; chat.replyTo = null; updateReplyBar();
   $("#chatList").hidden = false; $("#chatThread").hidden = true;
   renderThreadList();
   openSheet("chats");
@@ -5203,6 +5291,7 @@ function renderMutes() {
 async function renderAccount() {
   const st = $("#acctStatus"), row = $("#acctLinkRow"), out = $("#logoutBtn"), chg = $("#acctChangeOpen"), crow = $("#acctChangeRow");
   st.textContent = "…"; row.hidden = true; out.hidden = true; chg.hidden = true; crow.hidden = true;
+  renderModRow();
   try {
     const a = await api.account();
     if (a.pending) { st.textContent = `Check ${a.pending} and tap the link to finish updating your email.`; row.hidden = false; $("#acctEmail").value = a.pending; $("#acctLinkBtn").textContent = "Resend link"; }
@@ -5582,6 +5671,8 @@ function wireStatic() {
   $("#memberChips").onclick = openPeople;
   $("#dockChats").onclick = openChats;
   $("#fbBack").onclick = fbBack;
+  $("#modBack").onclick = closeModeration;
+  $("#modOpen").onclick = openModeration;
   $("#fbExport").onclick = fbExportCsv;
   $("#fbNewBtn").onclick = () => { fb.view = "new"; renderFeedback(); $("#fbNewTitle").focus(); };
   $("#fbNewCancel").onclick = () => { fb.view = "list"; renderFeedback(); };

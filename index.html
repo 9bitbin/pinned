@@ -545,6 +545,7 @@
         <button class="btn small" id="acctChangeBtn">Send link</button>
       </div>
       <button class="btn small" id="acctChangeOpen" hidden>Change email</button>
+      <button class="btn small" id="modOpen" hidden>Moderation</button>
       <button class="btn small danger" id="logoutBtn" hidden>Log out of this phone</button>
       <p class="small-note privacy-link"><a href="privacy.html">Privacy and your data</a></p>
       </div>
@@ -695,6 +696,13 @@
         </div>
       </div>
       <div class="fb-foot"><button class="btn primary" id="fbNewBtn">New thread</button></div>
+    </div>
+    <div id="modView" hidden>
+      <div class="thread-head">
+        <button class="iconbtn" id="modBack" aria-label="Back">‹</button>
+        <div><b>Moderation</b><small id="modSub">Posts to review</small></div>
+      </div>
+      <div class="fb-list" id="modList"></div>
     </div>
     <div class="sheet-actions"><button class="btn" id="chatsClose">Close</button></div>
   </section>
