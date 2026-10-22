@@ -618,12 +618,16 @@ function btn(x, y, w, h, label, { sel = false, dim = false, idx, onClick } = {})
   rr(x, y, w, h, 14); g.fill(); g.stroke();
   g.textAlign = "center"; g.textBaseline = "middle";
   g.fillStyle = dim ? "rgba(255,255,255,.4)" : sel ? "#ffe066" : "#f4eefc";
-  g.font = "bold 22px system-ui, sans-serif"; g.fillText(label, x + w / 2, y + h / 2);
+  // Shrink long labels so they fit inside the button.
+  let size = 22;
+  g.font = `bold ${size}px system-ui, sans-serif`;
+  while (size > 12 && g.measureText(label).width > w - 24) { size--; g.font = `bold ${size}px system-ui, sans-serif`; }
+  g.fillText(label, x + w / 2, y + h / 2);
   g.restore();
   if (onClick) hits.push({ x, y, w, h, idx, click: onClick });
 }
 function drawMenu() {
-  g.fillStyle = "rgba(10,6,25,.7)"; g.fillRect(0, 0, W, H);
+  g.fillStyle = "rgba(10,6,25,.94)"; g.fillRect(0, 0, W, H);
   g.textAlign = "center"; g.textBaseline = "alphabetic";
   g.fillStyle = "#ffe066"; g.font = "bold 64px system-ui, sans-serif"; g.fillText("PARRY BRAWL", W / 2, 130);
   g.fillStyle = "rgba(244,238,252,.8)"; g.font = "18px system-ui, sans-serif"; g.fillText("A platform fighter. Parry to win.", W / 2, 170);
