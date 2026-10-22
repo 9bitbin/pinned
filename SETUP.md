@@ -266,28 +266,6 @@ Notes: Spotify plays 30-second previews unless you're logged in to Spotify in th
 
 ---
 
-## Upgrade to v7: Phase 3, Round 1 (games)
-
-1. Supabase > SQL Editor > paste `supabase/upgrade-v7.sql` > **Run** (v2–v6 first).
-2. Supabase > Edge Functions > notify > paste the new `supabase/notify/index.ts` > **Deploy** (page should say `"version":5`).
-3. On GitHub, upload `app.js`, `index.html`, `styles.css` and `sw.js`. Then create a **games** folder (Add file > Upload files, and drag the whole `games` folder in) with `bridge.js`, `neon-kestrel.html`, `pin-drop.html` and `paper-plane.html`.
-4. Close and reopen the app twice on every phone.
-
-| Feature | How |
-|---|---|
-| Games | 🎮 Games in the bottom bar |
-| Play solo | Play by yourself any time. Every round counts on the board's scoreboard |
-| Race | Everyone on the board gets an invite and has 20 seconds to join (the host can tap **Start now**). After a 3-2-1 countdown, everyone plays the same course and sees the others as see-through ghosts. One run each; then the results. Someone who opens the app mid-race joins the next one |
-| Scores | **Scores** on any game: each person's best and the last 10 rounds. Passing someone's best sends them a "beat your score" notification |
-| Neon Kestrel | Tap to flap. Music starts off (turn it on in the game's Settings) |
-| Pin Drop | Tap to drop the swinging pin on the sliding bullseye. 10 drops; bullseyes in a row give a bonus |
-| Paper Plane | Hold to climb, let go to dive. Slip through the pin boards and grab hearts |
-| Tic-tac-toe | **vs Computer** (Easy or Hard) or **Challenge** someone. Take your turns whenever, live or hours apart. Anyone on the board can watch. Your win record shows on the card |
-
-New mutes in Settings: Race invites, Someone beats your best score, Tic-tac-toe. Without step 1, solo games still work, but scores and tic-tac-toe challenges aren't saved.
-
----
-
 ## Live location (opt-in, both ways)
 
 No database or notify changes. Upload `app.js`, `index.html`, `styles.css` and `sw.js` to GitHub, then close and reopen the app twice on every phone.
@@ -304,44 +282,6 @@ Important notes:
 - It only works **while Pinned is open** on each person's phone. Phones (especially iPhone) stop web apps from reading location in the background, so this isn't 24/7 tracking like Find My — that would need a real native app.
 - Locations are **live only** — they're sent phone-to-phone through the live channel and never saved in the database.
 - Your choice is remembered per board, so if you leave it on it comes back on next time you open that board (your phone may ask permission again).
-
----
-
-## Upgrade to v8: Phase 3, Round 2 (Block Drop, Type Race, Crazy 8s)
-
-1. Supabase > SQL Editor > paste `supabase/upgrade-v8.sql` > **Run** (v2–v7 first).
-2. Supabase > Edge Functions > notify > paste the new `supabase/notify/index.ts` > **Deploy** (page should say `"version":6`).
-3. On GitHub, upload `app.js`, `index.html`, `styles.css`, `sw.js`, and add the three new files to the **games** folder: `block-drop.html`, `type-race.html` (plus the existing `bridge.js`). Crazy 8s is built into the app itself.
-4. Close and reopen the app twice on every phone.
-
-| Game | How |
-|---|---|
-| Block Drop | Tetris-style. Buttons or swipes; clear lines. Solo or race (everyone gets the same pieces) |
-| Type Race | Type the passage fast and clean. Solo or race (same text for all). Score is net WPM; pasting is blocked |
-| Crazy 8s | **vs Computer** (easy/hard) or **Challenge** someone. Match the suit or rank of the top card; 8s are wild (you pick the next suit); first to empty their hand wins. Live or turn-by-turn; cards are dealt server-side so nobody can see your hand |
-
-New mute: **Crazy 8s**. Without step 1, the arcade games still play solo but scores and Crazy 8s challenges aren't saved.
-
-**Also in this round:** `SPEAKING-GAME-PROMPT.md` — a full build spec for a future multilanguage speaking-contest game (not built yet, because it leans on phone speech recognition that's unreliable on iPhone; the spec designs around that).
-
----
-
-## Upgrade to v9: Polyglot (multilanguage speaking game)
-
-1. Supabase > SQL Editor > paste `supabase/upgrade-v9.sql` > **Run** (v2–v8 first). It just lets the scoreboard store Polyglot scores — no new tables.
-2. Supabase > Edge Functions > notify > paste the new `supabase/notify/index.ts` > **Deploy** (page should say `"version":7`).
-3. On GitHub, add `games/polyglot.html` to the games folder, and upload `app.js` and `sw.js`.
-4. Close and reopen the app twice on every phone.
-
-| Thing | How |
-|---|---|
-| Play | 🎮 Games > Polyglot. Pick a language, say each phrase out loud, 5 rounds. Solo or race (same phrases for everyone) |
-| Languages | English, Spanish, Mandarin, Nepali, French, Hindi |
-| Voice scoring | On Android/Chrome the phone listens and scores how close you got, plus a speed bonus |
-| iPhone | iPhones can't reliably score by voice, so Polyglot runs in **practice mode** there — hear the phrase with 🔊 Listen, then rate yourself (Nailed it / Close / Missed). Scores still count |
-| Fair play | Each round is capped; the race invite uses the existing "Race invites" mute |
-
-Full future plan (turn-based contests, a paid rock-solid iPhone scoring option) is in `SPEAKING-GAME-PROMPT.md`.
 
 ---
 
@@ -398,11 +338,6 @@ Profile picture uploads failed with `invalid input syntax for type uuid: "avatar
 
 1. Supabase > SQL Editor > paste `supabase/upgrade-v12.sql` > **Run**. It replaces the three photo rules and adds profile picture rules.
 2. Check a board photo still uploads, then try the profile picture again.
-
-## Hop (game)
-
-A stone-hopping game in `games/hop.html` with synthesized music. Race mode uses the same stones for both players.
-No database change. It's in the game list in `app.js`.
 
 ## Removed: Delete my account
 

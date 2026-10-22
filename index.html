@@ -148,7 +148,6 @@
       <button id="dockNotes" aria-label="Notes"  ><span class="ic"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 11L12 4l8.5 7"/><path d="M5.5 10v9.5h13V10"/><path d="M10 19.5v-5h4v5"/></svg></span><span class="lb">Notes</span></button>
       <button id="dockDoodle" aria-label="Draw together"><span class="ic"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M13.5 7.5l3 3"/></svg></span><span class="lb">Draw</span><i class="dot live" id="doodleDot" hidden></i></button>
       <button id="dockChats" aria-label="Messages"><span class="ic"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.6 8.6 0 0 1-3.6-.8L3 20l1.1-4.2A8.4 8.4 0 1 1 21 11.5z"/></svg></span><span class="lb">Chat</span><i class="dot" id="chatDot" hidden></i></button>
-      <button id="dockGames" aria-label="Games"><span class="ic"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="7" width="19" height="11" rx="5.5"/><path d="M7.5 12.5h3M9 11v3"/><circle cx="15.5" cy="11.5" r=".6"/><circle cx="17.5" cy="13.5" r=".6"/></svg></span><span class="lb">Games</span><i class="dot" id="gamesDot" hidden></i></button>
       <button id="dockMore" aria-label="More"  ><span class="ic"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5.5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18.5" cy="12" r="1.6"/></svg></span><span class="lb">More</span><i class="dot" id="moreDot" hidden></i></button>
     </nav>
     <div id="dockProxies" hidden>
@@ -180,7 +179,6 @@
       <button id="toolLoc" aria-label="Live location" title="Live location"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg><i class="dot live" id="locDot" hidden></i></button>
       <button id="toolFind" aria-label="Find someone" title="Find someone"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg></button>
       <button id="toolHome" aria-label="Back to the newest notes" title="Home"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 11L12 4l8.5 7"/><path d="M5.5 10v9.5h13V10"/><path d="M10 19.5v-5h4v5"/></svg></button>
-      <button id="toolMatrix" aria-label="Release the matrix flappy birds" title="Matrix birds"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13c3-5 7-6 10-3l3-3 3 2-2.5 2.5C17 16 12 19 8 17l-2 3-1-3z"/><circle cx="14.5" cy="10" r=".9" fill="currentColor"/></svg></button>
       <button id="toolDraw" aria-label="Draw on the board" title="Draw on the board"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M13.5 7.5l3 3"/></svg></button>
     </div>
     <div class="drawbar" id="drawBar" hidden>
@@ -635,156 +633,6 @@
     <div class="sheet-actions"><button class="btn" id="chatsClose">Close</button></div>
   </section>
 
-  <!-- Games -->
-  <div class="sheet-backdrop" id="gamesBackdrop" hidden></div>
-  <section class="sheet tall games" id="games" hidden aria-label="Games">
-    <div class="grab"></div>
-    <div id="gameListView">
-      <h2>Games</h2>
-      <p class="banner warn" id="gamesV7" hidden>Scores and tic-tac-toe need the latest database update (upgrade-v7.sql). Solo games still work.</p>
-      <div class="race-banner" id="raceBanner" hidden></div>
-      <div id="gameList"></div>
-    </div>
-    <div id="gameBoardView" hidden>
-      <div class="thread-head">
-        <button class="iconbtn" id="sbBack" aria-label="Back">‹</button>
-        <div><b id="sbTitle"></b><small>Scores on this board</small></div>
-      </div>
-      <h3>Best on this board</h3>
-      <ol class="lb" id="sbBest"></ol>
-      <h3>Last 10 rounds</h3>
-      <ul class="lb rounds" id="sbRecent"></ul>
-      <div class="sheet-actions"><button class="btn primary" id="sbSolo">Play solo</button><button class="btn" id="sbRace" hidden>Race</button></div>
-    </div>
-    <div class="sheet-actions"><button class="btn" id="gamesClose">Close</button></div>
-  </section>
-
-  <!-- Tic-tac-toe -->
-  <div class="sheet-backdrop" id="tttBackdrop" hidden></div>
-  <section class="sheet" id="ttt" hidden aria-label="Tic-tac-toe">
-    <div class="grab"></div>
-    <h2 id="tttTitle">Tic-tac-toe</h2>
-    <p class="ttt-status" id="tttStatus"></p>
-    <div class="seg" id="tttLevel" hidden>
-      <button data-level="easy" aria-pressed="true">Easy</button>
-      <button data-level="hard" aria-pressed="false">Hard</button>
-    </div>
-    <div class="ttt-grid" id="tttGrid"></div>
-    <div class="sheet-actions wrap">
-      <button class="btn primary" id="tttAccept" hidden>Accept</button>
-      <button class="btn" id="tttDecline" hidden>Not now</button>
-      <button class="btn primary" id="tttRematch" hidden>Rematch</button>
-      <button class="btn danger" id="tttQuit" hidden>Resign</button>
-      <button class="btn" id="tttClose">Back</button>
-    </div>
-  </section>
-
-  <!-- Play together: online two-player games -->
-  <div class="sheet-backdrop" id="duoBackdrop" hidden></div>
-  <section class="sheet" id="duo" hidden aria-label="Play together">
-    <div class="grab"></div>
-    <h2 id="duoTitle">Play together</h2>
-    <p class="ttt-status" id="duoStatus"></p>
-    <div class="c4-board" id="duoGrid"></div>
-    <div class="sheet-actions wrap">
-      <button class="btn primary" id="duoAccept" hidden>Accept</button>
-      <button class="btn" id="duoDecline" hidden>Not now</button>
-      <button class="btn primary" id="duoRematch" hidden>Rematch</button>
-      <button class="btn danger" id="duoQuit" hidden>Resign</button>
-      <button class="btn" id="duoClose">Back</button>
-    </div>
-  </section>
-
-  <!-- Crazy 8s -->
-  <div class="sheet-backdrop" id="c8Backdrop" hidden></div>
-  <section class="sheet tall c8" id="c8" hidden aria-label="Crazy 8s">
-    <div class="grab"></div>
-    <h2 id="c8Title">Crazy 8s</h2>
-    <p class="ttt-status" id="c8Status"></p>
-    <div class="seg" id="c8Level" hidden>
-      <button data-level="easy" aria-pressed="true">Easy</button>
-      <button data-level="hard" aria-pressed="false">Hard</button>
-    </div>
-    <div class="c8-opp" id="c8Opp"></div>
-    <div class="c8-mid" id="c8Mid"></div>
-    <div class="c8-suits" id="c8Suits" hidden><span>Choose a suit:</span></div>
-    <div class="c8-hand" id="c8Hand"></div>
-    <div class="sheet-actions wrap">
-      <button class="btn primary" id="c8Accept" hidden>Accept</button>
-      <button class="btn" id="c8Decline" hidden>Not now</button>
-      <button class="btn" id="c8Pass" hidden>Pass</button>
-      <button class="btn primary" id="c8Rematch" hidden>Rematch</button>
-      <button class="btn danger" id="c8Quit" hidden>Resign</button>
-      <button class="btn" id="c8Close">Back</button>
-    </div>
-  </section>
-
-  <!-- A game being played -->
-  <div class="game-overlay" id="gameOverlay" hidden>
-    <div class="go-bar">
-      <button class="iconbtn" id="gameExit" aria-label="Leave the game">✕</button>
-      <b id="gameTitle"></b>
-      <div class="go-chips" id="raceChips"></div>
-    </div>
-    <iframe id="gameFrame" title="Game" allow="autoplay; fullscreen"></iframe>
-    <div class="watch-view" id="watchView" hidden>
-      <img id="watchImg" alt="Player's game">
-      <div class="watch-bar">
-        <button class="iconbtn" id="watchPrev" aria-label="Previous player">‹</button>
-        <b id="watchName"></b>
-        <button class="iconbtn" id="watchNext" aria-label="Next player">›</button>
-      </div>
-      <p class="muted" id="watchNote"></p>
-      <button class="btn small" id="watchBack">Back</button>
-    </div>
-    <div class="go-count" id="gameCount" hidden></div>
-    <div class="go-panel" id="soloEnd" hidden>
-      <div class="go-card">
-        <h2>Game over</h2>
-        <p class="muted" id="soloEndScore"></p>
-        <div class="sheet-actions wrap">
-          <button class="btn primary" id="soloAgain">Play again</button>
-          <button class="btn" id="soloList">Game list</button>
-        </div>
-      </div>
-    </div>
-    <div class="go-panel" id="raceLobby" hidden>
-      <div class="go-card">
-        <h2>🏁 Race lobby</h2>
-        <p class="lobby-game" id="lobbyGame"></p>
-        <ul class="lobby-list" id="lobbyList"></ul>
-        <p class="muted" id="lobbyTimer"></p>
-        <p class="muted small">Everyone gets the same course. You'll see each other as ghosts.</p>
-        <div class="sheet-actions"><button class="btn" id="lobbyLeave">Leave</button><button class="btn primary" id="lobbyStart">Start now</button></div>
-      </div>
-    </div>
-    <div class="go-panel" id="raceResults" hidden>
-      <div class="go-card">
-        <h2 id="resultTitle">Results</h2>
-        <ol class="lb" id="resultList"></ol>
-        <div class="sheet-actions"><button class="btn" id="raceDone">Done</button><button class="btn primary" id="raceAgain">Race again</button></div>
-      </div>
-    </div>
-  </div>
-
-  <div class="fx" id="fx" aria-hidden="true"></div>
-  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-
-  <!-- how to play: shown before each game -->
-  <div class="sheet-backdrop" id="howToBackdrop" hidden></div>
-  <section class="sheet tall how" id="howTo" hidden aria-label="How to play">
-    <div class="grab"></div>
-    <div class="settings-head"><h2 id="howTitle">How to play</h2></div>
-    <ol class="how-list" id="howList"></ol>
-    <div class="how-modes-title">Players</div>
-    <div class="how-modes" id="howModes"></div>
-    <p class="loc-foot">Solo works now. Duo and group play come with online play.</p>
-    <div class="sheet-actions tb-actions">
-      <button class="btn" id="howClose" type="button">Back</button>
-      <button class="btn primary" id="howStart" type="button">Start</button>
-    </div>
-  </section>
-  <canvas id="matrixFx" aria-hidden="true"></canvas>
   <script type="module" src="app.js"></script>
   <!-- theme builder lives at the top level so it stacks above Settings -->
     <div class="sheet-backdrop" id="themeBuilderBackdrop" hidden></div>
