@@ -32,7 +32,7 @@ const PING_TEXT = {
 const PING_EMOJI = Object.fromEntries([...FEELINGS, ...MOODS].map(([k, e]) => [k, e]));
 const MUTE_TYPES = [["message", "Messages"], ["reaction", "Reactions"], ["reply", "Replies"], ["ping", "Check-ins"],
   ["answer", "Daily question answers"], ["doodle", "Draw-together invites"], ["bgrequest", "Background requests (owner)"], ["bgreply", "Background replies"],
-  ["game", "Race invites"], ["lead", "Someone beats your best score"], ["ttt", "Tic-tac-toe"]];
+  ["game", "Race invites"], ["lead", "Someone beats your best score"], ["ttt", "Tic-tac-toe"], ["duo", "Play together games"]];
 const QUESTIONS = [
   "What's a small thing I do that makes your day better?", "If we could teleport anywhere for one day, where would we go?",
   "What song reminds you of us?", "What's your favorite memory of us so far?", "What's something you've never told me but want to?",
@@ -63,7 +63,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v38";
+const APP_VERSION = "soy-v40";
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
 let hapticsOn;
@@ -343,6 +343,7 @@ function createSupabaseApi() {
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "game_scores", filter: f }, (p) => h.onScore(p.new))
         .on("postgres_changes", { event: "*", schema: "public", table: "ttt_games", filter: f }, (p) => h.onTtt(p.new))
         .on("postgres_changes", { event: "*", schema: "public", table: "crazy8_games", filter: f }, (p) => h.onC8(p.new))
+        .on("postgres_changes", { event: "*", schema: "public", table: "duo_games", filter: f }, (p) => h.onDuo(p.new))
         .subscribe();
     },
     // ---- Crazy 8s (v8) ----
@@ -371,6 +372,16 @@ function createSupabaseApi() {
     async tttRespond(id, accept) { return must(await sb.rpc("ttt_respond", { p_game: id, p_accept: accept })); },
     async tttMove(id, cell) { return must(await sb.rpc("ttt_move", { p_game: id, p_cell: cell })); },
     async tttQuit(id) { return must(await sb.rpc("ttt_quit", { p_game: id })); },
+    // ---- play together (v17) ----
+    async duoList(boardId) { return must(await sb.from("duo_games").select("*").eq("board_id", boardId).order("updated_at", { ascending: false }).limit(40)); },
+    async duoChallenge(boardId, game, oId) {
+      const { data, error } = await sb.from("duo_games").insert({ board_id: boardId, game, a_id: myId(), b_id: oId }).select().single();
+      if (error) throw new Error(/duplicate|unique/i.test(error.message) ? "You already have this game going with them" : error.message);
+      return data;
+    },
+    async duoRespond(id, accept) { return must(await sb.rpc("duo_respond", { p_game: id, p_accept: accept })); },
+    async duoMove(id, state, next, done, winner) { return must(await sb.rpc("duo_move", { p_game: id, p_state: state, p_next: next || null, p_done: !!done, p_winner: winner || null })); },
+    async duoQuit(id) { return must(await sb.rpc("duo_quit", { p_game: id })); },
     live(boardId, me, h) {
       if (liveCh) sb.removeChannel(liveCh);
       let presence = { name: me.name, color: me.color, visible: true, doodling: false };
@@ -621,6 +632,11 @@ function createDemoApi() {
       d.scores.push(row); save(d); emit({ type: "score", row }); return row;
     },
     async listTtt(boardId) { return db().ttt.filter((g) => g.board_id === boardId).sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1)); },
+    async duoList() { return []; },
+    async duoChallenge() { throw new Error("Play together needs online mode"); },
+    async duoRespond() { throw new Error("Play together needs online mode"); },
+    async duoMove() { throw new Error("Play together needs online mode"); },
+    async duoQuit() { throw new Error("Play together needs online mode"); },
     async tttChallenge(boardId, oId) {
       const d = db();
       if (d.ttt.some((g) => g.board_id === boardId && ["invited", "active"].includes(g.status) && [g.x_id, g.o_id].includes(oId) && [g.x_id, g.o_id].includes(meId()))) throw new Error("You already have a game going with them");
@@ -1216,6 +1232,15 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v40", date: "2026-10-21", title: "Play together: Connect Four online", items: [
+    "New Play together section at the top of Games. Challenge your partner to Connect Four",
+    "Moves sync live on both phones, one move at a time",
+    "Your partner gets a notification when you challenge them or make a move",
+    "Needs upgrade-v17.sql in Supabase, and the notify function redeployed",
+  ] },
+  { v: "soy-v39", date: "2026-10-21", title: "Play again after a game", items: [
+    "When a solo game ends, you get Play again or Game list",
+  ] },
   { v: "soy-v38", date: "2026-10-21", title: "Shared to-do and wish lists", items: [
     "New List note in the composer: name it, pick To-do or Wish list, add one item per line",
     "Either of you can tick items off and add new ones from the note",
@@ -1794,6 +1819,7 @@ const boardHandlers = () => ({
   onBoard: onBoardEvent,
   onScore: onScoreEvent,
   onTtt: onTttEvent,
+  onDuo: onDuoEvent,
   onC8: onC8Event,
   onConn: onConnStatus,
 });
@@ -1873,6 +1899,7 @@ async function resync() {
 }
 
 async function loadExtras() {
+  loadDuo().then(renderGamesIfOpen);
   try {
     const strokes = await api.listStrokes(state.board.id);
     const ids = new Set(strokes.map((s) => s.id));
@@ -4121,7 +4148,7 @@ function resetBoardState() {
   if (geo.watch != null) { try { navigator.geolocation.clearWatch(geo.watch); } catch { /* ignore */ } }
   geo.on = false; geo.me = null; geo.watch = null; geo.denied = false; closeLoc(); $("#locDot").hidden = true;
   together.pad?.reset(); together.open = false;
-  for (const s of ["detail", "composer", "settings", "ping", "question", "together", "chats", "edit", "games", "ttt", "c8"]) { $("#" + s).hidden = true; $("#" + s + "Backdrop").hidden = true; }
+  for (const s of ["detail", "composer", "settings", "ping", "question", "together", "chats", "edit", "games", "ttt", "c8", "duo"]) { $("#" + s).hidden = true; $("#" + s + "Backdrop").hidden = true; }
   $("#qDot").hidden = true; $("#doodleDot").hidden = true;
   hist.undo.length = 0; hist.redo.length = 0; renderHistBar();
   if (voice.on) leaveVoice();
@@ -4773,6 +4800,7 @@ function renderGames() {
   if (games.boardGame) return renderScoreboard();
   renderRaceBanner();
   const list = $("#gameList"); list.innerHTML = "";
+  renderDuoCards(list);
   const r = games.race;
   for (const g of GAME_LIST) {
     const card = mk("div", "game-card");
@@ -4878,7 +4906,7 @@ function openGameOverlay(gameId, mode) {
   $("#gameFrame").src = `${g.file}?${q}`;
   $("#gameTitle").textContent = `${g.icon} ${g.name}`;
   $("#gameOverlay").hidden = false; document.body.classList.add("gaming");
-  $("#raceResults").hidden = true; $("#gameCount").hidden = true;
+  $("#raceResults").hidden = true; $("#gameCount").hidden = true; $("#soloEnd").hidden = true;
   $("#raceLobby").hidden = mode !== "race" || games.race?.phase !== "lobby";
   closeSheet("games");
   renderLobby(); renderRaceChips();
@@ -4939,7 +4967,11 @@ async function onGameOver(raw) {
     renderRaceChips();
     checkRaceDone();
     recordScore(p.game, score, "race", r.rid);
-  } else recordScore(p.game, score, "solo");
+  } else {
+    recordScore(p.game, score, "solo");
+    $("#soloEndScore").textContent = `Score ${score}`;
+    $("#soloEnd").hidden = false;
+  }
 }
 
 // ---------------------------------------------------------------- races
@@ -5273,6 +5305,152 @@ function renderTttCard() {
     }
     card.appendChild(ul);
   }
+}
+
+// ---------------------------------------------------------------- play together (online, two players)
+const DUO = { connect4: { name: "Connect Four", icon: "🔴" } };
+let duoGames = [], duoOpenId = null;
+
+async function loadDuo() {
+  if (!state.board || isDemo) return;
+  try { duoGames = await api.duoList(state.board.id); } catch { duoGames = []; }
+}
+function duoOf(id) { return duoGames.find((g) => g.id === id); }
+function upsertDuo(row) {
+  if (!row) return;
+  const i = duoGames.findIndex((g) => g.id === row.id);
+  if (i >= 0) duoGames[i] = { ...duoGames[i], ...row }; else duoGames.unshift(row);
+  if (duoOpenId === row.id) renderDuo();
+}
+function duoNeedsDb(e) {
+  if (/duo_games|schema cache|does not exist|Could not find/i.test(e?.message || "")) toast("Play together needs upgrade-v17.sql in Supabase", 5000);
+  else toast(e?.message || "Something went wrong");
+}
+function duoStatusText(g) {
+  const me = state.me.id, nm = (id) => (id === me ? "You" : (memberById(id)?.name || "They"));
+  if (g.status === "invited") return g.b_id === me ? `${nm(g.a_id)} challenged you` : `Waiting for ${nm(g.b_id)} to accept`;
+  if (g.status === "active") return g.turn === me ? "Your move" : `${nm(g.turn)} to move`;
+  if (g.status === "done") return !g.winner ? "It's a draw 🤝" : g.winner === me ? "You won 🎉" : `${nm(g.winner)} won`;
+  return g.status === "declined" ? "Passed" : "Cancelled";
+}
+
+function onDuoEvent(row) {
+  if (!row || row.board_id !== state.board?.id) return;
+  const prev = duoOf(row.id);
+  upsertDuo(row);
+  const me = state.me.id, opp = row.a_id === me ? row.b_id : row.a_id, name = memberById(opp)?.name || "Someone";
+  const mine = row.a_id === me || row.b_id === me, label = DUO[row.game]?.name || "a game";
+  if (mine && duoOpenId !== row.id) {
+    if (row.status === "invited" && row.b_id === me && !prev) toast(`🔴 ${name} challenged you to ${label}. Tap 🎮 Games.`, 5000);
+    else if (row.status === "active" && prev?.status === "invited" && row.a_id === me) toast(`${name} accepted! Your move.`, 4000);
+    else if (row.status === "active" && row.turn === me && prev?.turn !== me) toast(`Your move in ${label}`, 3000);
+  }
+  renderGamesIfOpen();
+}
+
+function renderDuoCards(list) {
+  const card = mk("div", "game-card");
+  const top = mk("div", "gc-top");
+  top.appendChild(mk("span", "gc-ic", "🤝"));
+  const t = mk("div"); t.appendChild(mk("b", null, "Play together")); t.appendChild(mk("small", null, "Online games with your partner, one move at a time."));
+  top.appendChild(t); card.appendChild(top);
+  const opp = partner();
+  if (!opp) card.appendChild(mk("div", "gc-best", "Invite your partner to the board to play together."));
+  else {
+    const acts = mk("div", "gc-actions");
+    for (const key of Object.keys(DUO)) {
+      const b = mk("button", "btn small primary", `${DUO[key].icon} Challenge`);
+      b.onclick = () => duoChallenge(key, opp.id);
+      acts.appendChild(b);
+    }
+    card.appendChild(acts);
+  }
+  for (const g of duoGames.slice(0, 5)) {
+    const row = mk("div", "gc-best", `${DUO[g.game]?.icon || "🎲"} ${DUO[g.game]?.name || "Game"}: ${duoStatusText(g)}`);
+    row.style.cursor = "pointer"; row.onclick = () => openDuo(g.id);
+    card.appendChild(row);
+  }
+  list.appendChild(card);
+}
+
+async function duoChallenge(game, oppId) {
+  try {
+    const g = await api.duoChallenge(state.board.id, game, oppId);
+    upsertDuo(g); api.notify(state.board.id, "duo", { game_id: g.id });
+    openDuo(g.id);
+  } catch (e) { duoNeedsDb(e); }
+}
+
+function openDuo(id) { duoOpenId = id; closeSheet("games"); renderDuo(); openSheet("duo"); }
+function closeDuo() { closeSheet("duo"); duoOpenId = null; renderGames(); openSheet("games"); }
+
+// Connect Four helpers. A board is 42 characters, top row first; '-' is empty, 'R' and 'Y' are discs.
+function c4Drop(s, c, mark) {
+  for (let r = 5; r >= 0; r--) { const i = r * 7 + c; if (s[i] === "-") return s.slice(0, i) + mark + s.slice(i + 1); }
+  return null;
+}
+function c4Winner(s) {
+  const at = (r, c) => (r < 0 || c < 0 || r > 5 || c > 6 ? "-" : s[r * 7 + c]);
+  for (let r = 0; r < 6; r++) for (let c = 0; c < 7; c++) {
+    const m = at(r, c); if (m === "-") continue;
+    for (const [dr, dc] of [[0, 1], [1, 0], [1, 1], [1, -1]]) if ([1, 2, 3].every((k) => at(r + dr * k, c + dc * k) === m)) return m;
+  }
+  return s.includes("-") ? null : "draw";
+}
+
+function renderDuo() {
+  const g = duoOf(duoOpenId); if (!g) return;
+  const me = state.me.id, info = DUO[g.game] || { name: "Game", icon: "🎲" };
+  const mine = g.a_id === me || g.b_id === me;
+  const myTurn = g.status === "active" && g.turn === me;
+  $("#duoTitle").textContent = `${info.icon} ${info.name}`;
+  $("#duoStatus").textContent = duoStatusText(g);
+  const cells = g.state?.b || "-".repeat(42);
+  const grid = $("#duoGrid"); grid.innerHTML = "";
+  const mark = g.a_id === me ? "R" : "Y";
+  for (let c = 0; c < 7; c++) {
+    const col = document.createElement("button"); col.type = "button"; col.className = "c4-col";
+    col.setAttribute("aria-label", `Column ${c + 1}`);
+    col.disabled = !myTurn;
+    for (let r = 0; r < 6; r++) { const cell = document.createElement("i"); cell.className = "c4-cell"; const v = cells[r * 7 + c]; if (v !== "-") cell.classList.add(v); col.appendChild(cell); }
+    col.onclick = () => duoDrop(c, mark);
+    grid.appendChild(col);
+  }
+  const show = (id, on) => { $(id).hidden = !on; };
+  show("#duoAccept", g.status === "invited" && g.b_id === me);
+  show("#duoDecline", g.status === "invited" && g.b_id === me);
+  show("#duoQuit", g.status === "active" && mine);
+  show("#duoRematch", g.status === "done" && mine);
+}
+
+async function duoDrop(c, mark) {
+  const g = duoOf(duoOpenId); if (!g) return;
+  const next = c4Drop(g.state?.b || "-".repeat(42), c, mark);
+  if (!next) return toast("That column is full");
+  const w = c4Winner(next), done = w !== null;
+  const winner = w === "R" ? g.a_id : w === "Y" ? g.b_id : null;
+  const other = state.me.id === g.a_id ? g.b_id : g.a_id;
+  try {
+    const row = await api.duoMove(g.id, { b: next }, other, done, winner);
+    upsertDuo(row); api.notify(state.board.id, "duo", { game_id: g.id });
+    if (done && winner === state.me.id) rain("🎉", 10);
+  } catch (e) { duoNeedsDb(e); }
+}
+
+async function duoRespondUi(accept) {
+  const g = duoOf(duoOpenId); if (!g) return;
+  try { const row = await api.duoRespond(g.id, accept); upsertDuo(row); api.notify(state.board.id, "duo", { game_id: g.id }); }
+  catch (e) { duoNeedsDb(e); }
+}
+async function duoQuitUi() {
+  const g = duoOf(duoOpenId); if (!g) return;
+  try { const row = await api.duoQuit(g.id); upsertDuo(row); api.notify(state.board.id, "duo", { game_id: g.id }); }
+  catch (e) { duoNeedsDb(e); }
+}
+async function duoRematchUi() {
+  const g = duoOf(duoOpenId); if (!g) return;
+  const other = state.me.id === g.a_id ? g.b_id : g.a_id;
+  await duoChallenge(g.game, other);
 }
 
 async function tttChallenge(oppId) {
@@ -6212,6 +6390,13 @@ function wireStatic() {
   $("#sbSolo").onclick = () => games.boardGame && openGameOverlay(games.boardGame, "solo");
   $("#sbRace").onclick = () => games.boardGame && startRace(games.boardGame);
   $("#gameExit").onclick = () => closeGameOverlay();
+  $("#duoClose").onclick = closeDuo;
+  $("#duoAccept").onclick = () => duoRespondUi(true);
+  $("#duoDecline").onclick = () => duoRespondUi(false);
+  $("#duoQuit").onclick = duoQuitUi;
+  $("#duoRematch").onclick = duoRematchUi;
+  $("#soloAgain").onclick = () => { const p = games.play; if (!p) return; const { game, mode } = p; closeGameOverlay(true); openGameOverlay(game, mode); };
+  $("#soloList").onclick = () => closeGameOverlay();
   $("#lobbyStart").onclick = raceStartNow;
   $("#lobbyLeave").onclick = () => closeGameOverlay();
   $("#raceAgain").onclick = () => { const g = games.race?.game || games.play?.game; closeGameOverlay(true); games.race = null; if (g) startRace(g); };

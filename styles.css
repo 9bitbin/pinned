@@ -1116,3 +1116,11 @@ html.no-deco .room-system, html.no-deco #starCanvas { display: none !important; 
 .list-row input { width: 22px; height: 22px; flex: none; }
 .list-add { display: flex; gap: 8px; margin-top: 10px; }
 .list-add input { flex: 1; min-width: 0; }
+
+/* ---------- Play together (Connect Four) ---------- */
+.c4-board { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; width: min(92vw, 380px); margin: 10px auto; padding: 10px; border-radius: 16px; background: #1d3a7a; }
+.c4-col { display: grid; gap: 6px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.c4-col:disabled { cursor: default; }
+.c4-cell { display: block; aspect-ratio: 1; border-radius: 50%; background: rgba(0,0,0,.35); }
+.c4-cell.R { background: #ff5a6e; }
+.c4-cell.Y { background: #ffd166; }

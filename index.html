@@ -681,6 +681,22 @@
     </div>
   </section>
 
+  <!-- Play together: online two-player games -->
+  <div class="sheet-backdrop" id="duoBackdrop" hidden></div>
+  <section class="sheet" id="duo" hidden aria-label="Play together">
+    <div class="grab"></div>
+    <h2 id="duoTitle">Play together</h2>
+    <p class="ttt-status" id="duoStatus"></p>
+    <div class="c4-board" id="duoGrid"></div>
+    <div class="sheet-actions wrap">
+      <button class="btn primary" id="duoAccept" hidden>Accept</button>
+      <button class="btn" id="duoDecline" hidden>Not now</button>
+      <button class="btn primary" id="duoRematch" hidden>Rematch</button>
+      <button class="btn danger" id="duoQuit" hidden>Resign</button>
+      <button class="btn" id="duoClose">Back</button>
+    </div>
+  </section>
+
   <!-- Crazy 8s -->
   <div class="sheet-backdrop" id="c8Backdrop" hidden></div>
   <section class="sheet tall c8" id="c8" hidden aria-label="Crazy 8s">
@@ -714,6 +730,16 @@
     </div>
     <iframe id="gameFrame" title="Game" allow="autoplay; fullscreen"></iframe>
     <div class="go-count" id="gameCount" hidden></div>
+    <div class="go-panel" id="soloEnd" hidden>
+      <div class="go-card">
+        <h2>Game over</h2>
+        <p class="muted" id="soloEndScore"></p>
+        <div class="sheet-actions wrap">
+          <button class="btn primary" id="soloAgain">Play again</button>
+          <button class="btn" id="soloList">Game list</button>
+        </div>
+      </div>
+    </div>
     <div class="go-panel" id="raceLobby" hidden>
       <div class="go-card">
         <h2>🏁 Race lobby</h2>
