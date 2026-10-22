@@ -60,7 +60,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v51";
+const APP_VERSION = "soy-v53";
 
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
@@ -1182,6 +1182,8 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v53", date: "2026-10-22", title: "Callout shapes", items: ["Speech bubble, oval speech bubble and thought bubble on the board shapes gallery"] },
+  { v: "soy-v52", date: "2026-10-22", title: "Shapes and brush size", items: ["Shapes gallery on the board: line, arrow, rectangle, rounded rectangle, oval, triangle, right triangle, diamond, pentagon, hexagon, star and heart", "Drag out a shape; it saves like a pen line, so undo and erase work", "Brush size is now a slider on the board (1 to 24)"] },
   { v: "soy-v51", date: "2026-10-22", title: "Moderation and the Pinned name", items: ["Moderators (set in the database) can review reported feedback, hide or restore posts, and dismiss reports", "Hidden posts show a notice instead of their text, and are left out of exports", "One report per person per post", "App renamed to Pinned in the setup guide and notifications"] },
   { v: "soy-v50", date: "2026-10-22", title: "Feedback cycle, replies and email change", items: ["Feedback cycle in Messages: one shared space for everyone across all rooms, with threads and replies", "Post feedback as yourself or anonymously. Anonymous hides your name from other users", "Reply to chat messages, with the original quoted", "Report a post, or delete your own", "Export feedback as a CSV from the Feedback cycle screen", "Change your sign-in email from Account"] },
   { v: "soy-v49", date: "2026-10-22", title: "Rooms get names, photos and locks", items: ["Rename your room and add a room photo. Both show on the room list and at the top of the board, and update live", "Lock a room to stop new people joining with the code. Existing members are never locked out", "Room cards show the lock and the room code"] },
@@ -2679,9 +2681,11 @@ function expireCursors() {
 
 // ---------------------------------------------------------------- drawing on the board (vector ink)
 let inkMode = false, inkCur = null, inkSendT = 0, inkSent = 0;
+let shapeDrag = null;   // the shape being dragged out: { name, a }
 const inkTool = {
   color: PENS[0], size: SIZES[1], erasing: false,
-  tool: "draw",        // draw | eyedrop | fill | text
+  tool: "draw",        // draw | eyedrop | fill | text | shape
+  shape: "rect",
   brush: "pen",        // pen | marker | hi
   tools() { return { color: this.color, size: this.size, erasing: this.erasing }; },
   setColor(c) { this.color = c; this.erasing = false; if (this.tool === "eyedrop") this.tool = "draw"; },
@@ -2692,6 +2696,61 @@ const inkTool = {
 const BRUSH = { pen: { w: 1, a: "" }, marker: { w: 2.2, a: "cc" }, hi: { w: 4, a: "66" } };
 const clampW = (v) => +Math.min(400, Math.max(0.5, v)).toFixed(2);
 const SVGNS = "http://www.w3.org/2000/svg";
+
+// ---- shapes: drawn as ordinary pen strokes, so they save, undo, erase and show for the other person with no database change
+// corners are doubled so inkD's smoothing keeps them sharp
+function shapePoints(name, a, b) {
+  const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+  const w = x1 - x0, h = y1 - y0, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, rx = w / 2, ry = h / 2;
+  const P = (x, y) => [+x.toFixed(1), +y.toFixed(1)];
+  const ring = (n) => Array.from({ length: n }, (_, k) => { const t = -Math.PI / 2 + (k * 2 * Math.PI) / n; return P(cx + rx * Math.cos(t), cy + ry * Math.sin(t)); });
+  const sharp = (vs, close) => { const out = []; vs.forEach((v) => out.push(v, v)); if (close) out.push(vs[0], vs[0]); return out; };
+  switch (name) {
+    case "line": return [P(a.x, a.y), P(b.x, b.y)];
+    case "arrow": {
+      const len = Math.hypot(b.x - a.x, b.y - a.y); if (len < 1) return [];
+      const t = Math.atan2(b.y - a.y, b.x - a.x), hl = Math.min(30, Math.max(8, len * 0.25));
+      const h1 = P(b.x - hl * Math.cos(t - 0.45), b.y - hl * Math.sin(t - 0.45));
+      const h2 = P(b.x - hl * Math.cos(t + 0.45), b.y - hl * Math.sin(t + 0.45));
+      return sharp([P(a.x, a.y), P(b.x, b.y), h1, P(b.x, b.y), h2], false);
+    }
+    case "rect": return sharp([P(x0, y0), P(x1, y0), P(x1, y1), P(x0, y1)], true);
+    case "round": {
+      const r = Math.min(w, h) * 0.2, pts = [];
+      const arcs = [[x0 + r, y0 + r, Math.PI], [x1 - r, y0 + r, -Math.PI / 2], [x1 - r, y1 - r, 0], [x0 + r, y1 - r, Math.PI / 2]];
+      for (const [ax, ay, st] of arcs) for (let k = 0; k <= 6; k++) { const t = st + (k * Math.PI / 2) / 6; pts.push(P(ax + r * Math.cos(t), ay + r * Math.sin(t))); }
+      return sharp(pts, true);
+    }
+    case "oval": { const r = ring(72); return [...r, r[0]]; }
+    case "tri": return sharp([P(cx, y0), P(x1, y1), P(x0, y1)], true);
+    case "rtri": return sharp([P(x0, y0), P(x0, y1), P(x1, y1)], true);
+    case "diamond": return sharp([P(cx, y0), P(x1, cy), P(cx, y1), P(x0, cy)], true);
+    case "pent": return sharp(ring(5), true);
+    case "hex": return sharp(ring(6), true);
+    case "star": return sharp(Array.from({ length: 10 }, (_, k) => { const t = -Math.PI / 2 + (k * Math.PI) / 5, f = k % 2 ? 0.45 : 1; return P(cx + rx * f * Math.cos(t), cy + ry * f * Math.sin(t)); }), true);
+    case "callout": {   // rectangular speech bubble with a tail at the bottom left
+      const bh = h * 0.75, by = y0 + bh;
+      return sharp([P(x0, y0), P(x1, y0), P(x1, by), P(x0 + w * 0.35, by), P(x0 + w * 0.15, y1), P(x0 + w * 0.2, by), P(x0, by)], true);
+    }
+    case "oval-callout": {   // oval speech bubble with a tail at the bottom left
+      const ob = y0 + h * 0.75, ocy = (y0 + ob) / 2, ory = (ob - y0) / 2;
+      const r = Array.from({ length: 72 }, (_, k) => { const t = -Math.PI / 2 + (k * 2 * Math.PI) / 72; return P(cx + rx * Math.cos(t), ocy + ory * Math.sin(t)); });
+      const tip = P(x0 + w * 0.18, y1);
+      return [...r.slice(0, 39), tip, ...r.slice(41), r[0]];
+    }
+    case "cloud": {   // cloud thought bubble
+      const pts = Array.from({ length: 64 }, (_, k) => { const t = (k * 2 * Math.PI) / 64, f = 1 + 0.13 * Math.cos(9 * t); return P(cx + rx * 0.95 * f * Math.cos(t), cy + ry * 0.95 * f * Math.sin(t)); });
+      return [...pts, pts[0]];
+    }
+    case "heart": {
+      const raw = Array.from({ length: 80 }, (_, k) => { const t = (k / 80) * 2 * Math.PI; return [16 * Math.sin(t) ** 3, 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)]; });
+      const maxY = Math.max(...raw.map((p) => p[1])), minY = Math.min(...raw.map((p) => p[1]));
+      const pts = raw.map(([u, v]) => P(x0 + ((u + 16) / 32) * w, y0 + ((maxY - v) / (maxY - minY)) * h));
+      return [...pts, pts[0]];
+    }
+    default: return [];
+  }
+}
 
 function inkD(p) {
   if (!p.length) return "";
@@ -2744,6 +2803,7 @@ function setInkMode(on) {
   inkMode = on;
   document.body.classList.toggle("drawmode", on);
   $("#drawBar").hidden = !on;
+  $("#shapeMenu").hidden = true;
   $("#toolDraw").setAttribute("aria-pressed", String(on));
   syncBoardUI();
   $("#scroller").classList.toggle("drawing", on);
@@ -2756,6 +2816,11 @@ function inkStart(e) {
   if (inkTool.tool === "eyedrop") return pickAt(w);
   if (inkTool.tool === "fill") return fillAt(w);
   if (inkTool.tool === "text") return openTextAt(e, w);
+  if (inkTool.tool === "shape") {
+    shapeDrag = { name: inkTool.shape, a: { x: w.x, y: w.y } };
+    inkCur = { id: uid(), board_id: state.board.id, author_id: state.me.id, kind: "ink", color: inkTool.color, width: clampW(inkTool.size * 2 / state.view.s), points: [] };
+    return;
+  }
   const b = BRUSH[inkTool.brush] || BRUSH.pen;
   inkCur = { id: uid(), board_id: state.board.id, author_id: state.me.id, kind: "ink", color: inkTool.color + b.a, width: clampW(inkTool.size * 2 * b.w / state.view.s), points: [[+w.x.toFixed(1), +w.y.toFixed(1)]] };
   inkSent = 0;
@@ -2770,7 +2835,7 @@ function syncBoardUI() {
     bBrushPen: t.tool === "draw" && !t.erasing && t.brush === "pen",
     bBrushMarker: t.tool === "draw" && !t.erasing && t.brush === "marker",
     bBrushHi: t.tool === "draw" && !t.erasing && t.brush === "hi",
-    bEyedrop: t.tool === "eyedrop", bFill: t.tool === "fill", bText: t.tool === "text", bEraser: t.erasing,
+    bEyedrop: t.tool === "eyedrop", bFill: t.tool === "fill", bText: t.tool === "text", bEraser: t.erasing, bShape: t.tool === "shape",
   };
   for (const id in map) $("#" + id)?.setAttribute("aria-pressed", String(map[id]));
   document.querySelectorAll("#bPens .pen").forEach((b) => b.setAttribute("aria-pressed", String(!t.erasing && t.tool !== "eyedrop" && b.dataset.c === t.color)));
@@ -2859,6 +2924,12 @@ function inkMove(e) {
   if (inkCur.erase) return inkEraseAt(e);
   const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
   const minGap = 1.5 / state.view.s;
+  if (shapeDrag) {   // a shape is redrawn from its start point to the finger, not streamed
+    const last = evs[evs.length - 1], w = toWorld(last.clientX, last.clientY);
+    inkCur.points = shapePoints(shapeDrag.name, shapeDrag.a, w);
+    drawInk(inkCur, true);
+    return;
+  }
   for (const ev of evs) {
     const w = toWorld(ev.clientX, ev.clientY), l = inkCur.points[inkCur.points.length - 1];
     if (Math.hypot(w.x - l[0], w.y - l[1]) >= minGap && inkCur.points.length < 3000) inkCur.points.push([+w.x.toFixed(1), +w.y.toFixed(1)]);
@@ -2874,7 +2945,9 @@ function inkMove(e) {
 
 async function inkEnd() {
   const s = inkCur; inkCur = null;
+  const wasShape = !!shapeDrag; shapeDrag = null;
   if (!s || s.erase) return;
+  if (wasShape && s.points.length < 2) { inkPathEl(s.id)?.remove(); return; }   // a tap with no drag
   drawInk(s, false);
   state.strokes.set(s.id, s);
   try { await api.addStroke(s); }
@@ -2885,7 +2958,7 @@ async function inkEnd() {
   }
 }
 
-function inkCancel() { if (inkCur && !inkCur.erase) { inkPathEl(inkCur.id)?.remove(); live?.send({ t: "inkx", id: inkCur.id }); } inkCur = null; }
+function inkCancel() { shapeDrag = null; if (inkCur && !inkCur.erase) { inkPathEl(inkCur.id)?.remove(); live?.send({ t: "inkx", id: inkCur.id }); } inkCur = null; }
 
 let eraseWarned = false;
 function inkEraseAt(e) {
@@ -3937,7 +4010,7 @@ function makePad(canvas, { owner = "me", onLive = null, onDone = null } = {}) {
   return self;
 }
 
-function buildTools(els, p, { onUndo, onClear } = {}) {
+function buildTools(els, p, { onUndo, onClear, slider } = {}) {
   const sync = () => {
     const t = p.tools();
     els.pens.querySelectorAll(".pen").forEach((b) => b.setAttribute("aria-pressed", String(!t.erasing && b.dataset.c === t.color)));
@@ -3949,7 +4022,16 @@ function buildTools(els, p, { onUndo, onClear } = {}) {
     b.setAttribute("aria-label", "Pen color " + c); b.onclick = () => { p.setColor(c); sync(); }; els.pens.appendChild(b);
   }
   els.sizes.innerHTML = "";
-  SIZES.forEach((sz, i) => {
+  if (slider) {   // the board: a continuous brush size from 1 to 24
+    const wrap = document.createElement("label"); wrap.className = "size-slider";
+    const dot = document.createElement("span"); dot.className = "size-dot";
+    const r = document.createElement("input"); r.type = "range"; r.min = "1"; r.max = "24"; r.step = "1"; r.value = String(p.tools().size);
+    r.setAttribute("aria-label", "Brush size");
+    const show = () => { const d = Math.max(3, Math.min(22, +r.value)); dot.style.width = dot.style.height = d + "px"; };
+    r.oninput = () => { p.setSize(+r.value); show(); };
+    show(); wrap.append(dot, r); els.sizes.appendChild(wrap);
+  }
+  if (!slider) SIZES.forEach((sz, i) => {
     const b = document.createElement("button"); b.className = "size"; b.type = "button"; b.setAttribute("aria-label", ["Small", "Medium", "Large"][i] + " brush");
     b.innerHTML = `<span style="width:${4 + i * 5}px;height:${4 + i * 5}px"></span>`;
     b.setAttribute("aria-pressed", String(sz === p.tools().size));
@@ -5655,13 +5737,19 @@ function wireStatic() {
   };
   $("#menuMusic").setAttribute("aria-pressed", String(menuMusicOn)); $("#menuMusic").textContent = menuMusicOn ? "🎵" : "🔇";
   $("#menu").addEventListener("pointerdown", () => { if (menuMusicOn) menuMusicStart(); }, { passive: true });
-  buildTools({ pens: $("#bPens"), sizes: $("#bSizes"), eraser: $("#bEraser"), undo: $("#bUndo"), clear: $("#bClear") }, inkTool, { onUndo: inkUndo, onClear: () => {} });
+  buildTools({ pens: $("#bPens"), sizes: $("#bSizes"), eraser: $("#bEraser"), undo: $("#bUndo"), clear: $("#bClear") }, inkTool, { onUndo: inkUndo, onClear: () => {}, slider: true });
   $("#bBrushPen").onclick = () => { inkTool.brush = "pen"; setBoardTool("draw"); };
   $("#bBrushMarker").onclick = () => { inkTool.brush = "marker"; setBoardTool("draw"); };
   $("#bBrushHi").onclick = () => { inkTool.brush = "hi"; setBoardTool("draw"); };
   $("#bEyedrop").onclick = () => setBoardTool(inkTool.tool === "eyedrop" ? "draw" : "eyedrop");
   $("#bFill").onclick = () => setBoardTool(inkTool.tool === "fill" ? "draw" : "fill");
   $("#bText").onclick = () => setBoardTool(inkTool.tool === "text" ? "draw" : "text");
+  $("#bShape").onclick = () => { const m = $("#shapeMenu"); m.hidden = !m.hidden; };
+  $("#shapeMenu").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-shape]"); if (!b) return;
+    inkTool.shape = b.dataset.shape; inkTool.erasing = false; inkTool.tool = "shape";
+    $("#shapeMenu").hidden = true; syncBoardUI();
+  });
   $("#bZoomIn").onclick = () => zoomCenter(1.25);
   $("#bZoomOut").onclick = () => zoomCenter(0.8);
   $("#bEraser").onclick = () => { if (inkTool.erasing) setBoardTool("draw"); else { inkTool.erasing = true; inkTool.tool = "draw"; syncBoardUI(); } };

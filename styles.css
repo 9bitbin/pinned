@@ -1107,3 +1107,11 @@ html.no-deco .room-system, html.no-deco #starCanvas { display: none !important; 
 .setting-row { display: flex; gap: 8px; }
 
 .mod-reasons { margin: 0; padding-left: 18px; font-size: 12px; color: var(--muted); display: grid; gap: 2px; }
+
+.shape-menu { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; padding: 8px; margin: 0 0 8px; border-radius: 14px; background: rgba(127,127,127,.12); }
+.shape-menu[hidden] { display: none; }
+.shape-menu button { height: 42px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: inherit; display: grid; place-items: center; cursor: pointer; padding: 0; }
+.shape-menu button:hover, .shape-menu button:focus-visible { border-color: currentColor; }
+.size-slider { display: inline-flex; align-items: center; gap: 8px; }
+.size-slider input { width: 110px; accent-color: #e8556d; }
+.size-dot { display: inline-block; border-radius: 50%; background: currentColor; min-width: 3px; }
