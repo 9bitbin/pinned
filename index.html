@@ -276,6 +276,7 @@
       <button data-tab="drawing">Draw</button>
       <button data-tab="voice">Voice</button>
       <button data-tab="countdown">Countdown</button>
+      <button data-tab="list">List</button>
       <button data-tab="link">Music</button>
     </nav>
 
@@ -345,6 +346,14 @@
         <label><span>Time (optional)</span><input type="time" id="cdTime"></label>
       </div>
       <div class="swatches small" id="cdSwatches"></div>
+    </div>
+
+    <div class="pane" data-pane="list" hidden>
+      <input id="listTitle" class="caption-input" maxlength="60" placeholder="Name it, like &quot;Date ideas&quot;">
+      <div class="cd-row">
+        <label><span>Type</span><select id="listMode"><option value="todo">To-do</option><option value="wish">Wish list</option></select></label>
+      </div>
+      <textarea id="listItems" class="caption-input" rows="5" maxlength="2000" placeholder="One item per line"></textarea>
     </div>
 
     <div class="pane" data-pane="link" hidden>

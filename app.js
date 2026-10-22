@@ -63,7 +63,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v37";
+const APP_VERSION = "soy-v38";
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
 let hapticsOn;
@@ -1216,6 +1216,11 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v38", date: "2026-10-21", title: "Shared to-do and wish lists", items: [
+    "New List note in the composer: name it, pick To-do or Wish list, add one item per line",
+    "Either of you can tick items off and add new ones from the note",
+    "Lists need the upgrade-v16.sql database update",
+  ] },
   { v: "soy-v37", date: "2026-10-21", title: "Ten new games with instructions", items: [
     "New games: Connect Four, Dots and Boxes, Reaction Duel, Hangman",
     "New 3D game: Stack 3D",
@@ -3026,7 +3031,7 @@ function countdownParts(meta) {
 }
 
 function buildNoteContent(n, el) {
-  el.className = "note " + n.kind + (n.kind === "text" ? " paper" : "");
+  el.className = "note " + n.kind + (n.kind === "text" || n.kind === "list" ? " paper" : "");
   paintPaper(el, n.color);
   el.innerHTML = "";
   if (n.kind === "text") {
@@ -3047,6 +3052,8 @@ function buildNoteContent(n, el) {
     const d = document.createElement("div"); d.className = "dur"; d.textContent = "Voice note · " + fmtDur(n.meta?.duration || 0); el.appendChild(d);
   } else if (n.kind === "link") {
     buildLinkCard(n, el);
+  } else if (n.kind === "list") {
+    buildListContent(n, el);
   } else if (n.kind === "countdown") {
     const p = countdownParts(n.meta);
     el.innerHTML = `<div class="cd-big"></div><div class="cd-unit"></div><div class="cd-title"></div>`;
@@ -3179,12 +3186,76 @@ function closeSheet(name) {
 
 // ---------------------------------------------------------------- note detail
 let detailId = null, detailAudio = null;
+// ---------------------------------------------------------------- lists (to-do and wish)
+function listItemsFrom(text) {
+  return text.split("\n").map((s) => s.trim()).filter(Boolean).slice(0, 40)
+    .map((t) => ({ id: uid(), text: t.slice(0, 120), done: false }));
+}
+function listIcon(meta) { return meta?.mode === "wish" ? "✨" : "🛒"; }
+
+// the small card on the board
+function buildListContent(n, el) {
+  const meta = n.meta || {}, items = meta.items || [];
+  el.innerHTML = "";
+  const h = document.createElement("div"); h.className = "list-title";
+  h.textContent = `${listIcon(meta)} ${meta.title || n.body || "List"}`; el.appendChild(h);
+  const ul = document.createElement("ul"); ul.className = "list-items";
+  for (const it of items.slice(0, 6)) {
+    const li = document.createElement("li"); li.textContent = it.text; if (it.done) li.classList.add("done"); ul.appendChild(li);
+  }
+  el.appendChild(ul);
+  if (items.length > 6) { const m = document.createElement("div"); m.className = "list-more"; m.textContent = `+${items.length - 6} more`; el.appendChild(m); }
+  const c = document.createElement("div"); c.className = "list-count";
+  c.textContent = `${items.filter((i) => i.done).length} of ${items.length} done`; el.appendChild(c);
+}
+
+// the interactive view in the note sheet: tick items, add items
+function renderListDetail(box, id) {
+  const n = state.notes.get(id); if (!n) return;
+  const meta = n.meta || {}, items = meta.items || [];
+  box.innerHTML = ""; box.className = "list-detail";
+  paintPaper(box, n.color);
+  const h = document.createElement("h3"); h.textContent = `${listIcon(meta)} ${meta.title || n.body || "List"}`; box.appendChild(h);
+  for (const it of items) {
+    const row = document.createElement("label"); row.className = "list-row" + (it.done ? " done" : "");
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!it.done;
+    cb.onchange = () => setListItems(id, (state.notes.get(id)?.meta?.items || []).map((x) => x.id === it.id ? { ...x, done: cb.checked } : x));
+    const sp = document.createElement("span"); sp.textContent = it.text;
+    row.append(cb, sp); box.appendChild(row);
+  }
+  const form = document.createElement("form"); form.className = "list-add";
+  const inp = document.createElement("input"); inp.placeholder = "Add an item"; inp.maxLength = 120; inp.autocomplete = "off";
+  const add = document.createElement("button"); add.type = "submit"; add.className = "btn small"; add.textContent = "Add";
+  form.append(inp, add);
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const t = inp.value.trim(); if (!t) return;
+    const cur = state.notes.get(id)?.meta?.items || [];
+    if (cur.length >= 40) return toast("That list is full");
+    setListItems(id, [...cur, { id: uid(), text: t.slice(0, 120), done: false }]);
+    inp.value = "";
+  };
+  box.appendChild(form);
+}
+
+async function setListItems(id, items) {
+  const n = state.notes.get(id); if (!n) return;
+  try {
+    await editNoteTo(id, { meta: { ...(n.meta || {}), items } });
+    if (detailId === id) { const box = document.querySelector("#detailBody .list-detail"); if (box) renderListDetail(box, id); }
+  } catch (e) {
+    console.error(e);
+    toast(state.v2 || isDemo ? "Couldn't update the list" : "Lists need the latest database update (upgrade-v16.sql)", 4500);
+  }
+}
+
 function openDetail(id) {
   const n = state.notes.get(id); if (!n) return;
   detailId = id;
   const wrap = $("#detailBody"); wrap.innerHTML = "";
   if (detailAudio) { detailAudio.pause(); detailAudio = null; }
-  if (n.kind === "voice") wrap.appendChild(audioPlayer(n, true));
+  if (n.kind === "list") { const box = document.createElement("div"); wrap.appendChild(box); renderListDetail(box, id); }
+  else if (n.kind === "voice") wrap.appendChild(audioPlayer(n, true));
   else if (n.kind === "link") {
     const md = n.meta || {};
     const box = document.createElement("div"); box.className = "detail-player";
@@ -3206,7 +3277,7 @@ function openDetail(id) {
     wrap.appendChild(el);
   }
   renderDetailMeta(n);
-  $("#detailEdit").hidden = !canEdit(n);
+  $("#detailEdit").hidden = !canEdit(n) || n.kind === "list";
   renderReactRow();
   renderReplies();
   $("#replyInput").value = "";
@@ -3458,6 +3529,7 @@ function openComposer() {
   $("#textInput").value = ""; $("#photoCaption").value = ""; $("#emojiCustom").value = "";
   $("#photoPreview").hidden = true; $("#photoHint").hidden = false; $("#photoInput").value = "";
   $("#cdTitle").value = ""; $("#cdDate").value = ""; $("#cdTime").value = "";
+  $("#listTitle").value = ""; $("#listItems").value = "";
   $("#linkInput").value = ""; $("#linkPreview").innerHTML = ""; linkMeta = null;
   pad.reset();
   resetRec();
@@ -3578,6 +3650,14 @@ async function sendCompose() {
       if (!linkMeta) { busy(btn, false); return toast("Paste a link first"); }
       if (!state.v2 && !isDemo) { busy(btn, false); return needsUpgrade(); }
       row = { ...base, kind: "link", body: linkMeta.title || linkMeta.url, color: "c1", meta: { ...linkMeta }, ...viewportSpot(220, 200) };
+    } else if (compose.tab === "list") {
+      const title = $("#listTitle").value.trim();
+      const items = listItemsFrom($("#listItems").value);
+      if (!title) { busy(btn, false); return toast("Name the list first"); }
+      if (!items.length) { busy(btn, false); return toast("Add at least one item"); }
+      if (!state.v2 && !isDemo) { busy(btn, false); return needsUpgrade(); }
+      const mode = $("#listMode").value === "wish" ? "wish" : "todo";
+      row = { ...base, kind: "list", body: title, color: compose.color, meta: { title, mode, items }, ...viewportSpot(190, 210) };
     } else if (compose.tab === "countdown") {
       const meta = cdMeta();
       if (!meta) { busy(btn, false); return toast("Pick the date you're counting down to"); }

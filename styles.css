@@ -1101,3 +1101,18 @@ html.no-deco .room-system, html.no-deco #starCanvas { display: none !important; 
 .mode-chip { min-height: 44px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); color: var(--surface-ink); font: inherit; font-weight: 700; padding: 10px 14px; text-align: left; }
 .mode-chip[aria-pressed="true"] { border-color: var(--accent); }
 .mode-chip:disabled { opacity: .5; }
+
+/* ---------- Lists (to-do and wish lists) ---------- */
+.note.list { width: 200px; padding: 14px 14px 22px; font-size: 14px; }
+.note.list .list-title { font-weight: 800; margin-bottom: 6px; }
+.note.list .list-items { list-style: none; margin: 0; padding: 0; }
+.note.list .list-items li { padding: 2px 0; }
+.note.list .list-items li.done { text-decoration: line-through; opacity: .55; }
+.note.list .list-more, .note.list .list-count { font-size: 12px; opacity: .7; margin-top: 4px; }
+.list-detail { width: min(84vw, 320px); min-height: 200px; padding: 16px; border-radius: 14px; }
+.list-detail h3 { margin: 0 0 8px; }
+.list-row { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(0,0,0,.08); }
+.list-row.done span { text-decoration: line-through; opacity: .55; }
+.list-row input { width: 22px; height: 22px; flex: none; }
+.list-add { display: flex; gap: 8px; margin-top: 10px; }
+.list-add input { flex: 1; min-width: 0; }
