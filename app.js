@@ -61,7 +61,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v78";
+const APP_VERSION = "soy-v79";
 
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
@@ -390,9 +390,9 @@ function createSupabaseApi() {
       };
     },
     church(me, h, boardId) {
-      // one channel per room: presence only (name, colour, seat), so only people in this room see each other
+      // one shared church for everyone: presence only (name, colour, seat)
       let presence = { name: me.name, color: me.color, seat: null };
-      const chCh = sb.channel("church-" + boardId, { config: { presence: { key: me.id }, broadcast: { self: false } } });
+      const chCh = sb.channel("church", { config: { presence: { key: me.id }, broadcast: { self: false } } });
       chCh.on("broadcast", { event: "chat" }, ({ payload }) => h.onChat && h.onChat(payload));
       chCh.on("presence", { event: "sync" }, () => {
         const out = {};
@@ -697,8 +697,8 @@ function createDemoApi() {
       return { send: (p) => post({ k: "m", p }), track: (p) => { presence = { ...presence, ...p }; post({ k: "pres", p: presence }); pub(); } };
     },
     church(me, h, boardId) {
-      // demo mode: the same presence idea over BroadcastChannel, one channel per room
-      const ch = "BroadcastChannel" in window ? new BroadcastChannel("soy-church-" + boardId) : null;
+      // demo mode: one shared church over BroadcastChannel
+      const ch = "BroadcastChannel" in window ? new BroadcastChannel("soy-church") : null;
       const peers = {}; let presence = { name: me.name, color: me.color, seat: null };
       const pub = () => h.onPresence({ ...peers, [me.id]: presence });
       const post = (m) => ch && ch.postMessage({ ...m, from: me.id });
@@ -1251,6 +1251,7 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v79", date: "2026-10-23", title: "One church for everyone", items: ["The church is one shared room for all users again, whichever room you joined from"] },
   { v: "soy-v78", date: "2026-10-23", title: "Phone: roster and chat as a sheet", items: ["On phones the roster and chat slide up from the bottom and slide back down; tap the handle, swipe down, or press the button again"] },
   { v: "soy-v77", date: "2026-10-23", title: "Roster and chat on the left", items: ["Roster and chat panels sit on the left so the aisle and floor stay visible"] },
   { v: "soy-v76", date: "2026-10-23", title: "Church: who is here, and chat", items: [
