@@ -1124,7 +1124,7 @@ html.no-deco .room-system, html.no-deco #starCanvas { display: none !important; 
   background-image: linear-gradient(rgba(120, 150, 230, .09) 1px, transparent 1px), linear-gradient(90deg, rgba(120, 150, 230, .09) 1px, transparent 1px) !important;
   background-size: 28px 28px !important;
 }
-.menu-screen .room-grid.orbit-map { display: block; position: relative; height: min(68vh, 600px); min-height: 380px; margin: 4px 0 0; padding: 0; overflow: hidden; touch-action: none; cursor: grab; }
+.menu-screen .room-grid.orbit-map { display: block; position: relative; height: calc(100vh - 128px); height: calc(100dvh - 128px); min-height: 380px; margin: 4px 0 0; padding: 0; overflow: hidden; touch-action: none; cursor: grab; }
 .orbit-sun { position: absolute; left: calc(50% + var(--px, 0px)); top: calc(50% + var(--py, 0px)); width: 64px; height: 64px; margin: -32px 0 0 -32px; padding: 0; border: 0; border-radius: 50%; cursor: pointer;
   background: radial-gradient(circle at 36% 32%, #fff6c9 0 8%, #ffd166 40%, #f28c28 78%, rgba(242, 140, 40, 0) 100%);
   box-shadow: 0 0 40px 10px rgba(255, 190, 90, .35); }
