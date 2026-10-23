@@ -61,7 +61,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v64";
+const APP_VERSION = "soy-v66";
 
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
@@ -810,7 +810,7 @@ function applyTheme(id) {
     metaColor = src.tokens.bg || "#0e1014";
     stored = id === "auto" ? "auto" : String(id);
   } else {
-    const resolved = ["cork", "pastel", "midnight", "dreamy"].includes(want) ? want : "cork";
+    const resolved = ["cork", "pastel", "midnight", "dreamy"].includes(want) ? want : "midnight";
     document.documentElement.dataset.theme = resolved;
     metaColor = { cork: "#8a5e36", pastel: "#f5ecff", midnight: "#0e1014", dreamy: "#8d9cc4" }[resolved];
     stored = id === "auto" ? "auto" : resolved;
@@ -819,7 +819,7 @@ function applyTheme(id) {
   ls.set("soy-theme", stored);
 }
 // When the phone switches between light and dark, an "auto" theme follows it.
-try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (ls.get("soy-theme", "cork") === "auto") applyTheme("auto"); }); } catch { /* old browser: no auto switching */ }
+try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (ls.get("soy-theme", "midnight") === "auto") applyTheme("auto"); }); } catch { /* old browser: no auto switching */ }
 
 // ---- Theme schema (Phase 1 groundwork for custom themes; see roadmap section 5.2) ----
 const THEME_COLOR_KEYS = { bg: "--bg", surface: "--surface", surfaceInk: "--surface-ink", muted: "--muted", line: "--line", accent: "--accent", accentInk: "--accent-ink", danger: "--danger", planet: "--planet" };
@@ -911,7 +911,7 @@ function saveCustomThemes(list) { ls.set(CUSTOM_KEY, list); }
 function renderThemePicker() {
   const tp = $("#themePicker"); tp.innerHTML = "";
   const cur = document.documentElement.dataset.theme;
-  const curId = ls.get("soy-theme", "cork");
+  const curId = ls.get("soy-theme", "midnight");
   const pick = (id, el) => {
     applyTheme(id);
     tp.querySelectorAll(".theme-card").forEach((x) => x.setAttribute("aria-pressed", String(x === el)));
@@ -1101,7 +1101,7 @@ function deleteThemeFromBuilder() {
   if (!confirm("Delete this theme? Boards using it go back to Cozy corkboard.")) return;
   addTombstone(tb.id);                     // so the deletion also reaches your other devices
   saveCustomThemes(customThemes().filter((t) => t.id !== tb.id));
-  if (ls.get("soy-theme", "cork") === `custom:${tb.id}`) applyTheme("cork");
+  if (ls.get("soy-theme", "midnight") === `custom:${tb.id}`) applyTheme("midnight");
   closeSheet("themeBuilder");
   renderThemePicker();
   rebuildAllNotes();
@@ -1185,7 +1185,7 @@ function migrateThemeIds() {
     if (isUuid(t.id)) return t;
     changed = true;
     const newId = newThemeId();
-    if (ls.get("soy-theme", "cork") === `custom:${t.id}`) ls.set("soy-theme", `custom:${newId}`);
+    if (ls.get("soy-theme", "midnight") === `custom:${t.id}`) ls.set("soy-theme", `custom:${newId}`);
     return { ...t, id: newId };
   });
   if (changed) saveCustomThemes(list);
@@ -1226,7 +1226,7 @@ async function syncThemes() {
       saveCustomThemes(merged);
       if (JSON.stringify(merged) !== before) {
         renderThemePicker();
-        applyTheme(ls.get("soy-theme", "cork"));
+        applyTheme(ls.get("soy-theme", "midnight"));
         rebuildAllNotes();
       }
       say(`Synced at ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`);
@@ -1247,6 +1247,8 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v66", date: "2026-10-23", title: "Undo and redo in the top bar, dark by default", items: ["Undo and redo sit in the top bar on every board", "New devices start with the dark theme (Dark minimal). Pick Cozy cork in Settings to go back"] },
+  { v: "soy-v65", date: "2026-10-23", title: "Simpler board", items: ["One 🎉 button opens the fun tools above it, instead of a strip across the board", "Right-hand side keeps only the + button", "Find, home, drawing, live location, Church and Games live in More", "Undo and redo show only while drawing", "Dark, frosted controls on every board"] },
   { v: "soy-v64", date: "2026-10-23", title: "Church", items: ["Church button in the board sidebar (right-hand side). Rooms you make or join are the way in", "A shared Orthodox church: everyone in it can see each other, sitting in pews or standing at the back", "Door sounds when you enter and leave, and quiet ones when others do. The 🔊 button mutes them", "Back to my room returns you to the board you came from", "Bible at the lectern: search by reference or word, browse books and chapters, change text size", "Translations: English (King James, American Standard, World English, Darby, Young's Literal) and Russian Synodal (64 of 66 books)"] },
   { v: "soy-v59", date: "2026-10-22", title: "Parry Brawl: items and fists", items: ["Items fall every 18 to 28 seconds: swords in three sizes, bombs and gloves", "Throw (middle click or V) picks items up, and throws them when you hold one", "Hold Down and throw to drop an item at your feet", "Dropped and thrown items burn up 4 seconds later unless picked up", "Fighters start with fists and show their own detail"] },
   { v: "soy-v58", date: "2026-10-22", title: "Parry Brawl: controls and roster", items: ["Fighter select: ten fighters, each with their own look, weapon, taunts and quirk", "Two control schemes in Settings > Controls: Keyboard & Mouse, or Keyboard A", "Dodge (Left Shift or Z), four taunts (1 2 3 4) with speech bubbles, hold Tab or B to show names", "Pause with Esc or Enter; Q quits to the menu"] },
@@ -1381,7 +1383,7 @@ function pushHist(action) { hist.undo.push(action); if (hist.undo.length > 40) h
 function renderHistBar() {
   const bar = $("#histBar"); if (!bar) return;
   const any = hist.undo.length || hist.redo.length;
-  bar.hidden = !any || !state.board;
+  bar.hidden = !state.board;
   $("#histUndo").disabled = !hist.undo.length;
   $("#histRedo").disabled = !hist.redo.length;
 }
@@ -1416,7 +1418,7 @@ function scheduleResub() {
 // ================================================================ boot
 async function boot() {
   hapticsOn = ls.get("pinned-haptics", true);
-  applyTheme(ls.get("soy-theme", "cork"));
+  applyTheme(ls.get("soy-theme", "midnight"));
   handleJoinLink();
   if ("serviceWorker" in navigator && location.protocol !== "file:") {
     navigator.serviceWorker.register("sw.js").catch((e) => console.warn("SW failed", e));
@@ -2135,7 +2137,7 @@ async function openBoard(board) {
   applyBackground();
   loadChats();
   loadBgRequests();
-  renderRoomHead(); ensureRoomPhoto();
+  renderRoomHead(); ensureRoomPhoto(); renderHistBar();
   api.subscribe(board.id, boardHandlers());
   live = api.live(board.id, state.me, { onMessage: onLiveMessage, onPresence: onPresence });
   api.touchSeen(board.id);
@@ -6117,6 +6119,10 @@ function wireStatic() {
   window.addEventListener("resize", () => { if (state.board) layoutBoard(); });
   wireCanvas();
   $("#toolHome").onclick = () => goHome();
+  $("#funToggle").onclick = () => {
+    const open = $(".fun-tray").classList.toggle("open");
+    $("#funToggle").setAttribute("aria-expanded", String(open));
+  };
   $("#toolChurch").onclick = () => { if (state.me && state.board) openChurch({ me: state.me, api, boardEl: $("#boardScreen") }); };
   $("#toolFind").onclick = () => (others().filter((m) => state.views[m.id]).length > 1 ? openPeople() : findSomeone());
   $("#toolDraw").onclick = () => setInkMode(!inkMode);

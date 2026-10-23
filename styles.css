@@ -1239,3 +1239,23 @@ html.no-deco .room-system, html.no-deco #starCanvas { display: none !important; 
 .ch-hit-ref { display: block; font-size: 12px; font-weight: 700; color: #9c2a2a; margin-bottom: 2px; }
 .ch-hit b { background: #f6d77a; font-weight: 700; }
 .ch-foot { margin: 0; padding: 8px 16px; font-size: 12px; color: #6b5030; border-top: 1px solid #d9c49a; }
+
+/* ---------------------------------------------------------------- Simpler board (soy-v65) */
+#boardScreen { --surface: rgba(18, 20, 34, 0.8); --surface-ink: #f4f1ff; --topbar: rgba(18, 20, 34, 0.72); --topbar-ink: #f4f1ff; --line: rgba(255, 255, 255, 0.12); }
+#boardScreen .boardtools > button:not(.fab) { display: none; }
+#boardScreen .boardtools { right: 18px; bottom: calc(env(safe-area-inset-bottom) + 18px); }
+#boardScreen #dockGames { display: none; }
+#boardScreen .dock { background: rgba(18, 20, 34, 0.78); }
+#boardScreen .topbar .iconbtn { background: rgba(255, 255, 255, 0.07); border-radius: 50%; }
+#boardScreen .dock svg, #boardScreen .topbar svg, #boardScreen .more-row svg, #boardScreen .fun-toggle { stroke-width: 1.8; }
+.fun-toggle { position: fixed; left: 18px; bottom: calc(env(safe-area-inset-bottom, 0px) + 18px); z-index: 6; width: 52px; height: 52px; border-radius: 50%; border: 0; font-size: 24px; line-height: 1; display: grid; place-items: center; background: rgba(18, 20, 34, 0.8); box-shadow: 0 10px 22px -10px rgba(0, 0, 0, 0.6); backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%); }
+#boardScreen .fun-toggle[aria-expanded="true"] { background: #f6d77a; }
+#boardScreen .fun-tray { left: 14px; transform: none; bottom: calc(env(safe-area-inset-bottom, 0px) + 80px); display: none; }
+#boardScreen .fun-tray.open { display: flex; }
+body.drawmode .fun-toggle, body.drawmode #boardScreen .fun-tray { display: none; }
+
+/* Undo and redo in the top bar (soy-v66) */
+#boardScreen .topbar .histbar { position: static; display: flex; gap: 2px; margin-left: -4px; }
+#boardScreen .topbar .histbar[hidden] { display: none; }
+#boardScreen .topbar .histbar button { width: 40px; height: 40px; border-radius: 50%; border: 0; font-size: 18px; background: rgba(255, 255, 255, 0.07); color: var(--topbar-ink); box-shadow: none; }
+#boardScreen .topbar .histbar button:disabled { opacity: 0.35; }

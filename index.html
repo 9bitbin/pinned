@@ -121,6 +121,7 @@
       </div>
     </section>
   <section id="boardScreen" class="screen" hidden>
+    <button class="fun-toggle" id="funToggle" aria-expanded="false" aria-label="Fun tools" title="Fun tools">🎉</button>
     <div class="fun-tray" role="toolbar" aria-label="Fun tools">
       <button class="fun-btn" data-fx="pop" aria-pressed="false" aria-label="Party popper">🎉</button>
       <button class="fun-btn" data-fx="boom" aria-pressed="false" aria-label="Explosion">💥</button>
@@ -130,6 +131,10 @@
     <header class="topbar">
       <button class="who" id="memberChips" aria-label="Who's on the board"></button>
       <button class="title room-head" id="roomHead" aria-label="Room name, photo and lock"><span class="rh-photo" id="rhPhoto" aria-hidden="true">🏠</span><span class="rh-name" id="rhName">Our room</span><i class="rh-lock" id="rhLock" hidden aria-label="Locked">🔒</i></button>
+      <div class="histbar" id="histBar" hidden>
+        <button id="histUndo" aria-label="Undo" title="Undo">↶</button>
+        <button id="histRedo" aria-label="Redo" title="Redo">↷</button>
+      </div>
       <button class="iconbtn" id="openRooms" aria-label="Your rooms" title="Your rooms"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5.5"/><ellipse cx="12" cy="12" rx="10" ry="3.6" transform="rotate(-22 12 12)"/></svg></button>
       <button class="iconbtn" id="openSettings" aria-label="Settings"><i class="gear-dot" id="gearDot" hidden></i>
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
@@ -197,6 +202,12 @@
     <section class="sheet more" id="more" hidden aria-label="More">
       <h2>More</h2>
       <div class="more-list">
+        <button class="more-row" data-proxy="toolFind"><span>Find someone</span><i aria-hidden="true">›</i></button>
+        <button class="more-row" data-proxy="toolHome"><span>Back to the newest notes</span><i aria-hidden="true">›</i></button>
+        <button class="more-row" data-proxy="toolDraw"><span>Draw on the board</span><i aria-hidden="true">›</i></button>
+        <button class="more-row" data-proxy="toolLoc"><span>Live location</span><i aria-hidden="true">›</i></button>
+        <button class="more-row" data-proxy="toolChurch"><span>Church</span><i aria-hidden="true">›</i></button>
+        <button class="more-row" data-proxy="dockGames"><span>Games</span><i aria-hidden="true">›</i></button>
         <button class="more-row" data-proxy="dockPing"><span>Check in</span><i aria-hidden="true">›</i></button>
         <button class="more-row" data-proxy="dockQuestion"><span>Today's question</span><i aria-hidden="true">›</i></button>
         <button class="more-row" data-proxy="openRooms"><span>Your rooms</span><i aria-hidden="true">›</i></button>
@@ -224,10 +235,6 @@
       <input type="file" id="roomPhotoInput" accept="image/*" hidden>
       <div class="sheet-actions"><button class="btn" id="roomSheetClose">Close</button></div>
     </section>
-    <div class="histbar" id="histBar" hidden>
-      <button id="histUndo" aria-label="Undo" title="Undo">↶</button>
-      <button id="histRedo" aria-label="Redo" title="Redo">↷</button>
-    </div>
     <div class="boardtools" id="boardTools">
       <button id="toolLoc" aria-label="Live location" title="Live location"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg><i class="dot live" id="locDot" hidden></i></button>
       <button id="toolFind" aria-label="Find someone" title="Find someone"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg></button>
