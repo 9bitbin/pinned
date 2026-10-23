@@ -60,7 +60,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v60";
+const APP_VERSION = "soy-v63";
 
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
@@ -207,6 +207,12 @@ function createSupabaseApi() {
     async setBoardBg(boardId, mode, bg, setBg) { must(await sb.rpc("set_board_bg", { b: boardId, p_mode: mode, p_bg: bg, p_set_bg: setBg })); },
     async renameRoom(boardId, name) { must(await sb.rpc("rename_room", { p_board: boardId, p_name: name })); },
     async setRoomPhoto(boardId, path) { must(await sb.rpc("set_room_photo", { p_board: boardId, p_path: path })); },
+    fx(key, handler) {   // a shared channel for room-wide effects (the room map uses "map")
+      const ch = sb.channel("fx-" + key, { config: { broadcast: { self: false } } });
+      ch.on("broadcast", { event: "fx" }, ({ payload }) => handler(payload));
+      ch.subscribe();
+      return { send: (payload) => ch.send({ type: "broadcast", event: "fx", payload }) };
+    },
     async setRoomLock(boardId, locked) { must(await sb.rpc("set_room_lock", { p_board: boardId, p_locked: locked })); },
     async setRoomListed(boardId, listed) { must(await sb.rpc("set_room_listed", { p_board: boardId, p_listed: listed })); },
     async takeRoomAdmin(boardId) { must(await sb.rpc("take_room_admin", { p_board: boardId })); },
@@ -482,6 +488,11 @@ function createDemoApi() {
     },
     async takeRoomAdmin(boardId) { const d = db(); const b = d.boards[boardId]; if (!b) throw new Error("No room"); b.created_by = meId(); save(d); emit({ type: "board", row: b }); },
     async setRoomListed(boardId, listed) { const d = db(); const b = d.boards[boardId]; if (!b) throw new Error("No room"); if (b.created_by !== meId()) throw new Error("Only the room owner can change this"); b.listed = !!listed; save(d); emit({ type: "board", row: b }); },
+    fx(key, handler) {
+      const bc = "BroadcastChannel" in window ? new BroadcastChannel("soy-fx-" + key) : null;
+      if (bc) bc.onmessage = (e) => handler(e.data);
+      return { send: (payload) => { if (bc) bc.postMessage(payload); } };
+    },
     async setRoomLock(boardId, locked) { const d = db(); const b = d.boards[boardId]; if (!b) throw new Error("No room"); b.locked = !!locked; save(d); emit({ type: "board", row: b }); },
     async uploadRoomPhoto(boardId, blob) {
       const dataUrl = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(blob); });
@@ -1210,6 +1221,7 @@ const UPDATE_LOG = [
   { v: "soy-v52", date: "2026-10-22", title: "Shapes and brush size", items: ["Shapes gallery on the board: line, arrow, rectangle, rounded rectangle, oval, triangle, right triangle, diamond, pentagon, hexagon, star and heart", "Drag out a shape; it saves like a pen line, so undo and erase work", "Brush size is now a slider on the board (1 to 24)"] },
   { v: "soy-v51", date: "2026-10-22", title: "Moderation and the Pinned name", items: ["Moderators (set in the database) can review reported feedback, hide or restore posts, and dismiss reports", "Hidden posts show a notice instead of their text, and are left out of exports", "One report per person per post", "App renamed to Pinned in the setup guide and notifications"] },
   { v: "soy-v50", date: "2026-10-22", title: "Feedback cycle, replies and email change", items: ["Feedback cycle in Messages: one shared space for everyone across all rooms, with threads and replies", "Post feedback as yourself or anonymously. Anonymous hides your name from other users", "Reply to chat messages, with the original quoted", "Report a post, or delete your own", "Export feedback as a CSV from the Feedback cycle screen", "Change your sign-in email from Account"] },
+  { v: "soy-v63", date: "2026-10-23", title: "Fun tools", items: ["Fun tools on the board: party popper, explosion and emoji burst. Pick one, then tap the board. Everyone in the room sees it", "Celebrations: a party popper when you join a room, a sparkle with a happy chord when a room is locked, and an explosion on the map when a room is deleted", "Sound is on by default. The 🔊 button turns it off"] },
   { v: "soy-v60", date: "2026-10-23", title: "Every room is on the map", items: ["Your first screen is the room map, even before you have a room", "The app admin can delete any room from the map or from inside it", "The room owner can hide a room from the map. People inside still see it", "Anyone in a room can take admin from room settings. Admin moves to whoever presses it", "Joining with a code now allows up to 10 people, the same as the map", "Rooms you are not in are shown too. Tap an open room to join it straight away", "Locked rooms show a lock and can't be joined", "The room count shows on each room you can look at"] },
   { v: "soy-v49", date: "2026-10-22", title: "Rooms get names, photos and locks", items: ["Rename your room and add a room photo. Both show on the room list and at the top of the board, and update live", "Lock a room to stop new people joining with the code. Existing members are never locked out", "Room cards show the lock and the room code"] },
   { v: "soy-v48", date: "2026-10-22", title: "Scores tab", items: ["Scores tab in Games: each game's best run per person, with a podium for the top three", "Game scores are saved to the board and update every 15 seconds", "Quick Draw now reports its score too"] },
@@ -1594,6 +1606,7 @@ function roomTitle(r) {
 }
 function roomCard(r, i) {
   const c = document.createElement("button");
+  c.dataset.id = r.id;
   c.type = "button"; c.className = "room" + (r.locked ? " locked" : "") + (r.member ? "" : " outside");
   c.style.animationDelay = `${(-(i * 0.7) % 6.5).toFixed(2)}s`;
   const color = BRIGHT[(r.people || [])[0]?.color] || BRIGHT[["c1", "c2", "c3", "c4", "c5", "c6"][i % 6]];
@@ -1823,8 +1836,9 @@ async function deletePeek() {
   try {
     await api.deleteBoard(r.id);
     peekRoom = null; closeSheet("roomPeek");
-    roomsState.list = roomsState.list.filter((x) => x.id !== r.id);
-    renderRooms(); toast("Room deleted");
+    fxMapRemote({ fx: "room-gone", room: r.id });
+    fxMapChannel().send({ fx: "room-gone", room: r.id });
+    toast("Room deleted");
   } catch (e) { setError($("#peekError"), e.message || "Couldn't delete that room"); }
   busy(btn, false);
 }
@@ -1840,8 +1854,174 @@ async function joinPeek() {
     toast("Joined 🎉");
     // open it the same way a room from your list opens (those carry my_bg and joined_at)
     await openRoom({ ...b, my_bg: null, joined_at: new Date().toISOString(), member: true });
+    fxAnnounce("pop");
   } catch (e) { console.error("join room failed", e); setError($("#peekError"), e.message || "Couldn't join that room"); toast(e.message || "Couldn't join that room", 4000); }
   busy(btn, false);
+}
+// ---------------------------------------------------------------- fun tools
+// Board screen: pick a tool (party popper, explosion, emoji burst), then tap the board to fire it.
+// Everyone in the room sees it. Rooms also celebrate on their own: a joiner gets a party popper,
+// a lock gets a sparkle, and a deleted room explodes on the map for everyone looking at it.
+const FX_KINDS = ["pop", "boom", "burst", "sparkle"];
+const FX_KEY_MUTE = "pinned.fxMuted";
+let fxMuted = false, fxSel = null, fxLast = {}, fxCtx = null, fxCv = null, fxCx = null, fxParts = [], fxRaf = 0, fxShake = 0, fxMapCh = null;
+try { fxMuted = ls.get(FX_KEY_MUTE, false) === true; } catch { /* storage blocked */ }
+const FX_EMOJI = ["🎉", "🎊", "🥳", "✨", "🎈", "💖", "⭐", "🌟"];
+const fxRand = (a, b) => a + Math.random() * (b - a);
+
+function fxAudio() {
+  if (fxMuted) return null;
+  try {
+    if (!fxCtx) fxCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (fxCtx.state === "suspended") fxCtx.resume();
+    return fxCtx;
+  } catch { return null; }   // audio can be blocked; the visuals still play
+}
+function fxTone(ctx, o) {
+  const t = ctx.currentTime + (o.at || 0);
+  const osc = ctx.createOscillator(), g = ctx.createGain();
+  osc.type = o.type || "sine";
+  osc.frequency.setValueAtTime(o.f, t);
+  if (o.f2) osc.frequency.exponentialRampToValueAtTime(o.f2, t + o.dur);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(o.gain || 0.2, t + (o.attack || 0.01));
+  g.gain.exponentialRampToValueAtTime(0.0001, t + o.dur);
+  let node = osc;
+  if (o.lp) { const f = ctx.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = o.lp; osc.connect(f); node = f; }
+  node.connect(g); g.connect(ctx.destination);
+  osc.start(t); osc.stop(t + o.dur + 0.05);
+}
+function fxNoise(ctx, o) {
+  const len = Math.floor(ctx.sampleRate * o.dur);
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, o.decay || 2);
+  const src = ctx.createBufferSource(); src.buffer = buf;
+  const f = ctx.createBiquadFilter(); f.type = o.type || "bandpass"; f.frequency.value = o.f; f.Q.value = o.q || 1;
+  const g = ctx.createGain(); g.gain.value = o.gain || 0.3;
+  src.connect(f); f.connect(g); g.connect(ctx.destination);
+  src.start(ctx.currentTime + (o.at || 0));
+}
+// party popper: a crack, then a bright upward whistle
+function fxSndPop(ctx) {
+  fxNoise(ctx, { dur: 0.12, f: 2500, q: 0.8, gain: 0.5, decay: 3 });
+  fxTone(ctx, { type: "triangle", f: 400, f2: 1400, dur: 0.35, gain: 0.18 });
+  fxTone(ctx, { type: "sine", f: 880, dur: 0.25, at: 0.12, gain: 0.12 });
+}
+// explosion: a deep boom with a rumbling tail
+function fxSndBoom(ctx) {
+  fxTone(ctx, { type: "sine", f: 120, f2: 28, dur: 0.7, gain: 0.9, attack: 0.005 });
+  fxNoise(ctx, { dur: 0.9, f: 600, type: "lowpass", q: 0.7, gain: 0.8, decay: 2.2 });
+}
+// lock: a Chinese cymbal shimmer under a happy string chord
+function fxSndSparkle(ctx) {
+  fxNoise(ctx, { dur: 1.6, f: 7000, q: 2, gain: 0.25, decay: 1.5 });
+  [1870, 2690, 3910].forEach((f, i) => fxTone(ctx, { type: "sine", f, dur: 2.2, gain: 0.05 / (i + 1), attack: 0.003 }));
+  [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => fxTone(ctx, { type: "sawtooth", f, dur: 1.6, at: 0.12 + i * 0.07, gain: 0.07, attack: 0.12, lp: 2400 }));
+}
+
+function fxCanvas() {
+  if (fxCx) return fxCx;
+  fxCv = document.createElement("canvas"); fxCv.className = "fx-canvas"; fxCv.setAttribute("aria-hidden", "true");
+  document.body.appendChild(fxCv); fxCx = fxCv.getContext("2d");
+  const size = () => { const d = Math.min(window.devicePixelRatio || 1, 2); fxCv.width = innerWidth * d; fxCv.height = innerHeight * d; fxCx.setTransform(d, 0, 0, d, 0, 0); };
+  size(); addEventListener("resize", size);
+  return fxCx;
+}
+function fxSpawn(kind, x, y) {
+  fxCanvas();
+  const calm = prefersReducedMotion(), k = calm ? 0.35 : 1;
+  const add = (p) => fxParts.push({ life: 0, max: 120, x, y, ...p });
+  if (kind === "pop") {
+    for (let i = 0; i < Math.round(110 * k); i++) add({ t: "conf", vx: fxRand(-7, 7), vy: fxRand(-13, -5), g: 0.22, max: 150, s: fxRand(5, 9), r: fxRand(0, 6), vr: fxRand(-0.2, 0.2), c: ["#ff5d8f", "#ffd166", "#06d6a0", "#4cc9f0", "#b388ff"][i % 5] });
+  } else if (kind === "boom") {
+    add({ t: "flash", max: 14 });
+    add({ t: "ring", max: 30 });
+    for (let i = 0; i < Math.round(70 * k); i++) { const a = fxRand(0, Math.PI * 2), s = fxRand(3, 12); add({ t: "spark", vx: Math.cos(a) * s, vy: Math.sin(a) * s, g: 0.18, max: fxRand(35, 60), c: i % 2 ? "#ffd166" : "#ff7b3a" }); }
+    if (!calm) fxShake = 12;
+  } else if (kind === "burst") {
+    for (let i = 0; i < Math.round(16 * k); i++) add({ t: "emoji", vx: fxRand(-4, 4), vy: fxRand(-9, -4), g: 0.12, max: 120, ch: FX_EMOJI[i % FX_EMOJI.length], s: fxRand(26, 40) });
+  } else if (kind === "sparkle") {
+    for (let i = 0; i < Math.round(45 * k); i++) add({ t: "star", x: x + fxRand(-60, 60), y: y + fxRand(-40, 40), vx: fxRand(-0.6, 0.6), vy: fxRand(-1.6, -0.4), g: 0, max: fxRand(70, 110), s: fxRand(3, 7) });
+  }
+  if (!fxRaf) fxRaf = requestAnimationFrame(fxLoop);
+}
+function fxLoop() {
+  const cx = fxCx; if (!cx) { fxRaf = 0; return; }
+  cx.clearRect(0, 0, innerWidth, innerHeight);
+  const shook = fxShake > 0;
+  if (shook) { cx.save(); cx.translate(fxRand(-fxShake, fxShake), fxRand(-fxShake, fxShake)); fxShake *= 0.82; if (fxShake < 0.5) fxShake = 0; }
+  for (const p of fxParts) {
+    p.life++;
+    const f = p.life / p.max;
+    if (p.t === "conf" || p.t === "spark" || p.t === "emoji") { p.vx *= 0.99; p.vy += p.g; p.x += p.vx; p.y += p.vy; }
+    if (p.t === "conf") p.r += p.vr;
+    if (p.t === "star") { p.x += p.vx; p.y += p.vy; }
+    cx.save(); cx.globalAlpha = Math.max(0, 1 - f * f);
+    if (p.t === "conf") { cx.translate(p.x, p.y); cx.rotate(p.r); cx.fillStyle = p.c; cx.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2); }
+    else if (p.t === "spark") { cx.fillStyle = p.c; cx.beginPath(); cx.arc(p.x, p.y, 2.2 * (1 - f) + 0.6, 0, 7); cx.fill(); }
+    else if (p.t === "emoji") { cx.font = `${p.s}px "Apple Color Emoji", "Segoe UI Emoji", system-ui, sans-serif`; cx.textAlign = "center"; cx.textBaseline = "middle"; cx.fillText(p.ch, p.x, p.y); }
+    else if (p.t === "star") { cx.fillStyle = "#ffe9a3"; cx.beginPath(); cx.arc(p.x, p.y, p.s * (0.4 + 0.6 * Math.abs(Math.sin(p.life * 0.3))) / 2, 0, 7); cx.fill(); }
+    else if (p.t === "ring") { cx.strokeStyle = "rgba(255,240,200,.9)"; cx.lineWidth = 6 * (1 - f) + 1; cx.beginPath(); cx.arc(p.x, p.y, 220 * f, 0, 7); cx.stroke(); }
+    else if (p.t === "flash") { const g = cx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 160); g.addColorStop(0, "rgba(255,250,220,.95)"); g.addColorStop(1, "rgba(255,200,120,0)"); cx.fillStyle = g; cx.beginPath(); cx.arc(p.x, p.y, 160, 0, 7); cx.fill(); }
+    cx.restore();
+  }
+  if (shook) cx.restore();
+  fxParts = fxParts.filter((p) => p.life < p.max);
+  if (fxParts.length) fxRaf = requestAnimationFrame(fxLoop);
+  else { fxRaf = 0; cx.clearRect(0, 0, innerWidth, innerHeight); }
+}
+// play it here and, when announce is set, tell everyone in the room
+function fxFire(kind, x, y, announce) {
+  const ctx = fxAudio();
+  if (ctx) { if (kind === "boom") fxSndBoom(ctx); else if (kind === "sparkle") fxSndSparkle(ctx); else fxSndPop(ctx); }
+  fxSpawn(kind, x, y);
+  if (announce && live) { try { live.send({ fx: kind, x: x / innerWidth, y: y / innerHeight }); } catch { /* offline: only shows here */ } }
+}
+// the room's own celebrations (joining, locking): shown here and sent to the room
+function fxAnnounce(kind) { if (!state.board) return; fxFire(kind, innerWidth / 2, innerHeight * 0.4, true); }
+// something from someone else in the room
+function fxRemote(p) {
+  if (!p || !FX_KINDS.includes(p.fx)) return;
+  const x = Math.min(1, Math.max(0, Number(p.x) || 0)) * innerWidth, y = Math.min(1, Math.max(0, Number(p.y) || 0)) * innerHeight;
+  fxFire(p.fx, x, y, false);
+}
+// the room map: a deleted room explodes on the planet for everyone looking at the map
+function fxMapChannel() {
+  if (!fxMapCh) fxMapCh = api.fx("map", (p) => fxMapRemote(p));
+  return fxMapCh;
+}
+function fxMapRemote(p) {
+  if (!p || p.fx !== "room-gone" || !p.room) return;
+  if ($("#menu").hidden) return;
+  const card = document.querySelector(`#roomGrid .room[data-id="${CSS.escape(p.room)}"]`);
+  if (card) { const r = card.getBoundingClientRect(); fxFire("boom", r.x + r.width / 2, r.y + r.height * 0.4, false); }
+  setTimeout(() => {
+    roomsState.list = roomsState.list.filter((x) => x.id !== p.room);
+    if (!$("#menu").hidden) renderRooms();
+  }, card ? 700 : 0);
+}
+function fxSetSel(kind) {
+  fxSel = fxSel === kind ? null : kind;
+  document.querySelectorAll(".fun-btn[data-fx]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.fx === fxSel)));
+}
+function fxRenderMute() {
+  const b = $("#funMute"); if (!b) return;
+  b.textContent = fxMuted ? "🔇" : "🔊";
+  b.setAttribute("aria-pressed", String(fxMuted));
+  b.setAttribute("aria-label", fxMuted ? "Sound is off. Tap to turn on" : "Sound is on. Tap to turn off");
+}
+function fxInit() {
+  document.querySelectorAll(".fun-btn[data-fx]").forEach((b) => { b.onclick = () => fxSetSel(b.dataset.fx); });
+  $("#funMute").onclick = () => { fxMuted = !fxMuted; try { ls.set(FX_KEY_MUTE, fxMuted); } catch { /* storage blocked */ } fxRenderMute(); };
+  fxRenderMute();
+  $("#boardScreen").addEventListener("click", (e) => {
+    if (!fxSel || !state.board) return;
+    if (e.target.closest("button, input, textarea, select, a, label, .sheet, .sheet-backdrop, .fun-tray, .topbar, .histbar, [contenteditable]")) return;
+    const now = Date.now();
+    if (now - (fxLast[fxSel] || 0) < 600) return;   // cooldown so taps can't flood the screen
+    fxLast[fxSel] = now;
+    fxFire(fxSel, e.clientX, e.clientY, true);
+  });
 }
 function showPair() {
   show("#pair");
@@ -1861,7 +2041,7 @@ async function onJoinBoard() {
   const code = $("#codeInput").value;
   if (code.replace(/[^a-z0-9]/gi, "").length < 8) return setError($("#pairError"), "Codes are 8 characters.");
   const btn = $("#joinBoard"); busy(btn, true, "Joining…"); setError($("#pairError"));
-  try { await openBoard(await api.joinBoard(code)); } catch (e) { setError($("#pairError"), e.message); }
+  try { await openBoard(await api.joinBoard(code)); fxAnnounce("pop"); } catch (e) { setError($("#pairError"), e.message); }
   busy(btn, false);
 }
 
@@ -4264,6 +4444,7 @@ async function stickTogether() {
 }
 
 function onLiveMessage(m) {
+  if (m && m.fx) return fxRemote(m);
   if (!m || !m.t) return;
   if (m.t === "answered") return refreshQuestionDot();
   if (m.t === "cur") return onCursor(m);
@@ -4520,7 +4701,9 @@ async function deleteBoard() {
   const btn = $("#deleteBoardBtn"); busy(btn, true, "Deleting…");
   leaving = true;
   try {
-    await api.deleteBoard(state.board.id);
+    const gone = state.board.id;
+    await api.deleteBoard(gone);
+    fxMapChannel().send({ fx: "room-gone", room: gone });
     resetBoardState();
     const other = await api.myBoard();
     other ? await openBoard(other) : await showMenu();
@@ -5828,6 +6011,7 @@ function wireStatic() {
   };
   $("#roomHead").onclick = openRoomSheet;
   $("#roomSheetClose").onclick = () => closeSheet("roomSheet");
+  fxInit();
   $("#rsAdmin").onclick = () => roomChange(async () => { await api.takeRoomAdmin(state.board.id); state.board.created_by = state.me.id; renderRoomSheet(); }, "You're the admin now");
   $("#rsListed").onclick = () => {
     const want = state.board.listed === false;
@@ -5870,6 +6054,7 @@ function wireStatic() {
     roomChange(async () => {
       await api.setRoomLock(state.board.id, want);
       state.board.locked = want; renderRoomHead(); renderRoomSheet(); haptic(12);
+      if (want) fxAnnounce("sparkle");
     }, want ? "Room locked. Nobody new can join with the code." : "Room unlocked");
   };
   $("#avatarEdit").onclick = () => $("#avatarInput").click();

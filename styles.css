@@ -1147,3 +1147,11 @@ html.no-deco .room-system, html.no-deco #starCanvas { display: none !important; 
 .room.outside { opacity: .62; }
 .room.outside .room-planet { filter: saturate(.45); }
 .peek-lock { font-weight: 600; margin: 6px 0; }
+
+/* Fun tools */
+.fx-canvas { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 60; }
+.fun-tray { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 92px); z-index: 16; display: flex; gap: 8px; padding: 6px; border-radius: 18px; background: rgba(20, 24, 40, .82); backdrop-filter: blur(6px); box-shadow: 0 6px 20px rgba(0, 0, 0, .25); }
+.fun-btn { width: 44px; height: 44px; border-radius: 14px; border: 1px solid rgba(255, 255, 255, .14); background: rgba(255, 255, 255, .06); font-size: 22px; line-height: 1; cursor: pointer; transition: transform .12s, background .12s; }
+.fun-btn:active { transform: scale(.94); }
+.fun-btn[aria-pressed="true"] { background: rgba(255, 209, 102, .28); border-color: #ffd166; transform: scale(1.06); }
+.fun-mute { font-size: 18px; }
