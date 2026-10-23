@@ -61,7 +61,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v66";
+const APP_VERSION = "soy-v75";
 
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
@@ -389,10 +389,10 @@ function createSupabaseApi() {
         track: (p) => { presence = { ...presence, ...p }; liveCh.track(presence); },
       };
     },
-    church(me, h) {
-      // one shared channel for the church: presence only (name, colour, seat)
+    church(me, h, boardId) {
+      // one channel per room: presence only (name, colour, seat), so only people in this room see each other
       let presence = { name: me.name, color: me.color, seat: null };
-      const chCh = sb.channel("church", { config: { presence: { key: me.id } } });
+      const chCh = sb.channel("church-" + boardId, { config: { presence: { key: me.id } } });
       chCh.on("presence", { event: "sync" }, () => {
         const out = {};
         for (const [k, metas] of Object.entries(chCh.presenceState())) out[k] = metas[metas.length - 1];
@@ -694,9 +694,9 @@ function createDemoApi() {
       pub();
       return { send: (p) => post({ k: "m", p }), track: (p) => { presence = { ...presence, ...p }; post({ k: "pres", p: presence }); pub(); } };
     },
-    church(me, h) {
-      // demo mode: the same presence idea over BroadcastChannel
-      const ch = "BroadcastChannel" in window ? new BroadcastChannel("soy-church") : null;
+    church(me, h, boardId) {
+      // demo mode: the same presence idea over BroadcastChannel, one channel per room
+      const ch = "BroadcastChannel" in window ? new BroadcastChannel("soy-church-" + boardId) : null;
       const peers = {}; let presence = { name: me.name, color: me.color, seat: null };
       const pub = () => h.onPresence({ ...peers, [me.id]: presence });
       const post = (m) => ch && ch.postMessage({ ...m, from: me.id });
@@ -1247,6 +1247,15 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v75", date: "2026-10-23", title: "Church: enclosed, calmer, with a censing deacon", items: [
+    "Stone walls, a dark vault and shadowed floor, so the church feels closed in",
+    "Lectern moved to the centre of the nave",
+    "A deacon walks slowly down the aisle and back, swinging a censer with rising incense",
+    "The censer chain clinks as it swings (plays with the music)",
+    "Music: three original pieces, each with a solo melody over the choir, and slower chord changes"] },
+  { v: "soy-v69", date: "2026-10-23", title: "Church: more detailed", items: ["Gold apse with the Theotokos in prayer, painted vault with angels, and chandeliers", "Three-tier iconostasis with icon rows and arched royal doors, plus candle stands", "Marble columns, frescoed side walls and stained-glass windows", "Depth: the walls and the nave move slightly as you move your pointer or finger", "Original artwork, inspired by Orthodox church interiors. No photos are used"] },
+  { v: "soy-v68", date: "2026-10-23", title: "Church fills the desktop screen", items: ["The church uses the full width on desktop instead of a narrow strip"] },
+  { v: "soy-v67", date: "2026-10-23", title: "Church: larger, Bible at the top, choir music", items: ["Church fills more of the screen", "Bible button at the top centre, and in the church toolbar", "Choir music: soft, slow hymn chords that fade in and out. Three tracks (Vespers, Liturgy, Dawn), with a volume slider", "Music starts when you enter and stops when you leave. The 🔊 mute also silences it", "Music is generated in the browser, not recorded"] },
   { v: "soy-v66", date: "2026-10-23", title: "Undo and redo in the top bar, dark by default", items: ["Undo and redo sit in the top bar on every board", "New devices start with the dark theme (Dark minimal). Pick Cozy cork in Settings to go back"] },
   { v: "soy-v65", date: "2026-10-23", title: "Simpler board", items: ["One 🎉 button opens the fun tools above it, instead of a strip across the board", "Right-hand side keeps only the + button", "Find, home, drawing, live location, Church and Games live in More", "Undo and redo show only while drawing", "Dark, frosted controls on every board"] },
   { v: "soy-v64", date: "2026-10-23", title: "Church", items: ["Church button in the board sidebar (right-hand side). Rooms you make or join are the way in", "A shared Orthodox church: everyone in it can see each other, sitting in pews or standing at the back", "Door sounds when you enter and leave, and quiet ones when others do. The 🔊 button mutes them", "Back to my room returns you to the board you came from", "Bible at the lectern: search by reference or word, browse books and chapters, change text size", "Translations: English (King James, American Standard, World English, Darby, Young's Literal) and Russian Synodal (64 of 66 books)"] },
@@ -6123,7 +6132,7 @@ function wireStatic() {
     const open = $(".fun-tray").classList.toggle("open");
     $("#funToggle").setAttribute("aria-expanded", String(open));
   };
-  $("#toolChurch").onclick = () => { if (state.me && state.board) openChurch({ me: state.me, api, boardEl: $("#boardScreen") }); };
+  $("#toolChurch").onclick = () => { if (state.me && state.board) openChurch({ me: state.me, api, boardEl: $("#boardScreen"), boardId: state.board.id }); };
   $("#toolFind").onclick = () => (others().filter((m) => state.views[m.id]).length > 1 ? openPeople() : findSomeone());
   $("#toolDraw").onclick = () => setInkMode(!inkMode);
   $("#bDone").onclick = () => setInkMode(false);

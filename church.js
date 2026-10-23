@@ -3,7 +3,7 @@
 // The lectern opens a Bible reader with search, a book browser and text size.
 // Loaded by app.js, which passes in the signed-in person, the live API and a way back.
 
-const CH_KEY = { mute: "pinned.fxMuted", ambient: "pinned.churchAmbient", bible: "pinned.churchBible", size: "pinned.churchTextSize" };
+const CH_KEY = { mute: "pinned.fxMuted", ambient: "pinned.churchAmbient", bible: "pinned.churchBible", size: "pinned.churchTextSize", music: "pinned.churchMusic", musicVol: "pinned.churchMusicVol", track: "pinned.churchTrack" };
 const chGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } };
 const chSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage blocked */ } };
 const chEsc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -66,9 +66,155 @@ function chAmbientOff() {
   if (chHum) { try { chHum.o.stop(); } catch { /* already stopped */ } chHum = null; }
 }
 
+
+// ---------------------------------------------------------------- choir music
+// Generated in the browser: soft, slow chords sung by layered detuned voices with a vowel filter and a long hall reverb.
+// No recordings are used, so there is no licence to check.
+// Original pieces. Each has a slow chord cycle and a solo melody line (one note per chord), in a modal, chant-like sound.
+const CH_TRACKS = [
+  { name: "Vespers", every: 12, chords: [[57, 60, 64], [53, 57, 60], [60, 64, 67], [55, 59, 62]], melody: [76, 72, 79, 74] },   // Am F C G
+  { name: "Liturgy", every: 13, chords: [[50, 53, 57], [58, 62, 65], [53, 57, 60], [57, 60, 64]], melody: [74, 70, 72, 69] }, // Dm Bb F C
+  { name: "Dawn", every: 14, chords: [[60, 64, 67], [57, 60, 64], [53, 57, 60], [55, 59, 62]], melody: [72, 69, 77, 79] },   // C Am F G
+];
+const chMidi = (n) => 440 * Math.pow(2, (n - 69) / 12);
+let chMus = { on: false, master: null, verb: null, groups: [], timer: 0, step: 0, track: 0, vol: 0.35 };
+try { chMus.vol = Math.min(1, Math.max(0, chGet(CH_KEY.musicVol, 35) / 100)); chMus.track = chGet(CH_KEY.track, 0) % CH_TRACKS.length; } catch { /* defaults */ }
+
+function chHall(a) {
+  // a soft 4-second hall impulse made from decaying noise
+  const len = Math.floor(a.sampleRate * 4), buf = a.createBuffer(2, len, a.sampleRate);
+  for (let c = 0; c < 2; c++) { const d = buf.getChannelData(c); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
+  const conv = a.createConvolver(); conv.buffer = buf; return conv;
+}
+function chVoiceGroup(a, dest, chord, level) {
+  // one chord sung by three detuned "voices" (a vowel-like filter on a soft saw)
+  const out = a.createGain(); out.gain.value = 0;
+  const lp = a.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 1100; lp.Q.value = 0.4;
+  const formant = a.createBiquadFilter(); formant.type = "bandpass"; formant.frequency.value = 820; formant.Q.value = 1.6;
+  lp.connect(formant).connect(out).connect(dest);
+  const nodes = [];
+  for (const n of chord) for (const det of [-6, 0, 6]) {
+    const o = a.createOscillator(); o.type = "sawtooth"; o.frequency.value = chMidi(n); o.detune.value = det;
+    const g = a.createGain(); g.gain.value = 0.18 / chord.length / 1.5;
+    const vib = a.createOscillator(); vib.frequency.value = 4.6 + Math.random() * 0.8;
+    const vg = a.createGain(); vg.gain.value = 3; vib.connect(vg).connect(o.detune);
+    o.connect(g).connect(lp); o.start(); vib.start();
+    nodes.push(o, vib);
+  }
+  out.gain.linearRampToValueAtTime(level, a.currentTime + 2.8); // slow swell in
+  return { out, nodes };
+}
+// A solo voice on the melody: a soft sine with a triangle for warmth and a slow vibrato.
+function chMelody(a, dest, midi, dur) {
+  const out = a.createGain(); out.gain.value = 0;
+  const o1 = a.createOscillator(); o1.type = "sine"; o1.frequency.value = chMidi(midi);
+  const o2 = a.createOscillator(); o2.type = "triangle"; o2.frequency.value = chMidi(midi);
+  const g2 = a.createGain(); g2.gain.value = 0.35;
+  const vib = a.createOscillator(); vib.frequency.value = 5.2;
+  const vg = a.createGain(); vg.gain.value = 9;
+  vib.connect(vg); vg.connect(o1.detune); vg.connect(o2.detune);
+  o1.connect(out); o2.connect(g2).connect(out); out.connect(dest);
+  const t = a.currentTime;
+  out.gain.setValueAtTime(0, t); out.gain.linearRampToValueAtTime(0.14, t + 1.6);
+  out.gain.setValueAtTime(0.14, t + Math.max(2, dur - 2.6)); out.gain.linearRampToValueAtTime(0, t + dur);
+  for (const n of [o1, o2, vib]) { n.start(t); n.stop(t + dur + 0.1); }
+}
+// The censer's chain clinks as it swings, with a soft hiss of incense.
+function chCensorClink() {
+  if (!chMus.on) return;
+  const a = chCtx(); if (!a) return;
+  try {
+    const t = a.currentTime;
+    for (const f of [2310, 3150, 4480]) {
+      const o = a.createOscillator(); o.type = "sine"; o.frequency.value = f;
+      const g = a.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.045, t + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.9);
+      o.connect(g).connect(a.destination); o.start(t); o.stop(t + 1);
+    }
+    const len = Math.floor(a.sampleRate * 1.4), buf = a.createBuffer(1, len, a.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2) * 0.5;
+    const src = a.createBufferSource(); src.buffer = buf;
+    const hp = a.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 3000;
+    const g = a.createGain(); g.gain.value = 0.035;
+    src.connect(hp).connect(g).connect(a.destination); src.start(t + 0.15);
+  } catch { /* audio blocked */ }
+}
+
+function chMusicPlayChord() {
+  const a = chMus.master && chMus.master.context; if (!a || !chMus.on) return;
+  const tr = CH_TRACKS[chMus.track], chord = tr.chords[chMus.step % tr.chords.length];
+  if (!chMus.bus) return;
+  chMus.step++;
+  const now = a.currentTime;
+  for (const g of chMus.groups) { // fade the old chord out, then stop it
+    g.out.gain.cancelScheduledValues(now); g.out.gain.setValueAtTime(g.out.gain.value, now); g.out.gain.linearRampToValueAtTime(0, now + 3.2);
+    setTimeout(() => g.nodes.forEach((n) => { try { n.stop(); } catch { /* already stopped */ } }), 3500);
+  }
+  chMus.groups = [chVoiceGroup(a, chMus.bus, chord, 1)];
+  const dur = CH_TRACKS[chMus.track].every;
+  chMelody(a, chMus.bus, tr.melody[(chMus.step - 1) % tr.melody.length], dur);
+}
+function chMusicStart() {
+  if (chMus.on) return;
+  const a = chCtx(); if (!a) return;
+  try {
+    // voices -> bus -> master -> speakers, and bus -> hall reverb -> wet -> master (no loops)
+    chMus.bus = a.createGain();
+    chMus.verb = chHall(a);
+    const wet = a.createGain(); wet.gain.value = 0.6;
+    chMus.master = a.createGain(); chMus.master.gain.value = 0;
+    chMus.master.connect(a.destination);
+    chMus.bus.connect(chMus.master);
+    chMus.bus.connect(chMus.verb); chMus.verb.connect(wet).connect(chMus.master);
+    chMus.master.gain.linearRampToValueAtTime(chMus.vol * 0.22, a.currentTime + 2);
+    chMus.on = true;
+    chMusicPlayChord();
+    chMus.timer = setInterval(chMusicPlayChord, CH_TRACKS[chMus.track].every * 1000);
+    // The censer clinks each time the swing reaches the end of a stroke, so sound matches motion.
+    chMus.onSwing = (e) => { if (e.target && e.target.classList && e.target.classList.contains("ch-swing")) chCensorClink(); };
+    document.addEventListener("animationiteration", chMus.onSwing);
+  } catch { chMus.on = false; }
+  chMusicUi();
+}
+function chMusicStop() {
+  if (!chMus.on) return;
+  chMus.on = false; clearInterval(chMus.timer); chMus.timer = 0;
+  if (chMus.onSwing) { document.removeEventListener("animationiteration", chMus.onSwing); chMus.onSwing = null; }
+  const m = chMus.master, a = m && m.context;
+  if (a && m) {
+    m.gain.cancelScheduledValues(a.currentTime); m.gain.setValueAtTime(m.gain.value, a.currentTime);
+    m.gain.linearRampToValueAtTime(0, a.currentTime + 1.5);
+    const groups = chMus.groups; chMus.groups = [];
+    const bus = chMus.bus, verb = chMus.verb;
+    setTimeout(() => {
+      groups.forEach((g) => g.nodes.forEach((n) => { try { n.stop(); } catch { /* ok */ } }));
+      try { m.disconnect(); if (bus) bus.disconnect(); if (verb) verb.disconnect(); } catch { /* ok */ }
+    }, 1700);
+  }
+  chMus.master = null; chMus.verb = null; chMus.bus = null;
+  chMusicUi();
+}
+function chMusicSetVol(v) {
+  chMus.vol = Math.min(1, Math.max(0, v / 100));
+  chSet(CH_KEY.musicVol, Math.round(v));
+  if (chMus.on && chMus.master) chMus.master.gain.setTargetAtTime(chMus.vol * 0.22, chMus.master.context.currentTime, 0.08);
+}
+function chMusicNextTrack() {
+  chMus.track = (chMus.track + 1) % CH_TRACKS.length; chMus.step = 0;
+  chSet(CH_KEY.track, chMus.track);
+  if (chMus.on) { chMusicStop(); chMusicStart(); }
+  chMusicUi();
+}
+function chMusicUi() {
+  if (!chRoot) return;
+  const b = chRoot.querySelector("#chMusicBtn"), t = chRoot.querySelector("#chTrack");
+  if (b) { b.setAttribute("aria-pressed", String(chMus.on)); b.textContent = chMus.on ? "♪ Music on" : "♪ Music off"; }
+  if (t) t.textContent = CH_TRACKS[chMus.track].name;
+}
+
 // ---------------------------------------------------------------- scene
-// Viewbox 400 x 700. Every position below is in these units; HTML pews are placed in percentages.
 const VB_W = 400, VB_H = 700;
+// The scene is wider than the church: the nave sits in the middle (x from SC_X) and walls and pillars fill the sides.
+const SC_X = 350, SC_W = 1100;
 const pct = (v, total) => `${((v / total) * 100).toFixed(3)}%`;
 const PEWS = [
   { id: "L0", x: 26, y: 382 }, { id: "L1", x: 26, y: 438 }, { id: "L2", x: 26, y: 494 }, { id: "L3", x: 26, y: 550 },
@@ -100,37 +246,37 @@ function chIcon(x, y, w, h, kind) {
     ${halo}${robe}${face}${extra}
   </g>`;
 }
-function chIconostasis() {
-  const frame = `<rect x="58" y="150" width="284" height="172" fill="#c99a3c" stroke="#7a4f12" stroke-width="2"/>`;
-  const doors = `<rect x="170" y="176" width="60" height="146" fill="#9c2a2a" stroke="#f1d27a" stroke-width="2"/>
-    <line x1="200" y1="176" x2="200" y2="322" stroke="#f1d27a" stroke-width="1.5"/>
-    <circle cx="200" cy="248" r="7" fill="#f1d27a"/>`;
-  const topRow = [0, 1, 2, 3, 4].map((i) => chIcon(74 + i * 52, 102, 44, 44, ICON_KINDS[i % ICON_KINDS.length])).join("");
-  const sideIcons = [chIcon(72, 176, 40, 66, ICON_KINDS[2]), chIcon(288, 176, 40, 66, ICON_KINDS[3]), chIcon(72, 256, 40, 66, ICON_KINDS[4]), chIcon(288, 256, 40, 66, ICON_KINDS[1])].join("");
-  const crown = `<rect x="46" y="88" width="308" height="14" rx="3" fill="#d9a63a" stroke="#7a4f12"/>`;
-  return frame + doors + topRow + sideIcons + crown;
+
+// Scene art. The nave sits in the middle (x from SC_X); walls, columns and windows fill the sides.
+// Two depth layers: the far walls and the near nave move by different amounts when the pointer moves (see chParallax).
+// The outer group places the nave; the inner group is the depth layer (CSS transforms would override a transform attribute).
+const CH_NAVE = (body) => `<g transform="translate(${SC_X} 0)"><g class="ch-near">${body}</g></g>`;
+const CH_FAR = (body) => `<g class="ch-far">${body}</g>`;
+
+function chDefs() {
+  let tess = "";
+  for (let i = 0; i < 6; i++) tess += `<rect x="${i * 8}" y="${i % 2 * 4}" width="4" height="4" fill="#fff3c4" opacity="${0.12 + (i % 3) * 0.05}"/>`;
+  return `<defs>
+    <radialGradient id="chGold" cx="50%" cy="30%" r="70%"><stop offset="0" stop-color="#ffe7a0"/><stop offset=".55" stop-color="#d9a63a"/><stop offset="1" stop-color="#7a4f12"/></radialGradient>
+    <pattern id="chTess" width="8" height="8" patternUnits="userSpaceOnUse">${tess}</pattern>
+    <linearGradient id="chMarble" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#8b5a64"/><stop offset=".3" stop-color="#e6c7c0"/><stop offset=".55" stop-color="#b58088"/><stop offset=".8" stop-color="#f0dcd4"/><stop offset="1" stop-color="#7d4b57"/></linearGradient>
+    <linearGradient id="chGlass" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1e4fa8"/><stop offset=".45" stop-color="#7a2a6a"/><stop offset=".75" stop-color="#2f8a5a"/><stop offset="1" stop-color="#d9a63a"/></linearGradient>
+    <linearGradient id="chCarpet" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7a0f1f"/><stop offset="1" stop-color="#9a1b29"/></linearGradient>
+    <pattern id="chCarpetTex" width="10" height="10" patternUnits="userSpaceOnUse">
+      <rect width="10" height="10" fill="#8a1424"/>
+      <path d="M0 2.5 H10 M0 7.5 H10" stroke="#5e0c18" stroke-width="1" opacity=".55"/>
+      <path d="M2.5 0 V10 M7.5 0 V10" stroke="#b02a3a" stroke-width=".6" opacity=".35"/>
+      <rect x="4.5" y="4.5" width="1" height="1" fill="#d9a63a" opacity=".5"/>
+    </pattern>
+    <linearGradient id="chVault" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#15286b"/><stop offset="1" stop-color="#2d3f8f"/></linearGradient>
+    <linearGradient id="chFresco" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d9c48a"/><stop offset="1" stop-color="#6f5a2f"/></linearGradient>
+    <linearGradient id="chWall" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1f1a24"/><stop offset=".5" stop-color="#3a3038"/><stop offset="1" stop-color="#2a2222"/></linearGradient>
+    <linearGradient id="chWood" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#6b3f1f"/><stop offset=".5" stop-color="#8a5a2e"/><stop offset="1" stop-color="#5a3418"/></linearGradient>
+    <radialGradient id="chGlow"><stop offset="0" stop-color="#ffd27a" stop-opacity=".55"/><stop offset="1" stop-color="#ffd27a" stop-opacity="0"/></radialGradient>
+    ${chMosaic()}
+  </defs>`;
 }
-function chCandles() {
-  const xs = [14, 386];
-  let out = "";
-  for (const x of xs) for (const y of [236, 300, 364]) {
-    out += `<rect x="${x - 2.5}" y="${y}" width="5" height="22" fill="#f4eee0"/><ellipse class="ch-flame" cx="${x}" cy="${y - 4}" rx="3" ry="6" fill="#ffd27a"/>`;
-  }
-  for (const x of [176, 200, 224]) out += `<rect x="${x - 3}" y="330" width="6" height="26" fill="#f4eee0"/><ellipse class="ch-flame" cx="${x}" cy="326" rx="3.4" ry="7" fill="#ffd27a"/>`;
-  return out;
-}
-function chLamps() {
-  return [110, 290].map((x) => `<line x1="${x}" y1="0" x2="${x}" y2="34" stroke="#7a4f12" stroke-width="1.5"/>
-    <circle cx="${x}" cy="54" r="58" fill="url(#chGlow)" class="ch-glow"/>
-    <path d="M${x - 12} 40 Q${x} 36 ${x + 12} 40 L${x + 9} 58 Q${x} 64 ${x - 9} 58 Z" fill="#c99a3c" stroke="#7a4f12"/>
-    <ellipse class="ch-flame" cx="${x}" cy="50" rx="4" ry="6" fill="#ffe2a0"/>`).join("");
-}
-function chDome() {
-  let stars = "";
-  const seeds = [[60, 30], [120, 18], [180, 40], [230, 16], [300, 34], [340, 20], [90, 60], [260, 58], [150, 8], [210, 6], [40, 50], [360, 56]];
-  for (const [x, y] of seeds) stars += `<circle cx="${x}" cy="${y}" r="1.6" fill="#f6d77a" opacity=".8"/>`;
-  return `<path d="M0 0 L400 0 L400 46 Q200 -18 0 46 Z" fill="#1c2c63"/>${stars}`;
-}
+// Floor tile pattern: cream, red and gold diamonds.
 function chMosaic() {
   return `<pattern id="chTile" width="28" height="28" patternUnits="userSpaceOnUse">
       <rect width="28" height="28" fill="#f2e6c2"/>
@@ -138,37 +284,187 @@ function chMosaic() {
       <path d="M14 8 L20 14 L14 20 L8 14 Z" fill="#d9a63a"/>
     </pattern>`;
 }
+// Gilded ornament band with a dotted pattern.
+function chBand(x1, y, x2) {
+  return `<rect x="${x1}" y="${y}" width="${x2 - x1}" height="7" fill="#c99a3c" stroke="#7a4f12" stroke-width="1"/><line x1="${x1}" y1="${y + 3.5}" x2="${x2}" y2="${y + 3.5}" stroke="#f6d77a" stroke-width="1" stroke-dasharray="3 4" opacity=".8"/>`;
+}
+function chMarbleColumn(x, w) {
+  return `<rect x="${x}" y="70" width="${w}" height="${VB_H - 90}" fill="url(#chMarble)" stroke="#5a3a44" stroke-width="1"/>
+    <rect x="${x - 8}" y="56" width="${w + 16}" height="16" rx="2" fill="#d9a63a" stroke="#7a4f12"/>
+    <rect x="${x - 10}" y="${VB_H - 22}" width="${w + 20}" height="22" fill="#b58a46" stroke="#5a3a1a"/>`;
+}
+function chWindowArch(x, y, w, h) {
+  const r = w / 2;
+  return `<path d="M${x} ${y + h} L${x} ${y + r} A${r} ${r} 0 0 1 ${x + w} ${y + r} L${x + w} ${y + h} Z" fill="url(#chGlass)" stroke="#d9a63a" stroke-width="4"/>
+    <line x1="${x + r}" y1="${y + 6}" x2="${x + r}" y2="${y + h}" stroke="#f6d77a" stroke-width="2" opacity=".7"/>
+    <line x1="${x + 4}" y1="${y + h * 0.55}" x2="${x + w - 4}" y2="${y + h * 0.55}" stroke="#f6d77a" stroke-width="2" opacity=".7"/>
+    <circle cx="${x + r}" cy="${y + r * 0.9}" r="${r * 0.38}" fill="none" stroke="#f6d77a" stroke-width="2.4"/>`;
+}
+function chChandelier(cx, len, r) {
+  let lights = "";
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2, x = cx + Math.cos(a) * r, y = len + Math.sin(a) * r * 0.32;
+    lights += `<rect x="${x - 2}" y="${y - 10}" width="4" height="10" fill="#f4eee0"/><ellipse class="ch-flame" cx="${x}" cy="${y - 12}" rx="2.4" ry="4.5" fill="#ffd27a"/>`;
+  }
+  return `<line x1="${cx}" y1="0" x2="${cx}" y2="${len}" stroke="#7a4f12" stroke-width="1.5"/>
+    <ellipse cx="${cx}" cy="${len}" rx="${r}" ry="${r * 0.32}" fill="none" stroke="#c99a3c" stroke-width="5"/>
+    <circle cx="${cx}" cy="${len + 4}" r="${r * 1.3}" fill="url(#chGlow)" class="ch-glow"/>${lights}`;
+}
+// Fresco panel: a painted field with a row of gilded medallions.
+function chFresco(x, y, w, h) {
+  let med = "";
+  const n = 2;
+  for (let i = 0; i < n; i++) med += chIcon(x + 10 + i * ((w - 20) / n), y + 16, (w - 20) / n - 8, h - 40, ICON_KINDS[(i + Math.floor(x)) % ICON_KINDS.length]);
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="4" fill="url(#chFresco)" stroke="#7a4f12" stroke-width="2"/>
+    <rect x="${x + 4}" y="${y + 4}" width="${w - 8}" height="${h - 8}" fill="none" stroke="#f6d77a" stroke-width="1" stroke-dasharray="2 3" opacity=".7"/>${med}`;
+}
+// The Theotokos (Orans): arms raised, Child on her breast, gold halo, on a gold apse.
+function chOrans(cx, cy, s) {
+  return `<circle cx="${cx}" cy="${cy - s * 0.25}" r="${s * 0.62}" fill="#f6d77a" stroke="#7a4f12" stroke-width="2"/>
+    <path d="M${cx - s * 0.95} ${cy + s * 1.7} Q${cx - s * 1.05} ${cy + s * 0.2} ${cx - s * 0.42} ${cy - s * 0.05} L${cx + s * 0.42} ${cy - s * 0.05} Q${cx + s * 1.05} ${cy + s * 0.2} ${cx + s * 0.95} ${cy + s * 1.7} Z" fill="#5a1426" stroke="#2a0a14"/>
+    <path d="M${cx - s * 0.5} ${cy + s * 0.05} Q${cx - s * 1.5} ${cy - s * 0.2} ${cx - s * 1.4} ${cy - s * 0.9} L${cx - s * 1.1} ${cy - s * 0.85} Q${cx - s * 1.2} ${cy - s * 0.2} ${cx - s * 0.2} ${cy + s * 0.2} Z" fill="#5a1426" stroke="#2a0a14"/>
+    <path d="M${cx + s * 0.5} ${cy + s * 0.05} Q${cx + s * 1.5} ${cy - s * 0.2} ${cx + s * 1.4} ${cy - s * 0.9} L${cx + s * 1.1} ${cy - s * 0.85} Q${cx + s * 1.2} ${cy - s * 0.2} ${cx + s * 0.2} ${cy + s * 0.2} Z" fill="#5a1426" stroke="#2a0a14"/>
+    <ellipse cx="${cx}" cy="${cy - s * 0.3}" rx="${s * 0.3}" ry="${s * 0.36}" fill="#e9c9a0"/>
+    <path d="M${cx - s * 0.42} ${cy - s * 0.42} Q${cx} ${cy - s * 0.95} ${cx + s * 0.42} ${cy - s * 0.42} L${cx + s * 0.38} ${cy + s * 0.05} L${cx - s * 0.38} ${cy + s * 0.05} Z" fill="#1d3d7a" opacity=".92"/>
+    <circle cx="${cx}" cy="${cy + s * 0.55}" r="${s * 0.22}" fill="#f2d8b0" stroke="#7a4f12"/>
+    <circle cx="${cx}" cy="${cy + s * 0.55}" r="${s * 0.34}" fill="none" stroke="#f6d77a" stroke-width="1.5"/>`;
+}
+function chApse() {
+  return `<path d="M26 330 L26 250 A174 174 0 0 1 374 250 L374 330 Z" fill="url(#chGold)" stroke="#7a4f12" stroke-width="3"/>
+    <path d="M26 330 L26 250 A174 174 0 0 1 374 250 L374 330 Z" fill="url(#chTess)" opacity=".5"/>
+    <path d="M44 320 L44 250 A156 156 0 0 1 356 250 L356 320" fill="none" stroke="#f6d77a" stroke-width="2" stroke-dasharray="4 5"/>
+    <path d="M26 250 A174 174 0 0 1 374 250" fill="none" stroke="#7a4f12" stroke-width="5"/>
+    ${chOrans(200, 124, 36)}
+    <text x="200" y="170" text-anchor="middle" font-size="11" font-family="serif" fill="#5a1426" font-weight="700">ΜΡ ΘΥ</text>`;
+}
+function chVaultAngels() {
+  let out = "";
+  for (let i = 0; i < 6; i++) {
+    const x = 40 + i * 60;
+    out += `<circle cx="${x}" cy="34" r="14" fill="#1d3d7a" stroke="#d9a63a" stroke-width="2"/><circle cx="${x}" cy="34" r="10" fill="none" stroke="#f6d77a" stroke-width="1" stroke-dasharray="2 2"/><circle cx="${x}" cy="34" r="5" fill="#f2d8b0"/>`;
+  }
+  return out;
+}
+// Three-tier iconostasis: gilded frame, icon rows, royal doors with an arch.
+function chIconostasisArt() {
+  let top = "", mid = "";
+  for (let i = 0; i < 5; i++) top += chIcon(70 + i * 52, 214, 44, 46, ICON_KINDS[i % ICON_KINDS.length]);
+  for (const x of [62, 110, 262, 310]) mid += chIcon(x, 270, 46, 60, ICON_KINDS[(x / 10) % ICON_KINDS.length | 0]);
+  return `<rect x="46" y="190" width="308" height="144" fill="url(#chGold)" stroke="#7a4f12" stroke-width="2"/>
+    <rect x="46" y="186" width="308" height="10" fill="#f6d77a" stroke="#7a4f12"/>
+    ${chBand(46, 204, 354)}
+    ${top}${mid}
+    <rect x="104" y="262" width="8" height="70" fill="#f6d77a" stroke="#7a4f12"/><rect x="288" y="262" width="8" height="70" fill="#f6d77a" stroke="#7a4f12"/>
+    <path d="M168 334 L168 278 Q200 246 232 278 L232 334 Z" fill="#9c2a2a" stroke="#f1d27a" stroke-width="3"/>
+    <line x1="200" y1="262" x2="200" y2="330" stroke="#f1d27a" stroke-width="1.5"/>
+    <circle cx="200" cy="300" r="5" fill="#f1d27a"/>
+    <rect x="193" y="170" width="14" height="24" fill="#d9a63a" stroke="#7a4f12"/><rect x="186" y="178" width="28" height="5" fill="#d9a63a" stroke="#7a4f12"/>`;
+}
+function chCandleStands() {
+  let out = "";
+  for (const x of [120, 280]) out += `<rect x="${x - 2}" y="326" width="4" height="34" fill="#c99a3c"/><rect x="${x - 7}" y="356" width="14" height="5" fill="#7a4f12"/><rect x="${x - 3}" y="314" width="6" height="14" fill="#f4eee0"/><ellipse class="ch-flame" cx="${x}" cy="311" rx="3.2" ry="6" fill="#ffd27a"/>`;
+  return out;
+}
+function chCandles() {
+  let out = "";
+  for (const x of [14, 386]) for (const y of [236, 300, 364]) {
+    out += `<rect x="${x - 2.5}" y="${y}" width="5" height="22" fill="#f4eee0"/><ellipse class="ch-flame" cx="${x}" cy="${y - 4}" rx="3" ry="6" fill="#ffd27a"/>`;
+  }
+  return out;
+}
+function chPerspective() {
+  let out = "";
+  for (const x of [-120, -40, 40, 120, 280, 360, 440, 520]) out += `<line x1="200" y1="330" x2="${x}" y2="700" stroke="#fff3c4" stroke-width="1" opacity=".08"/>`;
+  return out;
+}
+function chCarpetArt() {
+  return `<path d="M168 330 L232 330 L268 700 L132 700 Z" fill="#8a1424" stroke="#f6d77a" stroke-width="2" stroke-dasharray="6 6"/>
+    <path d="M168 330 L232 330 L268 700 L132 700 Z" fill="url(#chCarpetTex)"/>`;
+}
+// The analogion (lectern) at the centre of the nave, with an open book and a small lamp.
 function chLectern() {
   return `<g class="ch-lectern-art">
-    <rect x="334" y="300" width="50" height="10" rx="2" fill="#7a4f12"/>
-    <rect x="352" y="310" width="14" height="36" fill="#7a4f12"/>
-    <path d="M330 292 L368 288 L368 300 L330 304 Z" fill="#f2e6c2" stroke="#b8862b"/>
-    <path d="M368 288 L406 292 L406 304 L368 300 Z" fill="#f2e6c2" stroke="#b8862b"/>
-    <rect x="364" y="284" width="8" height="20" fill="#d9a63a"/>
+    <rect x="176" y="346" width="48" height="8" rx="2" fill="#7a4f12"/>
+    <rect x="195" y="318" width="10" height="30" fill="#7a4f12"/>
+    <path d="M170 306 L199 300 L199 316 L170 322 Z" fill="#f2e6c2" stroke="#b8862b"/>
+    <path d="M201 300 L230 306 L230 322 L201 316 Z" fill="#f2e6c2" stroke="#b8862b"/>
+    <rect x="197" y="296" width="6" height="8" fill="#d9a63a"/>
+    <path d="M200 262 Q196 268 200 274 Q204 268 200 262 Z" fill="#ffd27a" class="ch-flame"/>
   </g>`;
 }
+// A deacon walks slowly down the centre aisle and back, swinging a censer. Incense rises from it.
+function chCenser() {
+  let smoke = "";
+  for (let i = 0; i < 6; i++) {
+    const dx = (i % 2 ? 6 : -6) + (i - 3) * 2;
+    smoke += `<circle class="ch-smoke" style="animation-delay:${(i * 0.55).toFixed(2)}s;--dx:${dx}px" cx="222" cy="404" r="${5 + (i % 3) * 2}" fill="#e8e4ef"/>`;
+  }
+  return `<g class="ch-walker">
+    <path d="M186 370 L214 370 L222 428 L178 428 Z" fill="#f4eee0" stroke="#7a4f12" stroke-width="1.2"/>
+    <path d="M192 368 L208 368 L210 384 L190 384 Z" fill="#9c2a2a" opacity=".9"/>
+    <path d="M196 372 L204 372 L206 428 L194 428 Z" fill="#d9a63a" opacity=".55"/>
+    <circle cx="200" cy="356" r="9" fill="#e9c9a0" stroke="#7a4f12" stroke-width=".8"/>
+    <path d="M190 352 Q200 340 210 352 L209 357 L191 357 Z" fill="#3a2412"/>
+    <line x1="208" y1="372" x2="222" y2="392" stroke="#f4eee0" stroke-width="5" stroke-linecap="round"/>
+    <g class="ch-swing">
+      <line x1="222" y1="392" x2="222" y2="404" stroke="#c99a3c" stroke-width="1.2"/>
+      <line x1="218" y1="392" x2="216" y2="404" stroke="#c99a3c" stroke-width="1"/>
+      <line x1="226" y1="392" x2="228" y2="404" stroke="#c99a3c" stroke-width="1"/>
+      <path d="M214 404 L230 404 Q230 416 222 416 Q214 416 214 404 Z" fill="#d9a63a" stroke="#7a4f12" stroke-width="1"/>
+      <line x1="210" y1="404" x2="234" y2="404" stroke="#7a4f12" stroke-width="1.5"/>
+    </g>
+    ${smoke}
+  </g>`;
+}
+// Side walls (far layer): marble columns, frescoes and stained-glass windows, mirrored around the nave.
+function chSideWalls() {
+  let out = "";
+  for (let y = 0; y < VB_H; y += 22) out += `<line x1="0" y1="${y}" x2="${SC_W}" y2="${y}" stroke="#000" stroke-opacity=".18"/>`;
+  for (let i = 0; i < SC_W; i += 60) out += `<line x1="${i}" y1="0" x2="${i}" y2="${VB_H}" stroke="#000" stroke-opacity=".1"/>`;
+  out += `<rect x="0" y="330" width="${SC_W}" height="370" fill="#2d2118" opacity=".7"/>`;
+  const cols = [40, 150, 300];
+  for (const x of cols) out += chMarbleColumn(x, 26) + chMarbleColumn(SC_W - x - 26, 26);
+  out += chFresco(190, 130, 96, 200) + chFresco(SC_W - 286, 130, 96, 200);
+  out += chWindowArch(78, 60, 70, 180) + chWindowArch(SC_W - 148, 60, 70, 180);
+  out += chChandelier(SC_W / 2 - 300, 60, 36) + chChandelier(SC_W / 2 + 300, 60, 36);
+  return out;
+}
 function chSvg() {
-  return `<svg class="ch-svg" viewBox="0 0 ${VB_W} ${VB_H}" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">
-    <defs>
-      <radialGradient id="chGlow"><stop offset="0" stop-color="#ffd27a" stop-opacity=".55"/><stop offset="1" stop-color="#ffd27a" stop-opacity="0"/></radialGradient>
-      <linearGradient id="chWall" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a1d3d"/><stop offset=".55" stop-color="#4a2a3a"/><stop offset="1" stop-color="#2a1d1d"/></linearGradient>
-      <linearGradient id="chWood" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#6b3f1f"/><stop offset=".5" stop-color="#8a5a2e"/><stop offset="1" stop-color="#5a3418"/></linearGradient>
-      ${chMosaic()}
-    </defs>
-    <rect width="${VB_W}" height="${VB_H}" fill="url(#chWall)"/>
-    ${chDome()}
-    <path d="M30 330 L370 330 L400 700 L0 700 Z" fill="url(#chTile)"/>
-    <path d="M30 330 L370 330 L400 700 L0 700 Z" fill="none" stroke="#f1d27a" stroke-width="2" opacity=".5"/>
-    ${chIconostasis()}
-    ${chCandles()}
-    ${chLamps()}
-    ${chLectern()}
-    ${PEWS.map((p) => `<rect class="ch-pewart" x="${p.x}" y="${p.y}" width="${PEW_W}" height="${PEW_H}" rx="4" fill="url(#chWood)" stroke="#3a2412"/>`).join("")}
-    <rect x="164" y="660" width="72" height="40" fill="#3a2412" stroke="#d9a63a" stroke-width="2" class="ch-door-art"/>
+  return `<svg class="ch-svg" viewBox="0 0 ${SC_W} ${VB_H}" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">
+    ${chDefs()}
+    <rect width="${SC_W}" height="${VB_H}" fill="url(#chWall)"/>
+    ${CH_FAR(chSideWalls())}
+    ${CH_NAVE(`
+      <path d="M0 0 L400 0 L400 76 Q200 -4 0 76 Z" fill="url(#chVault)"/>
+      ${chVaultAngels()}
+      ${chPerspective()}
+      <rect x="0" y="330" width="400" height="370" fill="#4a2f22" opacity=".25"/>
+      ${chApse()}
+      ${chIconostasisArt()}
+      ${chCandleStands()}
+      ${chMosaicFloor()}
+      ${chCarpetArt()}
+      <path d="M26 326 L374 326" stroke="#f6d77a" stroke-width="2" opacity=".35"/>
+      ${chLampsArt()}
+      ${chLectern()}
+      ${chCenser()}
+      ${PEWS.map((p) => `<rect class="ch-pewart" x="${p.x}" y="${p.y}" width="${PEW_W}" height="${PEW_H}" rx="4" fill="url(#chWood)" stroke="#3a2412"/>`).join("")}
+      <rect x="164" y="660" width="72" height="40" fill="#3a2412" stroke="#d9a63a" stroke-width="2" class="ch-door-art"/>
+    `)}
   </svg>`;
+}
+function chMosaicFloor() {
+  return `<path d="M26 330 L374 330 L400 700 L0 700 Z" fill="url(#chTile)" opacity=".6"/>`;
+}
+function chLampsArt() {
+  return [110, 290].map((x) => `<line x1="${x}" y1="0" x2="${x}" y2="34" stroke="#7a4f12" stroke-width="1.5"/>
+    <circle cx="${x}" cy="54" r="58" fill="url(#chGlow)" class="ch-glow"/>
+    <path d="M${x - 12} 40 Q${x} 36 ${x + 12} 40 L${x + 9} 58 Q${x} 64 ${x - 9} 58 Z" fill="#c99a3c" stroke="#7a4f12"/>
+    <ellipse class="ch-flame" cx="${x}" cy="50" rx="4" ry="6" fill="#ffe2a0"/>`).join("");
 }
 
 // ---------------------------------------------------------------- the church screen
+let chBoardId = "room";
 let chRoot = null, chOpen = false, chLive = null, chMe = null, chApi = null, chPushed = false, chSeat = null;
 let chPeople = {}, chSynced = false, chOnLeave = () => {}, chBoardEl = null;
 const CH_BIBLE = { manifest: null, data: new Map(), tr: null, book: 0, chap: 1, view: "books", sel: null, token: 0, sheet: null };
@@ -180,21 +476,26 @@ function chBuildRoot() {
   root.innerHTML = `
     <header class="ch-bar">
       <button class="ch-back" id="chBack" type="button">‹ Back to my room</button>
+      <button class="ch-bible-top" id="chBibleTop" type="button" aria-label="Open the Bible">📖 Bible</button>
       <span class="ch-count" id="chCount" aria-live="polite"></span>
     </header>
-    <div class="ch-stage" id="chStage">
+    <div class="ch-stage" id="chStage"><div class="ch-scene">
       ${chSvg()}
       <div class="ch-pews" id="chPews">
-        ${PEWS.map((p) => `<button class="ch-pew" type="button" data-pew="${p.id}" style="left:${pct(p.x, VB_W)};top:${pct(p.y, VB_H)};width:${pct(PEW_W, VB_W)};height:${pct(PEW_H + 14, VB_H)}" aria-label="Sit in pew ${p.id[0] === "L" ? "left" : "right"} ${Number(p.id[1]) + 1}"></button>`).join("")}
-        <button class="ch-pew ch-back-row" type="button" data-pew="back" style="left:${pct(120, VB_W)};top:${pct(BACK_ROW.y, VB_H)};width:${pct(160, VB_W)};height:${pct(40, VB_H)}" aria-label="Stand at the back"></button>
-        <button class="ch-lectern" type="button" id="chLectern" style="left:${pct(322, VB_W)};top:${pct(282, VB_H)};width:${pct(88, VB_W)};height:${pct(60, VB_H)}" aria-label="Open the Bible"><span class="ch-lbl">Bible</span></button>
-        <button class="ch-door-tap" type="button" id="chDoor" aria-label="Back to my room" style="left:${pct(164, VB_W)};top:${pct(660, VB_H)};width:${pct(72, VB_W)};height:${pct(40, VB_H)}"></button>
+        ${PEWS.map((p) => `<button class="ch-pew" type="button" data-pew="${p.id}" style="left:${pct(p.x + SC_X, SC_W)};top:${pct(p.y, VB_H)};width:${pct(PEW_W, SC_W)};height:${pct(PEW_H + 14, VB_H)}" aria-label="Sit in pew ${p.id[0] === "L" ? "left" : "right"} ${Number(p.id[1]) + 1}"></button>`).join("")}
+        <button class="ch-pew ch-back-row" type="button" data-pew="back" style="left:${pct(SC_X + 120, SC_W)};top:${pct(BACK_ROW.y, VB_H)};width:${pct(160, SC_W)};height:${pct(40, VB_H)}" aria-label="Stand at the back"></button>
+        <button class="ch-lectern" type="button" id="chLectern" style="left:${pct(SC_X + 160, SC_W)};top:${pct(290, VB_H)};width:${pct(80, SC_W)};height:${pct(66, VB_H)}" aria-label="Open the Bible"><span class="ch-lbl">Bible</span></button>
+        <button class="ch-door-tap" type="button" id="chDoor" aria-label="Back to my room" style="left:${pct(SC_X + 164, SC_W)};top:${pct(660, VB_H)};width:${pct(72, SC_W)};height:${pct(40, VB_H)}"></button>
       </div>
       <div class="ch-people" id="chPeople" aria-live="polite"></div>
-    </div>
+    </div></div>
     <p class="ch-hint" id="chHint">Tap a pew to sit, tap the lectern to read the Bible. Everyone here can see you.</p>
     <div class="ch-tools">
-      <label class="ch-toggle"><input type="checkbox" id="chAmbient"> Church hum and bells</label>
+      <button class="ch-tool" type="button" id="chBibleBtn">📖 Bible</button>
+      <button class="ch-tool" type="button" id="chMusicBtn" aria-pressed="false">♪ Music off</button>
+      <button class="ch-tool" type="button" id="chTrack">Vespers</button>
+      <label class="ch-vol">Volume <input type="range" id="chVol" min="0" max="100" step="1" aria-label="Music volume"></label>
+      <label class="ch-toggle"><input type="checkbox" id="chAmbient"> Hum and bells</label>
     </div>`;
   document.body.appendChild(root);
   return root;
@@ -208,7 +509,7 @@ function chPaintPeople() {
     const key = p.seat && PEWS.some((x) => x.id === p.seat) ? p.seat : "back";
     const n = (seated[key] = (seated[key] || 0) + 1) - 1;
     const pew = PEWS.find((x) => x.id === key);
-    const left = pew ? pct(pew.x + 14 + n * 28, VB_W) : pct(120 + (n % 6) * 26 + (Math.floor(n / 6) * 6), VB_W);
+    const left = pew ? pct(SC_X + pew.x + 14 + n * 28, SC_W) : pct(SC_X + 120 + (n % 6) * 26 + (Math.floor(n / 6) * 6), SC_W);
     const top = pew ? pct(pew.y - 16, VB_H) : pct(BACK_ROW.y + (Math.floor(n / 6)) * 6, VB_H);
     const me = id === chMe.id;
     const name = me ? "You" : (p.name || "Visitor");
@@ -221,6 +522,17 @@ function chPaintPeople() {
   if (cEl) cEl.textContent = count === 1 ? "Only you are here" : `${count} people here`;
 }
 
+// Depth: pointer or finger movement shifts the far walls and the near nave by different amounts.
+function chParallax(stage) {
+  if (reducedMotion()) return;
+  const set = (x) => {
+    const r = stage.getBoundingClientRect();
+    const px = Math.max(-1, Math.min(1, ((x - r.left) / r.width) * 2 - 1));
+    stage.style.setProperty("--px", px.toFixed(3));
+  };
+  stage.addEventListener("pointermove", (e) => set(e.clientX));
+  stage.addEventListener("pointerleave", () => stage.style.setProperty("--px", "0"));
+}
 function chSetSeatLabels() {
   if (!chRoot) return;
   chRoot.querySelectorAll(".ch-pew[data-pew]").forEach((b) => {
@@ -263,8 +575,9 @@ function chPresenceSet() { // used when the screen opens
 }
 
 // ---------------------------------------------------------------- open and close
-function openChurch({ me, api, boardEl, onLeave }) {
+function openChurch({ me, api, boardEl, onLeave, boardId }) {
   if (chOpen) return;
+  chBoardId = boardId || "room";
   chMe = me; chApi = api; chOnLeave = onLeave || (() => {}); chBoardEl = boardEl || null;
   if (!chPresenceSet()) { console.warn("church: live API missing"); return; }
   if (!chRoot) {
@@ -272,7 +585,18 @@ function openChurch({ me, api, boardEl, onLeave }) {
     chRoot.querySelector("#chBack").addEventListener("click", () => chLeave(true));
     chRoot.querySelector("#chDoor").addEventListener("click", () => chLeave(true));
     chRoot.querySelector("#chLectern").addEventListener("click", () => openBible());
+    chRoot.querySelector("#chBibleTop").addEventListener("click", () => openBible());
+    chRoot.querySelector("#chBibleBtn").addEventListener("click", () => openBible());
+    chRoot.querySelector("#chMusicBtn").addEventListener("click", () => {
+      if (chMus.on) { chSet(CH_KEY.music, false); chMusicStop(); }
+      else { chSet(CH_KEY.music, true); chMusicStart(); }
+    });
+    chRoot.querySelector("#chTrack").addEventListener("click", () => chMusicNextTrack());
+    const vol = chRoot.querySelector("#chVol");
+    vol.value = Math.round(chMus.vol * 100);
+    vol.addEventListener("input", () => chMusicSetVol(Number(vol.value)));
     chRoot.querySelectorAll(".ch-pew[data-pew]").forEach((b) => b.addEventListener("click", () => chSit(b.dataset.pew)));
+    chParallax(chRoot.querySelector("#chStage"));
     const amb = chRoot.querySelector("#chAmbient");
     amb.checked = chGet(CH_KEY.ambient, false) === true;
     amb.addEventListener("change", () => {
@@ -289,9 +613,10 @@ function openChurch({ me, api, boardEl, onLeave }) {
   chDoor(true);
   chRoot.classList.remove("closing"); chRoot.classList.add("opening");
   setTimeout(() => chRoot && chRoot.classList.remove("opening"), 1400);
-  chLive = chApi.church(chMe, { onPresence: chOnPresence });
+  chLive = chApi.church(chMe, { onPresence: chOnPresence }, chBoardId);
   chLive.track({ name: chMe.name, color: chMe.color, seat: null });
   if (chGet(CH_KEY.ambient, false) === true) chAmbientOn();
+  if (chGet(CH_KEY.music, true) === true) chMusicStart(); else chMusicUi();
   chRoot.querySelector("#chBack").focus({ preventScroll: true });
 }
 
@@ -304,6 +629,7 @@ function chLeave(fromUi) {
   setTimeout(() => chRoot && chRoot.classList.remove("closing"), 1400);
   chOpen = false;
   chAmbientOff();
+  chMusicStop();
   chCloseBible();
   try { if (chLive && chLive.close) chLive.close(); } catch { /* channel already closed */ }
   chLive = null; chPeople = {}; chSeat = null;

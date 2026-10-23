@@ -1163,10 +1163,16 @@ html.no-deco .room-system, html.no-deco #starCanvas { display: none !important; 
 #churchScreen.closing .ch-door-art { animation: chDoorClose 1.3s ease-in both; }
 @keyframes chDoorOpen { from { transform: scaleX(1); } to { transform: scaleX(0.35); transform-origin: left center; } }
 @keyframes chDoorClose { from { transform: scaleX(0.35); transform-origin: left center; } to { transform: scaleX(1); } }
-.ch-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: calc(env(safe-area-inset-top) + 8px) 16px 8px; }
+.ch-bar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; padding: calc(env(safe-area-inset-top) + 8px) 16px 8px; }
 .ch-back { min-height: 44px; padding: 0 14px; border-radius: 22px; border: 1px solid #d9a63a; background: #2a1d10; color: #f6d77a; font: inherit; font-weight: 600; cursor: pointer; }
-.ch-count { font-size: 13px; color: #d9c9a0; text-align: right; }
-.ch-stage { position: relative; width: min(100%, calc((100dvh - 190px) * 0.5714)); aspect-ratio: 400 / 700; margin: 0 auto; }
+.ch-count { font-size: 13px; color: #d9c9a0; text-align: right; justify-self: end; }
+.ch-bible-top { min-height: 44px; padding: 0 18px; border-radius: 22px; border: 1px solid #f6d77a; background: #f6d77a; color: #2a1d10; font: inherit; font-weight: 700; cursor: pointer; justify-self: center; }
+.ch-tool { min-height: 44px; padding: 0 14px; margin: 3px; border-radius: 22px; border: 1px solid #d9a63a; background: #2a1d10; color: #f6d77a; font: inherit; font-weight: 600; cursor: pointer; }
+.ch-tool[aria-pressed="true"] { background: #f6d77a; color: #2a1d10; }
+.ch-vol { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; font-size: 14px; color: #f4eee0; margin: 0 6px; }
+.ch-vol input { width: 120px; accent-color: #f6d77a; }
+.ch-stage { position: relative; width: 100%; height: calc(100dvh - 210px); min-height: 380px; container-type: size; display: flex; justify-content: center; overflow: hidden; background: linear-gradient(180deg, #2a1d3d 0%, #4a2a3a 55%, #2a1d1d 100%); }
+.ch-scene { position: relative; height: min(100cqh, 157cqw); aspect-ratio: 1100 / 700; }
 .ch-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .ch-pews, .ch-people { position: absolute; inset: 0; }
 .ch-people { pointer-events: none; }
@@ -1178,7 +1184,7 @@ html.no-deco .room-system, html.no-deco #starCanvas { display: none !important; 
 .ch-lbl { font-size: 12px; font-weight: 700; color: #f6d77a; text-shadow: 0 1px 3px #000; padding-bottom: 2px; }
 .ch-door-tap { position: absolute; background: transparent; border: 0; cursor: pointer; }
 .ch-person { position: absolute; transform: translate(-50%, -50%); width: 52px; text-align: center; transition: left 0.6s ease, top 0.6s ease; }
-.ch-fig { display: block; width: 14px; height: 30px; margin: 0 auto; border-radius: 7px 7px 4px 4px; background: var(--pc); box-shadow: 0 0 10px 3px var(--pc); opacity: 0.95; }
+.ch-fig { display: block; width: 26px; height: 26px; margin: 0 auto; border-radius: 50%; border: 2px solid #d9a63a; background: radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--pc) 60%, #fff) 0%, var(--pc) 55%, #1a0f1f 100%); box-shadow: 0 0 0 1px #7a4f12, 0 0 10px 3px var(--pc); opacity: 0.95; }
 .ch-person.me .ch-fig { outline: 2px solid #f6d77a; outline-offset: 1px; }
 .ch-person.away { opacity: 0.45; }
 .ch-name { display: block; font-size: 11px; line-height: 1.1; color: #fff7e0; text-shadow: 0 1px 3px #000, 0 0 2px #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1186,8 +1192,8 @@ html.no-deco .room-system, html.no-deco #starCanvas { display: none !important; 
 .ch-glow { animation: chGlowPulse 3.2s ease-in-out infinite alternate; }
 @keyframes chFlicker { 0% { transform: scale(1, 1); opacity: 1; } 50% { transform: scale(0.92, 1.06); opacity: 0.85; } 100% { transform: scale(1.04, 0.96); opacity: 1; } }
 @keyframes chGlowPulse { from { opacity: 0.75; } to { opacity: 1; } }
-.ch-hint { margin: 6px 16px 0; font-size: 13px; color: #d9c9a0; text-align: center; }
-.ch-tools { padding: 6px 16px calc(env(safe-area-inset-bottom) + 12px); text-align: center; }
+.ch-hint { margin: 4px 16px 0; font-size: 12px; color: #d9c9a0; text-align: center; }
+.ch-tools { padding: 4px 12px calc(env(safe-area-inset-bottom) + 8px); display: flex; flex-wrap: wrap; justify-content: center; align-items: center; }
 .ch-toggle { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; font-size: 14px; color: #f4eee0; }
 .ch-toggle input { width: 20px; height: 20px; }
 @media (prefers-reduced-motion: reduce) {
@@ -1259,3 +1265,30 @@ body.drawmode .fun-toggle, body.drawmode #boardScreen .fun-tray { display: none;
 #boardScreen .topbar .histbar[hidden] { display: none; }
 #boardScreen .topbar .histbar button { width: 40px; height: 40px; border-radius: 50%; border: 0; font-size: 18px; background: rgba(255, 255, 255, 0.07); color: var(--topbar-ink); box-shadow: none; }
 #boardScreen .topbar .histbar button:disabled { opacity: 0.35; }
+.ch-back { justify-self: start; white-space: nowrap; }
+@media (max-width: 480px) { .ch-back { padding: 0 10px; font-size: 14px; } .ch-bible-top { padding: 0 12px; } }
+@media (min-width: 900px) { .ch-stage { height: calc(100dvh - 190px); } }
+
+/* Depth: far walls and near nave drift at different speeds (church.js chParallax) */
+.ch-far { transform: translateX(calc(var(--px, 0) * -14px)); transition: transform 0.4s ease-out; }
+.ch-near { transform: translateX(calc(var(--px, 0) * 6px)); transition: transform 0.4s ease-out; }
+@media (prefers-reduced-motion: reduce) { .ch-far, .ch-near { transform: none !important; transition: none !important; } }
+
+/* Enclosure: stone walls, a dark vault above and a shadowed floor, so the church reads as closed in (soy-v70) */
+.ch-stage { background: linear-gradient(180deg, #120e16 0%, #2a2430 35%, #2e2620 70%, #17120e 100%); box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.85); }
+.ch-stage::before, .ch-stage::after { content: ""; position: absolute; left: -5%; right: -5%; pointer-events: none; z-index: 2; }
+.ch-stage::before { top: -18%; height: 42%; background: radial-gradient(ellipse 60% 100% at 50% 100%, transparent 58%, #07050a 100%); }
+.ch-stage::after { bottom: -14%; height: 30%; background: radial-gradient(ellipse 70% 100% at 50% 0%, transparent 52%, #0a0708 100%); }
+.ch-scene { z-index: 1; }
+
+/* The censing deacon: a slow walk down the aisle and back, swinging censer, rising incense (soy-v70) */
+.ch-walker { animation: chWalk 40s ease-in-out infinite alternate; }
+@keyframes chWalk { from { transform: translate(0, 70px); } to { transform: translate(0, 250px); } }
+.ch-swing { transform-box: view-box; transform-origin: 222px 392px; animation: chSwing 3.2s ease-in-out infinite alternate; }
+@keyframes chSwing { from { transform: rotate(-24deg); } to { transform: rotate(24deg); } }
+.ch-smoke { transform-box: fill-box; transform-origin: center; opacity: 0; animation: chSmoke 3.2s ease-out infinite; }
+@keyframes chSmoke { 0% { transform: translate(0, 0) scale(0.5); opacity: 0; } 15% { opacity: 0.5; } 100% { transform: translate(var(--dx, 0), -80px) scale(2.8); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .ch-walker, .ch-swing, .ch-smoke { animation: none !important; }
+  .ch-smoke { display: none; }
+}
