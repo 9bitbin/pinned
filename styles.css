@@ -1142,3 +1142,8 @@ html.no-deco .room-system, html.no-deco #starCanvas { display: none !important; 
 @keyframes orbitArrive { from { opacity: 0; scale: .2; } to { opacity: 1; scale: 1; } }
 @keyframes ringIn { from { opacity: 0; scale: .4; } to { opacity: 1; scale: 1; } }
 @media (prefers-reduced-motion: reduce) { .room.arrive, .orbit-ring.arrive { animation: none; } }
+
+/* Rooms you are not in yet (room map) */
+.room.outside { opacity: .62; }
+.room.outside .room-planet { filter: saturate(.45); }
+.peek-lock { font-weight: 600; margin: 6px 0; }

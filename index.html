@@ -199,9 +199,21 @@
         <button class="more-row" id="rsPhotoBtn"><span>Change room photo</span><i aria-hidden="true">›</i></button>
         <button class="more-row" id="rsRemovePhoto" hidden><span>Remove room photo</span><i aria-hidden="true">›</i></button>
         <button class="more-row" id="rsLock"><span id="rsLockText">Lock room</span><i aria-hidden="true">›</i></button>
+        <button class="more-row" id="rsListed" hidden><span id="rsListedText">Hide from the room map</span><i aria-hidden="true">›</i></button>
       </div>
       <input type="file" id="roomPhotoInput" accept="image/*" hidden>
       <div class="sheet-actions"><button class="btn" id="roomSheetClose">Close</button></div>
+    </section>
+    <div class="sheet-backdrop" id="roomPeekBackdrop" hidden></div>
+    <section class="sheet more room-sheet" id="roomPeek" hidden aria-label="Room">
+      <h2 id="peekName">Room</h2>
+      <p class="muted" id="peekCount"></p>
+      <p class="peek-lock" id="peekLock" hidden>🔒 Locked</p>
+      <p class="muted" id="peekNote"></p>
+      <div class="sheet-actions">
+        <button class="btn primary" id="peekJoin">Join room</button>
+        <button class="btn" id="peekClose">Close</button>
+      </div>
     </section>
     <div class="histbar" id="histBar" hidden>
       <button id="histUndo" aria-label="Undo" title="Undo">↶</button>

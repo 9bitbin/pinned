@@ -60,7 +60,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v59";
+const APP_VERSION = "soy-v60";
 
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
@@ -183,7 +183,7 @@ function createSupabaseApi() {
       must(await sb.from("profiles").update(patch).eq("id", myId()));
     },
     async myBoards() {
-      let res = await sb.from("board_members").select("board_id, joined_at, bg, boards(id, code, created_by, bg_mode, bg, name, photo_path, locked)").eq("user_id", myId());
+      let res = await sb.from("board_members").select("board_id, joined_at, bg, boards(id, code, created_by, bg_mode, bg, name, photo_path, locked, listed)").eq("user_id", myId());
       if (res.error) res = await sb.from("board_members").select("board_id, joined_at, boards(id, code, created_by)").eq("user_id", myId());
       return must(res).filter((r) => r.boards).map((r) => ({ ...r.boards, my_bg: r.bg || null, joined_at: r.joined_at }));
     },
@@ -194,7 +194,7 @@ function createSupabaseApi() {
       return must(await sb.from("profiles").select("id,name,color").in("id", ids));
     },
     async myBoard() {
-      let res = await sb.from("board_members").select("board_id, bg, boards(id, code, created_by, bg_mode, bg, name, photo_path, locked)").eq("user_id", myId()).order("joined_at", { ascending: false }).limit(1);
+      let res = await sb.from("board_members").select("board_id, bg, boards(id, code, created_by, bg_mode, bg, name, photo_path, locked, listed)").eq("user_id", myId()).order("joined_at", { ascending: false }).limit(1);
       if (res.error) res = await sb.from("board_members").select("board_id, boards(id, code, created_by)").eq("user_id", myId()).order("joined_at", { ascending: false }).limit(1);
       const rows = must(res);
       return rows[0] ? { ...rows[0].boards, my_bg: rows[0].bg || null } : null;
@@ -208,6 +208,9 @@ function createSupabaseApi() {
     async renameRoom(boardId, name) { must(await sb.rpc("rename_room", { p_board: boardId, p_name: name })); },
     async setRoomPhoto(boardId, path) { must(await sb.rpc("set_room_photo", { p_board: boardId, p_path: path })); },
     async setRoomLock(boardId, locked) { must(await sb.rpc("set_room_lock", { p_board: boardId, p_locked: locked })); },
+    async setRoomListed(boardId, listed) { must(await sb.rpc("set_room_listed", { p_board: boardId, p_listed: listed })); },
+    async listRooms() { return must(await sb.rpc("list_rooms")) || []; },
+    async joinRoomById(boardId) { return must(await sb.rpc("join_room_by_id", { p_board: boardId })); },
     async uploadRoomPhoto(boardId, blob) {
       const path = `${boardId}/room-${Date.now()}.jpg`;
       must(await bucket().upload(path, blob, { contentType: "image/jpeg", upsert: false }));
@@ -466,6 +469,17 @@ function createDemoApi() {
     },
     async renameRoom(boardId, name) { const d = db(); const b = d.boards[boardId]; if (!b) throw new Error("No room"); b.name = (name || "").trim().slice(0, 40) || null; save(d); emit({ type: "board", row: b }); },
     async setRoomPhoto(boardId, path) { const d = db(); const b = d.boards[boardId]; if (!b) throw new Error("No room"); b.photo_path = path || null; save(d); emit({ type: "board", row: b }); },
+    async listRooms() { const d = db(); return Object.values(d.boards).filter((b) => b.listed !== false || d.members.some((m) => m.board_id === b.id && m.user_id === meId())).map((b) => ({ id: b.id, name: b.name || null, photo_path: b.photo_path || null, locked: !!b.locked, member_count: d.members.filter((m) => m.board_id === b.id).length, is_member: d.members.some((m) => m.board_id === b.id && m.user_id === meId()) })); },
+    async joinRoomById(boardId) {
+      const d = db(); const b = d.boards[boardId]; if (!b) throw new Error("No room");
+      if (!d.members.some((m) => m.board_id === boardId && m.user_id === meId())) {
+        if (b.locked) throw new Error(LOCKED_MSG);
+        if (d.members.filter((m) => m.board_id === boardId).length >= 10) throw new Error("That board is full (10 people max)");
+        d.members.push({ board_id: boardId, user_id: meId(), joined_at: new Date().toISOString() }); save(d); emit({ type: "members" });
+      }
+      return b;
+    },
+    async setRoomListed(boardId, listed) { const d = db(); const b = d.boards[boardId]; if (!b) throw new Error("No room"); if (b.created_by !== meId()) throw new Error("Only the room owner can change this"); b.listed = !!listed; save(d); emit({ type: "board", row: b }); },
     async setRoomLock(boardId, locked) { const d = db(); const b = d.boards[boardId]; if (!b) throw new Error("No room"); b.locked = !!locked; save(d); emit({ type: "board", row: b }); },
     async uploadRoomPhoto(boardId, blob) {
       const dataUrl = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(blob); });
@@ -1194,6 +1208,7 @@ const UPDATE_LOG = [
   { v: "soy-v52", date: "2026-10-22", title: "Shapes and brush size", items: ["Shapes gallery on the board: line, arrow, rectangle, rounded rectangle, oval, triangle, right triangle, diamond, pentagon, hexagon, star and heart", "Drag out a shape; it saves like a pen line, so undo and erase work", "Brush size is now a slider on the board (1 to 24)"] },
   { v: "soy-v51", date: "2026-10-22", title: "Moderation and the Pinned name", items: ["Moderators (set in the database) can review reported feedback, hide or restore posts, and dismiss reports", "Hidden posts show a notice instead of their text, and are left out of exports", "One report per person per post", "App renamed to Pinned in the setup guide and notifications"] },
   { v: "soy-v50", date: "2026-10-22", title: "Feedback cycle, replies and email change", items: ["Feedback cycle in Messages: one shared space for everyone across all rooms, with threads and replies", "Post feedback as yourself or anonymously. Anonymous hides your name from other users", "Reply to chat messages, with the original quoted", "Report a post, or delete your own", "Export feedback as a CSV from the Feedback cycle screen", "Change your sign-in email from Account"] },
+  { v: "soy-v60", date: "2026-10-23", title: "Every room is on the map", items: ["Your first screen is the room map, even before you have a room", "The room owner can hide a room from the map. People inside still see it", "Rooms you are not in are shown too. Tap an open room to join it straight away", "Locked rooms show a lock and can't be joined", "The room count shows on each room you can look at"] },
   { v: "soy-v49", date: "2026-10-22", title: "Rooms get names, photos and locks", items: ["Rename your room and add a room photo. Both show on the room list and at the top of the board, and update live", "Lock a room to stop new people joining with the code. Existing members are never locked out", "Room cards show the lock and the room code"] },
   { v: "soy-v48", date: "2026-10-22", title: "Scores tab", items: ["Scores tab in Games: each game's best run per person, with a podium for the top three", "Game scores are saved to the board and update every 15 seconds", "Quick Draw now reports its score too"] },
   { v: "soy-v47", date: "2026-10-22", title: "Games are back", items: ["Games button in the bottom bar, with 11 single-player games", "Bottom bar is centred; the + button moved into the right-hand tools column"] },
@@ -1373,8 +1388,6 @@ async function afterLogin() {
     state.me = await api.me();
     if (!state.me) return showWelcome();
     state.me.muted = state.me.muted || [];
-    const rooms = await api.myBoards();
-    if (!rooms.length) return showPair();
     await showMenu();
   } catch (e) {
     console.error(e); toast(e.message || "Something went wrong");
@@ -1444,12 +1457,15 @@ function markRoomOpened(boardId) {
 }
 async function loadRooms() {
   const rows = await api.myBoards();
+  let dir = [];
+  try { dir = (await api.listRooms()).filter((d) => !rows.some((r) => r.id === d.id)); } catch { /* the room directory is optional */ }
   const v = roomsStore();
-  const photos = rows.map((r) => r.photo_path).filter((p) => p && !state.urls[p]);
+  const photos = [...rows, ...dir].map((r) => r.photo_path).filter((p) => p && !state.urls[p]);
   if (photos.length) { try { Object.assign(state.urls, await api.mediaUrls(photos)); } catch { /* photos are optional */ } }
   const people = await Promise.all(rows.map((r) => api.roomPeople(r.id).catch(() => [])));
-  const list = rows.map((r, i) => ({ ...r, people: people[i], last: v.opened[r.id] || Date.parse(r.joined_at) || 0 }));
+  const list = rows.map((r, i) => ({ ...r, member: true, people: people[i], last: v.opened[r.id] || Date.parse(r.joined_at) || 0 }));
   list.sort((a, b) => b.last - a.last);
+  for (const d of dir) list.push({ ...d, member: false, people: [], last: 0 });
   return list;
 }
 async function showMenu() {
@@ -1457,8 +1473,8 @@ async function showMenu() {
   $("#menu").classList.toggle("editing", roomsState.edit);
   startStars();
   try { roomsState.list = await loadRooms(); }
-  catch (e) { toast(e.message || "Couldn't load your rooms"); roomsState.list = roomsState.list || []; }
-  if (!roomsState.list.length) return showPair();
+  catch (e) { toast(e.message || "Couldn't load the rooms"); roomsState.list = roomsState.list || []; }
+  if (pendingJoinCode) return showPair();   // opened from an invite link: go straight to the code
   renderRooms();
   if (menuMusicOn) menuMusicStart();   // starts on the first tap if the browser needs one
 }
@@ -1557,7 +1573,7 @@ function renderRooms() {
   roomsSave({ ...v, seen: roomsState.list.map((r) => r.id) });
   $("#menuHint").textContent = roomsState.edit
     ? "Tap × to hide a board. Nothing is deleted."
-    : visible.length ? "Drag to look around. Tap a planet to jump in." : "Every board is hidden. Show one below.";
+    : visible.length ? "Drag to look around. Tap a planet to jump in." : roomsState.list.length ? "Every board is hidden. Show one below." : "No rooms yet. Start one with the button below.";
   $("#hiddenTray").hidden = !hidden.length;
   const list = $("#hiddenList"); list.innerHTML = "";
   for (const r of hidden) {
@@ -1571,11 +1587,12 @@ function renderRooms() {
 function roomTitle(r) {
   if (r.name) return r.name;
   const names = (r.people || []).map((p) => p.name).filter(Boolean);
-  return names.length ? names.join(" & ") : "Waiting for your person";
+  if (names.length) return names.join(" & ");
+  return r.member ? "Waiting for your person" : "Unnamed room";
 }
 function roomCard(r, i) {
   const c = document.createElement("button");
-  c.type = "button"; c.className = "room" + (r.locked ? " locked" : "");
+  c.type = "button"; c.className = "room" + (r.locked ? " locked" : "") + (r.member ? "" : " outside");
   c.style.animationDelay = `${(-(i * 0.7) % 6.5).toFixed(2)}s`;
   const color = BRIGHT[(r.people || [])[0]?.color] || BRIGHT[["c1", "c2", "c3", "c4", "c5", "c6"][i % 6]];
   c.style.setProperty("--planet", color);
@@ -1589,16 +1606,17 @@ function roomCard(r, i) {
   sys.append(orbit, planet);
   if (r.locked) { const lk = document.createElement("span"); lk.className = "room-lock"; lk.textContent = "🔒"; lk.setAttribute("aria-label", "Locked"); sys.appendChild(lk); }
   const name = document.createElement("span"); name.className = "room-name"; name.textContent = roomTitle(r);
-  const code = document.createElement("span"); code.className = "room-code"; code.textContent = fmtCode(r.code) + (r.locked ? "  · 🔒 locked" : "");
+  const code = document.createElement("span"); code.className = "room-code";
+  code.textContent = r.member ? fmtCode(r.code) + (r.locked ? "  · 🔒 locked" : "") : `${r.member_count || 0} in room · ${r.locked ? "🔒 locked" : "open to join"}`;
   c.append(sys, name, code);
-  if (roomsState.edit) {
+  if (roomsState.edit && r.member) {
     const x = document.createElement("span"); x.className = "room-x"; x.textContent = "×"; x.setAttribute("aria-label", "Hide this room");
     c.appendChild(x);
   }
   // swipe a room left past the threshold to hide it (same as Edit then ×)
   let sx = null, swiped = false;
   const reset = () => { c.style.translate = ""; c.style.opacity = ""; };
-  c.addEventListener("pointerdown", (e) => { if (roomsState.edit) return; sx = e.clientX; swiped = false; try { c.setPointerCapture(e.pointerId); } catch {} });
+  c.addEventListener("pointerdown", (e) => { if (roomsState.edit || !r.member) return; sx = e.clientX; swiped = false; try { c.setPointerCapture(e.pointerId); } catch {} });
   c.addEventListener("pointermove", (e) => {
     if (sx == null) return;
     const dx = Math.min(0, e.clientX - sx);
@@ -1615,6 +1633,7 @@ function roomCard(r, i) {
   c.onclick = (e) => {
     e.stopPropagation();
     if (swiped) { swiped = false; return; }
+    if (!r.member) return openPeek(r);
     roomsState.edit ? hideRoom(r.id) : openRoom(r);
   };
   return c;
@@ -1759,8 +1778,7 @@ async function onWelcome() {
   const btn = $("#welcomeGo"); busy(btn, true, "One sec…");
   try {
     state.me = await api.signIn(name, welcomeColor);
-    const rooms = await api.myBoards();
-    rooms.length ? await showMenu() : showPair();
+    await showMenu();
   } catch (e) { setError($("#welcomeError"), e.message); }
   busy(btn, false);
 }
@@ -1781,9 +1799,36 @@ async function renderInviteQR(code) {
     cv.dataset.ok = "1";
   } catch { if (wrap) { wrap.hidden = true; } $("#waitQrBtn").textContent = "Copy link"; }
 }
+// Rooms you're not in yet. An open room can be joined straight away. A locked room shows its lock and can't be joined.
+let peekRoom = null;
+function openPeek(r) {
+  peekRoom = r;
+  const n = r.member_count || 0, full = n >= 10;
+  $("#peekName").textContent = roomTitle(r);
+  $("#peekCount").textContent = `${n} ${n === 1 ? "person" : "people"} in this room`;
+  $("#peekLock").hidden = !r.locked;
+  $("#peekJoin").hidden = !!r.locked || full;
+  $("#peekNote").textContent = r.locked ? "This room is locked, so nobody new can join right now."
+    : full ? "This room is full (10 people max)."
+    : "It's open. Join and you'll be in the room straight away.";
+  openSheet("roomPeek");
+}
+async function joinPeek() {
+  if (!peekRoom) return;
+  const btn = $("#peekJoin"); busy(btn, true, "Joining…");
+  try {
+    const b = await api.joinRoomById(peekRoom.id);
+    peekRoom = null;
+    closeSheet("roomPeek");
+    markRoomOpened(b.id);
+    toast("Joined 🎉");
+    await openRoom(b);
+  } catch (e) { toast(e.message || "Couldn't join that room", 4000); }
+  busy(btn, false);
+}
 function showPair() {
   show("#pair");
-  $("#pairBack").hidden = !roomsState.list.length;
+  $("#pairBack").hidden = false;
   if (pendingJoinCode) {
     const inp = $("#codeInput"); inp.value = fmtCode(pendingJoinCode);
     setTimeout(() => { inp.scrollIntoView({ block: "center" }); inp.focus(); }, 200);
@@ -1939,7 +1984,7 @@ async function refreshMembers() {
     if (leaving) return;
     resetBoardState();
     toast("This board was deleted, or you were removed from it");
-    return showPair();
+    return showMenu();
   }
   renderChips();
   const waiting = state.members.length < 2;
@@ -4444,7 +4489,7 @@ async function leaveBoard() {
     await api.leaveBoard(state.board.id);
     resetBoardState();
     const other = await api.myBoard();
-    other ? await openBoard(other) : showPair();
+    other ? await openBoard(other) : await showMenu();
     toast("You left the board");
   } catch (e) { toast(e.message, 4000); }
   finally { leaving = false; }
@@ -4461,8 +4506,8 @@ async function deleteBoard() {
     await api.deleteBoard(state.board.id);
     resetBoardState();
     const other = await api.myBoard();
-    other ? await openBoard(other) : showPair();
-    toast("Board deleted. Start a new one or join with a code.", 4000);
+    other ? await openBoard(other) : await showMenu();
+    toast("Board deleted. Start a new one or join one from the map.", 4000);
   } catch (e) { toast(e.message, 5000); }
   finally { leaving = false; busy(btn, false); }
 }
@@ -4960,7 +5005,7 @@ async function applyBackground() {
 function onBoardEvent(row) {
   if (!state.board || row.id !== state.board.id) return;
   const modeChanged = row.bg_mode !== state.board.bg_mode;
-  Object.assign(state.board, { bg_mode: row.bg_mode, bg: row.bg, created_by: row.created_by, name: row.name ?? null, photo_path: row.photo_path ?? null, locked: !!row.locked });
+  Object.assign(state.board, { bg_mode: row.bg_mode, bg: row.bg, created_by: row.created_by, name: row.name ?? null, photo_path: row.photo_path ?? null, locked: !!row.locked, listed: row.listed !== false });
   applyBackground();
   if (modeChanged && !isOwner()) toast(row.bg_mode === "personal" ? "You can now pick your own background in Settings" : "The board has a shared background again");
   if (!$("#settings").hidden) renderBgSettings();
@@ -4991,6 +5036,9 @@ function renderRoomSheet() {
   $("#rsNameShow").textContent = (b.name || "").trim() || "Our room";
   $("#rsCode").textContent = "Code " + fmtCode(b.code);
   $("#rsLockText").textContent = b.locked ? "Unlock room" : "Lock room";
+  const owner = !!state.me && b.created_by === state.me.id;
+  $("#rsListed").hidden = !owner;
+  $("#rsListedText").textContent = b.listed === false ? "Show on the room map" : "Hide from the room map";
   $("#rsRemovePhoto").hidden = !b.photo_path;
   const url = b.photo_path && state.urls[b.photo_path];
   const p = $("#rsPhoto");
@@ -5760,7 +5808,12 @@ function wireStatic() {
   };
   $("#roomHead").onclick = openRoomSheet;
   $("#roomSheetClose").onclick = () => closeSheet("roomSheet");
+  $("#rsListed").onclick = () => {
+    const want = state.board.listed === false;
+    roomChange(async () => { await api.setRoomListed(state.board.id, want); state.board.listed = want; renderRoomSheet(); }, want ? "Shown on the room map" : "Hidden from the room map. People inside still see it.");
+  };
   $("#roomSheetBackdrop").onclick = () => closeSheet("roomSheet");
+  $("#peekJoin").onclick = joinPeek; $("#peekClose").onclick = () => closeSheet("roomPeek"); $("#roomPeekBackdrop").onclick = () => closeSheet("roomPeek");
   $("#rsSaveName").onclick = () => {
     const name = $("#rsName").value.trim().slice(0, ROOM_NAME_MAX);
     if (!name) return toast("Type a room name first");
