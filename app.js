@@ -60,7 +60,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v58";
+const APP_VERSION = "soy-v59";
 
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
@@ -1182,6 +1182,7 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v59", date: "2026-10-22", title: "Parry Brawl: items and fists", items: ["Items fall every 18 to 28 seconds: swords in three sizes, bombs and gloves", "Throw (middle click or V) picks items up, and throws them when you hold one", "Hold Down and throw to drop an item at your feet", "Dropped and thrown items burn up 4 seconds later unless picked up", "Fighters start with fists and show their own detail"] },
   { v: "soy-v58", date: "2026-10-22", title: "Parry Brawl: controls and roster", items: ["Fighter select: ten fighters, each with their own look, weapon, taunts and quirk", "Two control schemes in Settings > Controls: Keyboard & Mouse, or Keyboard A", "Dodge (Left Shift or Z), four taunts (1 2 3 4) with speech bubbles, hold Tab or B to show names", "Pause with Esc or Enter; Q quits to the menu"] },
   { v: "soy-v57", date: "2026-10-22", title: "Parry Brawl fixes", items: ["Menu buttons shrink long labels so Multiplayer (coming soon) fits", "Menu background is darker so the fighters no longer show through"] },
   { v: "soy-v56", date: "2026-10-22", title: "Parry Brawl menu", items: ["Main menu: Play, Multiplayer (coming soon), Settings, How to play", "Settings: music, sound effects, narrator and sound on or off, saved on this device", "How to play lists the moves and buttons", "Esc returns to the menu during a match"] },
