@@ -465,6 +465,7 @@ function chLampsArt() {
 
 // ---------------------------------------------------------------- the church screen
 let chBoardId = "room";
+let chMsgs = [], chLastSent = 0, chUnread = 0, chPanel = null;
 let chRoot = null, chOpen = false, chLive = null, chMe = null, chApi = null, chPushed = false, chSeat = null;
 let chPeople = {}, chSynced = false, chOnLeave = () => {}, chBoardEl = null;
 const CH_BIBLE = { manifest: null, data: new Map(), tr: null, book: 0, chap: 1, view: "books", sel: null, token: 0, sheet: null };
@@ -490,6 +491,24 @@ function chBuildRoot() {
       <div class="ch-people" id="chPeople" aria-live="polite"></div>
     </div></div>
     <p class="ch-hint" id="chHint">Tap a pew to sit, tap the lectern to read the Bible. Everyone here can see you.</p>
+    <div class="ch-dockwrap">
+      <div class="ch-dock" id="chDock">
+        <div class="ch-faces" id="chFaces" aria-hidden="true"></div>
+        <button class="ch-dock-btn" id="chWhoBtn" type="button" aria-expanded="false" aria-controls="chRoster"><i class="ch-live-dot" aria-hidden="true"></i><span id="chWhoTxt">Only you</span><span class="ch-caret" aria-hidden="true">▴</span></button>
+        <button class="ch-dock-btn" id="chChatBtn" type="button" aria-expanded="false" aria-controls="chChat">💬 Chat <span class="ch-badge" id="chBadge" hidden>0</span></button>
+      </div>
+      <section class="ch-panel" id="chRoster" hidden aria-label="Who is in the church">
+        <button class="ch-grab" type="button" aria-label="Slide down to close"></button>
+        <header class="ch-panel-head"><div><h2>In the church</h2><div class="ch-panel-sub" id="chRosterCount"></div></div><button class="ch-x" id="chRosterClose" type="button" aria-label="Close">✕</button></header>
+        <ul class="ch-roster-list" id="chRosterList"></ul>
+      </section>
+      <section class="ch-panel" id="chChat" hidden aria-label="Church chat">
+        <button class="ch-grab" type="button" aria-label="Slide down to close"></button>
+        <header class="ch-panel-head"><div><h2>Church chat</h2><div class="ch-panel-sub" id="chChatCount"></div></div><button class="ch-x" id="chChatClose" type="button" aria-label="Close">✕</button></header>
+        <div class="ch-msgs" id="chMsgs" aria-live="polite"></div>
+        <form class="ch-chat-form" id="chForm" autocomplete="off"><input id="chInput" maxlength="200" placeholder="Say something kind…" aria-label="Message to the church"><button type="submit">Send</button></form>
+      </section>
+    </div>
     <div class="ch-tools">
       <button class="ch-tool" type="button" id="chBibleBtn">📖 Bible</button>
       <button class="ch-tool" type="button" id="chMusicBtn" aria-pressed="false">♪ Music off</button>
@@ -520,6 +539,90 @@ function chPaintPeople() {
   const count = entries.length;
   const cEl = chRoot.querySelector("#chCount");
   if (cEl) cEl.textContent = count === 1 ? "Only you are here" : `${count} people here`;
+  chPaintFoot(entries);
+}
+
+// ---------------------------------------------------------------- congregation dock, roster and chat (soy-v76)
+function CH_SEAT_NAME(id) {
+  const pew = id && PEWS.find((x) => x.id === id);
+  return pew ? `${pew.id[0] === "L" ? "Left" : "Right"} pew ${Number(pew.id[1]) + 1}` : "Standing at the back";
+}
+function chOrdered(entries) {
+  return [...entries].sort(([a], [b]) => (a === chMe.id ? -1 : b === chMe.id ? 1 : 0));
+}
+function chPaintFoot(entries) {
+  if (!chRoot) return;
+  const ordered = chOrdered(entries);
+  const n = ordered.length;
+  const label = n === 1 ? "Only you" : `${n} online`;
+  chRoot.querySelector("#chFaces").innerHTML = ordered.slice(0, 6).map(([id, p]) =>
+    `<span class="ch-face${id === chMe.id ? " me" : ""}" title="${chEsc(id === chMe.id ? "You" : p.name || "Visitor")}" style="--pc:${chEsc(p.color || "#c2410c")}"><i class="ch-live-dot" aria-hidden="true"></i></span>`
+  ).join("") + (n > 6 ? `<span class="ch-face more">+${n - 6}</span>` : "");
+  chRoot.querySelector("#chWhoTxt").textContent = label;
+  chRoot.querySelector("#chRosterCount").textContent = label;
+  chRoot.querySelector("#chChatCount").textContent = `${n} here`;
+  chRoot.querySelector("#chRosterList").innerHTML = ordered.map(([id, p]) => {
+    const me = id === chMe.id;
+    const name = me ? "You" : (p.name || "Visitor");
+    return `<li class="ch-row${me ? " me" : ""}"><span class="ch-face" style="--pc:${chEsc(p.color || "#c2410c")}"></span><span class="ch-row-main"><span class="ch-row-name">${chEsc(name)}</span><span class="ch-row-where">${CH_SEAT_NAME(p.seat)}</span></span><span class="ch-row-online"><i class="ch-live-dot" aria-hidden="true"></i>Online</span></li>`;
+  }).join("") || `<li class="ch-row-empty">Only you are here.</li>`;
+}
+const CH_SHEET = () => window.matchMedia("(max-width: 600px)").matches;
+function chSetPanel(el, on) {
+  clearTimeout(el._t);
+  if (on) { el.classList.remove("sheet-out"); el.hidden = false; return; }
+  if (el.hidden) return;
+  if (CH_SHEET()) {
+    el.classList.add("sheet-out");
+    el._t = setTimeout(() => { el.hidden = true; el.classList.remove("sheet-out"); }, 240);
+  } else el.hidden = true;
+}
+function chShowPanel(which) {
+  if (!chRoot) return;
+  chPanel = which;
+  chSetPanel(chRoot.querySelector("#chRoster"), which === "who");
+  chSetPanel(chRoot.querySelector("#chChat"), which === "chat");
+  chRoot.querySelector("#chWhoBtn").setAttribute("aria-expanded", String(which === "who"));
+  chRoot.querySelector("#chChatBtn").setAttribute("aria-expanded", String(which === "chat"));
+  if (which === "chat") {
+    chUnread = 0; chPaintBadge(); chRenderMsgs();
+    setTimeout(() => { const i = chRoot && chRoot.querySelector("#chInput"); if (i && chPanel === "chat") i.focus({ preventScroll: true }); }, 0);
+  }
+}
+function chToggle(which) { chShowPanel(chPanel === which ? null : which); }
+function chPaintBadge() {
+  const b = chRoot && chRoot.querySelector("#chBadge"); if (!b) return;
+  b.textContent = chUnread > 99 ? "99+" : String(chUnread); b.hidden = chUnread === 0;
+}
+function chKey(e) { if (chOpen && chPanel && e.key === "Escape") { e.preventDefault(); chShowPanel(null); } }
+function chOnChat(m) {
+  if (!m || typeof m.text !== "string" || !m.text.trim()) return;
+  chMsgs.push({ from: String(m.from || ""), name: String(m.name || "Visitor"), color: m.color, text: m.text.slice(0, 200), t: m.t || Date.now() });
+  if (chMsgs.length > 80) chMsgs.shift();
+  if (!chRoot) return;
+  if (chPanel !== "chat") { chUnread++; chPaintBadge(); }
+  chRenderMsgs();
+}
+function chRenderMsgs() {
+  const box = chRoot && chRoot.querySelector("#chMsgs"); if (!box) return;
+  box.innerHTML = chMsgs.length
+    ? chMsgs.map((m) => {
+        const mine = m.from === chMe.id;
+        return `<div class="ch-chatmsg${mine ? " me" : ""}"><span class="ch-msg-who" style="--pc:${chEsc(m.color || "#c2410c")}">${mine ? "You" : chEsc(m.name)}</span><span class="ch-msg-text">${chEsc(m.text)}</span></div>`;
+      }).join("")
+    : `<p class="ch-msgs-empty">Quiet, as a church should be. Say something kind.</p>`;
+  box.scrollTop = box.scrollHeight;
+}
+function chSend(raw) {
+  const text = String(raw || "").trim().slice(0, 200);
+  if (!text || !chLive || !chMe) return;
+  const now = Date.now();
+  if (now - chLastSent < 700) return; // gentle flood guard
+  chLastSent = now;
+  const m = { from: chMe.id, name: chMe.name, color: chMe.color, text, t: now };
+  chMsgs.push(m); if (chMsgs.length > 80) chMsgs.shift();
+  chRenderMsgs();
+  try { chLive.say(m); } catch { /* channel closed */ }
 }
 
 // Depth: pointer or finger movement shifts the far walls and the near nave by different amounts.
@@ -597,6 +700,24 @@ function openChurch({ me, api, boardEl, onLeave, boardId }) {
     vol.addEventListener("input", () => chMusicSetVol(Number(vol.value)));
     chRoot.querySelectorAll(".ch-pew[data-pew]").forEach((b) => b.addEventListener("click", () => chSit(b.dataset.pew)));
     chParallax(chRoot.querySelector("#chStage"));
+    chRoot.querySelector("#chWhoBtn").addEventListener("click", () => chToggle("who"));
+    chRoot.querySelector("#chChatBtn").addEventListener("click", () => chToggle("chat"));
+    chRoot.querySelector("#chChatClose").addEventListener("click", () => chShowPanel(null));
+    chRoot.querySelector("#chRosterClose").addEventListener("click", () => chShowPanel(null));
+    chRoot.querySelectorAll(".ch-grab").forEach((g) => {
+      let y0 = null;
+      g.addEventListener("pointerdown", (e) => { y0 = e.clientY; try { g.setPointerCapture(e.pointerId); } catch { /* ok */ } });
+      g.addEventListener("pointerup", (e) => {
+        if (y0 === null) return;
+        const dy = e.clientY - y0; y0 = null;
+        if (dy > 30 || Math.abs(dy) < 10) chShowPanel(null); // swipe down or tap closes the sheet
+      });
+    });
+    chRoot.querySelector("#chForm").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const i = chRoot.querySelector("#chInput"); chSend(i.value); i.value = "";
+    });
+    document.addEventListener("keydown", chKey);
     const amb = chRoot.querySelector("#chAmbient");
     amb.checked = chGet(CH_KEY.ambient, false) === true;
     amb.addEventListener("change", () => {
@@ -605,6 +726,7 @@ function openChurch({ me, api, boardEl, onLeave, boardId }) {
     });
   }
   chOpen = true; chSynced = false; chPeople = {}; chSeat = null;
+  chMsgs = []; chUnread = 0; chShowPanel(null);
   if (chBoardEl) chBoardEl.hidden = true;
   chRoot.hidden = false;
   chSetSeatLabels();
@@ -613,7 +735,7 @@ function openChurch({ me, api, boardEl, onLeave, boardId }) {
   chDoor(true);
   chRoot.classList.remove("closing"); chRoot.classList.add("opening");
   setTimeout(() => chRoot && chRoot.classList.remove("opening"), 1400);
-  chLive = chApi.church(chMe, { onPresence: chOnPresence }, chBoardId);
+  chLive = chApi.church(chMe, { onPresence: chOnPresence, onChat: chOnChat }, chBoardId);
   chLive.track({ name: chMe.name, color: chMe.color, seat: null });
   if (chGet(CH_KEY.ambient, false) === true) chAmbientOn();
   if (chGet(CH_KEY.music, true) === true) chMusicStart(); else chMusicUi();
@@ -633,6 +755,7 @@ function chLeave(fromUi) {
   chCloseBible();
   try { if (chLive && chLive.close) chLive.close(); } catch { /* channel already closed */ }
   chLive = null; chPeople = {}; chSeat = null;
+  chShowPanel(null); chMsgs = [];
   chRoot.hidden = true;
   if (chBoardEl) chBoardEl.hidden = false;
   chOnLeave();

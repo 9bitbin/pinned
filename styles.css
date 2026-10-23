@@ -1171,7 +1171,7 @@ html.no-deco .room-system, html.no-deco #starCanvas { display: none !important; 
 .ch-tool[aria-pressed="true"] { background: #f6d77a; color: #2a1d10; }
 .ch-vol { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; font-size: 14px; color: #f4eee0; margin: 0 6px; }
 .ch-vol input { width: 120px; accent-color: #f6d77a; }
-.ch-stage { position: relative; width: 100%; height: calc(100dvh - 210px); min-height: 380px; container-type: size; display: flex; justify-content: center; overflow: hidden; background: linear-gradient(180deg, #2a1d3d 0%, #4a2a3a 55%, #2a1d1d 100%); }
+.ch-stage { position: relative; width: 100%; height: calc(100dvh - 262px); min-height: 380px; container-type: size; display: flex; justify-content: center; overflow: hidden; background: linear-gradient(180deg, #2a1d3d 0%, #4a2a3a 55%, #2a1d1d 100%); }
 .ch-scene { position: relative; height: min(100cqh, 157cqw); aspect-ratio: 1100 / 700; }
 .ch-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .ch-pews, .ch-people { position: absolute; inset: 0; }
@@ -1267,7 +1267,7 @@ body.drawmode .fun-toggle, body.drawmode #boardScreen .fun-tray { display: none;
 #boardScreen .topbar .histbar button:disabled { opacity: 0.35; }
 .ch-back { justify-self: start; white-space: nowrap; }
 @media (max-width: 480px) { .ch-back { padding: 0 10px; font-size: 14px; } .ch-bible-top { padding: 0 12px; } }
-@media (min-width: 900px) { .ch-stage { height: calc(100dvh - 190px); } }
+@media (min-width: 900px) { .ch-stage { height: calc(100dvh - 240px); } }
 
 /* Depth: far walls and near nave drift at different speeds (church.js chParallax) */
 .ch-far { transform: translateX(calc(var(--px, 0) * -14px)); transition: transform 0.4s ease-out; }
@@ -1292,3 +1292,62 @@ body.drawmode .fun-toggle, body.drawmode #boardScreen .fun-tray { display: none;
   .ch-walker, .ch-swing, .ch-smoke { animation: none !important; }
   .ch-smoke { display: none; }
 }
+
+/* Congregation dock, roster and chat (soy-v76) */
+.ch-dockwrap { position: relative; display: flex; justify-content: center; padding: 6px 12px 0; }
+.ch-dock { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; padding: 5px 6px 5px 10px; border-radius: 999px; background: linear-gradient(180deg, #2b1f18, #161010); border: 1px solid #7a4f12; box-shadow: inset 0 0 0 1px rgba(246, 215, 122, 0.12), 0 8px 22px rgba(0, 0, 0, 0.45); max-width: 100%; }
+.ch-faces { display: flex; align-items: center; min-height: 30px; padding-left: 4px; }
+.ch-face { position: relative; flex: 0 0 auto; display: block; width: 26px; height: 26px; border-radius: 50%; border: 2px solid #d9a63a; background: radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--pc) 60%, #fff) 0%, var(--pc) 55%, #1a0f1f 100%); margin-left: -7px; box-shadow: 0 0 0 1px #2b1f18; }
+.ch-faces .ch-face:first-child { margin-left: 0; }
+.ch-face.me { outline: 2px solid #f6d77a; outline-offset: 1px; }
+.ch-face.more { display: grid; place-items: center; background: #3a2a1f; color: #f6d77a; font-size: 11px; font-weight: 700; }
+.ch-face .ch-live-dot { position: absolute; right: -3px; bottom: -3px; }
+.ch-live-dot { display: block; width: 9px; height: 9px; border-radius: 50%; background: #3ddc84; box-shadow: 0 0 0 2px #1d1410, 0 0 8px 1px rgba(61, 220, 132, 0.7); animation: chPulse 2.4s ease-out infinite; }
+@keyframes chPulse { 0% { box-shadow: 0 0 0 2px #1d1410, 0 0 0 0 rgba(61, 220, 132, 0.65); } 70%, 100% { box-shadow: 0 0 0 2px #1d1410, 0 0 0 7px rgba(61, 220, 132, 0); } }
+.ch-dock-btn { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 6px 12px; border-radius: 999px; border: 1px solid #d9a63a; background: #2d2118; color: #fff7e0; font: inherit; font-size: 13px; cursor: pointer; }
+.ch-dock-btn .ch-live-dot { animation: none; }
+.ch-dock-btn[aria-expanded="true"] { background: #f6d77a; color: #2a1a08; }
+.ch-dock-btn:focus-visible { outline: 3px solid #f6d77a; outline-offset: 2px; }
+.ch-caret { opacity: 0.7; font-size: 10px; }
+.ch-badge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: #c2410c; color: #fff; font-size: 11px; font-weight: 700; display: inline-grid; place-items: center; }
+.ch-badge[hidden] { display: none; }
+.ch-panel { position: absolute; left: 16px; bottom: calc(100% + 8px); width: min(340px, calc(100vw - 32px)); max-height: min(46vh, 380px); display: flex; flex-direction: column; background: linear-gradient(180deg, #2b1f18, #140e0c); border: 1px solid #7a4f12; border-radius: 16px; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(246, 215, 122, 0.12); color: #fff7e0; overflow: hidden; z-index: 6; }
+.ch-panel[hidden] { display: none; }
+.ch-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid rgba(246, 215, 122, 0.18); }
+.ch-panel-head h2 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: 16px; font-weight: 600; letter-spacing: 0.02em; color: #f6d77a; }
+.ch-panel-sub { font-size: 12px; opacity: 0.75; }
+.ch-x { background: none; border: 0; color: #fff7e0; font-size: 18px; cursor: pointer; padding: 4px 8px; }
+.ch-roster-list { list-style: none; margin: 0; padding: 4px 0; overflow: auto; }
+.ch-row { display: flex; align-items: center; gap: 12px; padding: 9px 14px; }
+.ch-row + .ch-row { border-top: 1px solid rgba(246, 215, 122, 0.08); }
+.ch-row .ch-face { margin-left: 0; }
+.ch-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ch-row-name { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch-row.me .ch-row-name::after { content: " (you)"; opacity: 0.6; font-weight: 400; }
+.ch-row-where { font-size: 12px; opacity: 0.65; }
+.ch-row-online { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #9ff0c0; white-space: nowrap; }
+.ch-row-empty { padding: 12px 14px; font-size: 13px; opacity: 0.7; font-style: italic; }
+.ch-msgs { flex: 1; min-height: 160px; max-height: 300px; overflow: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.ch-chatmsg { display: flex; flex-direction: column; gap: 2px; max-width: 92%; }
+.ch-chatmsg.me { align-self: flex-end; align-items: flex-end; }
+.ch-msg-who { font-size: 11px; color: var(--pc); font-weight: 700; }
+.ch-msg-text { background: rgba(255, 247, 224, 0.08); border: 1px solid rgba(246, 215, 122, 0.12); border-radius: 12px; padding: 7px 10px; font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; color: #fff7e0; }
+.ch-chatmsg.me .ch-msg-text { background: rgba(246, 215, 122, 0.16); }
+.ch-msgs-empty { margin: auto; font-style: italic; opacity: 0.6; font-size: 13px; text-align: center; }
+.ch-chat-form { display: flex; gap: 8px; padding: 10px; border-top: 1px solid rgba(246, 215, 122, 0.18); }
+.ch-chat-form input { flex: 1; min-width: 0; min-height: 40px; border-radius: 999px; border: 1px solid #7a4f12; background: #1d1410; color: #fff7e0; padding: 0 14px; font: inherit; font-size: 14px; }
+.ch-chat-form button { min-height: 40px; padding: 0 16px; border-radius: 999px; border: 0; background: #f6d77a; color: #2a1a08; font-weight: 700; cursor: pointer; }
+@media (prefers-reduced-motion: reduce) { .ch-live-dot { animation: none !important; } }
+
+/* Phone: the roster and chat rise from the bottom as a sheet (soy-v78) */
+.ch-grab { display: none; }
+@media (max-width: 600px) {
+  .ch-dockwrap { position: static; }
+  .ch-panel { position: absolute; left: 0; right: 0; top: auto; bottom: 0; width: auto; max-width: none; max-height: 45%; transform: none; border-radius: 18px 18px 0 0; z-index: 20; animation: chSheetUp 0.25s ease-out; }
+  .ch-panel.sheet-out { animation: chSheetDown 0.24s ease-in forwards; }
+  .ch-grab { display: block; flex: 0 0 auto; position: relative; width: 100%; height: 24px; background: none; border: 0; cursor: pointer; touch-action: none; }
+  .ch-grab::before { content: ""; position: absolute; left: 50%; top: 9px; width: 44px; height: 4px; margin-left: -22px; border-radius: 2px; background: rgba(246, 215, 122, 0.6); }
+}
+@keyframes chSheetUp { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes chSheetDown { from { transform: none; } to { transform: translateY(100%); } }
+@media (prefers-reduced-motion: reduce) { .ch-panel, .ch-panel.sheet-out { animation: none !important; } }

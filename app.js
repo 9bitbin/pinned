@@ -61,7 +61,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v75";
+const APP_VERSION = "soy-v78";
 
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
@@ -392,7 +392,8 @@ function createSupabaseApi() {
     church(me, h, boardId) {
       // one channel per room: presence only (name, colour, seat), so only people in this room see each other
       let presence = { name: me.name, color: me.color, seat: null };
-      const chCh = sb.channel("church-" + boardId, { config: { presence: { key: me.id } } });
+      const chCh = sb.channel("church-" + boardId, { config: { presence: { key: me.id }, broadcast: { self: false } } });
+      chCh.on("broadcast", { event: "chat" }, ({ payload }) => h.onChat && h.onChat(payload));
       chCh.on("presence", { event: "sync" }, () => {
         const out = {};
         for (const [k, metas] of Object.entries(chCh.presenceState())) out[k] = metas[metas.length - 1];
@@ -401,6 +402,7 @@ function createSupabaseApi() {
       chCh.subscribe((status) => { if (status === "SUBSCRIBED") chCh.track(presence); });
       return {
         track: (p) => { presence = { ...presence, ...p }; chCh.track(presence); },
+        say: (msg) => chCh.send({ type: "broadcast", event: "chat", payload: msg }),
         close: () => sb.removeChannel(chCh),
       };
     },
@@ -704,6 +706,7 @@ function createDemoApi() {
         const m = e.data; if (m.from === me.id) return;
         if (m.k === "pres") { peers[m.from] = m.p; pub(); if (m.ask) post({ k: "pres", p: presence }); }
         if (m.k === "bye") { delete peers[m.from]; pub(); }
+        if (m.k === "chat" && h.onChat) h.onChat(m.p);
       };
       post({ k: "pres", p: presence, ask: true });
       const bye = () => post({ k: "bye" });
@@ -711,6 +714,7 @@ function createDemoApi() {
       pub();
       return {
         track: (p) => { presence = { ...presence, ...p }; post({ k: "pres", p: presence }); pub(); },
+        say: (msg) => post({ k: "chat", p: msg }),
         close: () => { bye(); if (ch) ch.close(); },
       };
     },
@@ -1247,7 +1251,17 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
-  { v: "soy-v75", date: "2026-10-23", title: "Church: enclosed, calmer, with a censing deacon", items: [
+  { v: "soy-v78", date: "2026-10-23", title: "Phone: roster and chat as a sheet", items: ["On phones the roster and chat slide up from the bottom and slide back down; tap the handle, swipe down, or press the button again"] },
+  { v: "soy-v77", date: "2026-10-23", title: "Roster and chat on the left", items: ["Roster and chat panels sit on the left so the aisle and floor stay visible"] },
+  { v: "soy-v76", date: "2026-10-23", title: "Church: who is here, and chat", items: [
+    "A dock under the church shows who is online, with a green dot for each person",
+    "Tap \"Who is here\" for the roster: name, where they are sitting, and a green Online dot",
+    "Tap \"Chat\" for a church chat with the member count and unread badge; Escape closes it",
+    "People only see others in the same room; chat is shared only while you are in the church",
+    "Censing deacon now walks in front of the lectern, with the censer sound timed to each swing",
+    "Aisle is a solid red carpet with a woven texture"
+  ] },
+  { v: "soy-v70", date: "2026-10-23", title: "Church: enclosed, calmer, with a censing deacon", items: [
     "Stone walls, a dark vault and shadowed floor, so the church feels closed in",
     "Lectern moved to the centre of the nave",
     "A deacon walks slowly down the aisle and back, swinging a censer with rising incense",
