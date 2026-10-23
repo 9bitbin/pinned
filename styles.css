@@ -1115,3 +1115,30 @@ html.no-deco .room-system, html.no-deco #starCanvas { display: none !important; 
 .size-slider { display: inline-flex; align-items: center; gap: 8px; }
 .size-slider input { width: 110px; accent-color: #e8556d; }
 .size-dot { display: inline-block; border-radius: 50%; background: currentColor; min-width: 3px; }
+
+/* ---- solar-system menu: the sun, one orbit per board, planets that go round ---- */
+/* the first screen always uses the dark grid, whatever theme is picked */
+.menu-screen {
+  --surface-ink: #e8ecff; --surface: #141a30; --line: rgba(255, 255, 255, .14); --muted: #9aa6cc;
+  background: #05060d !important;
+  background-image: linear-gradient(rgba(120, 150, 230, .09) 1px, transparent 1px), linear-gradient(90deg, rgba(120, 150, 230, .09) 1px, transparent 1px) !important;
+  background-size: 28px 28px !important;
+}
+.menu-screen .room-grid.orbit-map { display: block; position: relative; height: min(68vh, 600px); min-height: 380px; margin: 4px 0 0; padding: 0; overflow: hidden; touch-action: none; cursor: grab; }
+.orbit-sun { position: absolute; left: calc(50% + var(--px, 0px)); top: calc(50% + var(--py, 0px)); width: 64px; height: 64px; margin: -32px 0 0 -32px; padding: 0; border: 0; border-radius: 50%; cursor: pointer;
+  background: radial-gradient(circle at 36% 32%, #fff6c9 0 8%, #ffd166 40%, #f28c28 78%, rgba(242, 140, 40, 0) 100%);
+  box-shadow: 0 0 40px 10px rgba(255, 190, 90, .35); }
+.orbit-ring { position: absolute; left: calc(50% + var(--px, 0px)); top: calc(50% + var(--py, 0px)); transform: translate(-50%, -50%); border-radius: 50%; border: 1px dashed rgba(170, 190, 255, .28); pointer-events: none; }
+.orbit-map .room { position: absolute; width: 96px; margin: -45px 0 0 -48px; padding: 6px 4px 8px; background: transparent; border-color: transparent; box-shadow: none; }
+.orbit-map .room-name, .orbit-map .room-code { text-shadow: 0 1px 3px rgba(0, 0, 0, .75), 0 0 2px rgba(0, 0, 0, .5); }
+.orbit-map .room-name { color: #fff8ec; }
+.orbit-map .room-code { color: #f1e4cf; }
+.orbit-map .room-system { scale: .75; width: 120px; height: 104px; margin: -13px -15px; }
+.room.locked .room-planet { filter: grayscale(.9) brightness(.55); }
+.room.locked .room-name { opacity: .6; }
+.room-lock { position: absolute; right: -6px; top: -6px; font-size: 12px; line-height: 1; padding: 2px; border-radius: 50%; background: rgba(0, 0, 0, .65); }
+.room.arrive { animation: orbitArrive .9s cubic-bezier(.2, .9, .3, 1.2) both, roomSway 6.5s ease-in-out .9s infinite; }
+.orbit-ring.arrive { animation: ringIn .9s ease-out both; }
+@keyframes orbitArrive { from { opacity: 0; scale: .2; } to { opacity: 1; scale: 1; } }
+@keyframes ringIn { from { opacity: 0; scale: .4; } to { opacity: 1; scale: 1; } }
+@media (prefers-reduced-motion: reduce) { .room.arrive, .orbit-ring.arrive { animation: none; } }

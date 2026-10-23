@@ -857,7 +857,8 @@ function renderThemePicker() {
   for (const t of THEMES) {
     const b = document.createElement("button"); b.className = "theme-card"; b.type = "button";
     b.setAttribute("aria-pressed", String(t.id === curId));
-    b.innerHTML = `<div class="sw" style="background:${t.bg}">${t.notes.map((c) => `<i style="background:${c}"></i>`).join("")}</div><b>${t.name}</b>`;
+    b.innerHTML = `<div class="sw" style="background:${t.bg}">${t.notes.map((c) => `<i style="background:${c}"></i>`).join("")}</div><b></b>`;
+    b.querySelector("b").textContent = t.name;
     b.onclick = () => pick(t.id, b);
     tp.appendChild(b);
   }
@@ -869,7 +870,8 @@ function renderThemePicker() {
   for (const t of EXTRA_THEMES) {
     const b = document.createElement("button"); b.className = "theme-card"; b.type = "button";
     b.setAttribute("aria-pressed", String(t.id === curId));
-    b.innerHTML = `<div class="sw" style="background:${t.tokens.bg}">${t.tokens.note.slice(0, 3).map((c) => `<i style="background:${c}"></i>`).join("")}</div><b>${t.name}</b>`;
+    b.innerHTML = `<div class="sw" style="background:${t.tokens.bg}">${t.tokens.note.slice(0, 3).map((c) => `<i style="background:${c}"></i>`).join("")}</div><b></b>`;
+    b.querySelector("b").textContent = t.name;
     b.onclick = () => pick(t.id, b);
     tp.appendChild(b);
   }
@@ -1433,7 +1435,7 @@ function startPolling(nonce) {
 // on this device. Nothing is left or deleted, and entering the code again brings it back.
 const ROOMS_KEY = "pinned.rooms";
 const roomsState = { list: [], edit: false, busy: false };
-function roomsStore() { const v = ls.get(ROOMS_KEY, null) || {}; return { hidden: Array.isArray(v.hidden) ? v.hidden : [], opened: v.opened || {} }; }
+function roomsStore() { const v = ls.get(ROOMS_KEY, null) || {}; return { hidden: Array.isArray(v.hidden) ? v.hidden : [], opened: v.opened || {}, seen: Array.isArray(v.seen) ? v.seen : null }; }
 function roomsSave(v) { ls.set(ROOMS_KEY, v); }
 function markRoomOpened(boardId) {
   const v = roomsStore(); v.opened[boardId] = Date.now();
@@ -1460,15 +1462,102 @@ async function showMenu() {
   renderRooms();
   if (menuMusicOn) menuMusicStart();   // starts on the first tap if the browser needs one
 }
+// Solar-system menu. The sun sits in the middle. Each board has its own orbit, and new orbits open
+// further out in the order you joined. Planets go round at their own speed (inner ones faster).
+// Drag the empty space to look around; tap the sun to re-centre.
+const ORBIT_START = 74, ORBIT_GAP = 58;      // radius of the first orbit and the space between orbits (px)
+const ORBIT_GOLDEN = 2.39996;                // golden angle between planets, so they never line up
+let orbitRaf = 0, panX = 0, panY = 0, panDrag = null;
+const ORBIT_SQUASH = 0.55;                   // tilts the whole system so the orbits read as ellipses
+function orbitLayout(list) {
+  const byAge = [...list].sort((x, y) => (Date.parse(x.joined_at) || 0) - (Date.parse(y.joined_at) || 0));
+  const rank = new Map(byAge.map((r, i) => [r.id, i]));
+  return (r) => {
+    const k = rank.get(r.id) ?? 0, a = ORBIT_START + k * ORBIT_GAP;
+    const e = 0.06 + (k % 4) * 0.035;                                  // how stretched each orbit is
+    return { a, e, b: a * Math.sqrt(1 - e * e), a0: k * ORBIT_GOLDEN,
+      period: Math.min(160, Math.max(40, 40 * Math.pow(a / ORBIT_START, 1.5))) };   // Kepler: outer orbits take longer
+  };
+}
+function keplerE(M, e) {                     // solve Kepler's equation, so speed changes along the orbit
+  let E = M;
+  for (let i = 0; i < 6; i++) E -= (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
+  return E;
+}
+function setPan(x, y) {
+  panX = x; panY = y;
+  const g = $("#roomGrid");
+  if (g) { g.style.setProperty("--px", `${panX}px`); g.style.setProperty("--py", `${panY}px`); }
+}
+function initOrbitPan(grid) {
+  if (grid._panReady) return;
+  grid._panReady = true;
+  grid.addEventListener("pointerdown", (e) => {
+    if (roomsState.edit || e.target.closest(".room, .orbit-sun")) return;
+    panDrag = { id: e.pointerId, x: e.clientX, y: e.clientY, px: panX, py: panY };
+    try { grid.setPointerCapture(e.pointerId); } catch {}
+  });
+  grid.addEventListener("pointermove", (e) => {
+    if (!panDrag || e.pointerId !== panDrag.id) return;
+    setPan(panDrag.px + e.clientX - panDrag.x, panDrag.py + e.clientY - panDrag.y);
+  });
+  const end = (e) => { if (panDrag && e.pointerId === panDrag.id) panDrag = null; };
+  grid.addEventListener("pointerup", end);
+  grid.addEventListener("pointercancel", end);
+}
+function placeOrbits(now) {
+  const grid = $("#roomGrid"); if (!grid) return;
+  const t = now / 1000;
+  for (const card of grid.querySelectorAll(".room")) {
+    const o = card._orbit; if (!o) continue;
+    const E = keplerE(o.a0 + (t / o.period) * Math.PI * 2, o.e);
+    const x = o.a * (Math.cos(E) - o.e), y = o.b * Math.sin(E) * ORBIT_SQUASH;   // the sun is at the focus
+    card.style.left = `calc(50% + var(--px, 0px) + ${x.toFixed(1)}px)`;
+    card.style.top = `calc(50% + var(--py, 0px) + ${y.toFixed(1)}px)`;
+  }
+}
+function moveOrbits(now) {
+  if (!$("#roomGrid") || $("#menu").hidden) { orbitRaf = 0; return; }   // stop while the menu is closed
+  placeOrbits(now);
+  orbitRaf = requestAnimationFrame(moveOrbits);
+}
+function startOrbits() {
+  if (prefersReducedMotion()) { placeOrbits(performance.now()); return; }   // static, but still in place
+  if (!orbitRaf) orbitRaf = requestAnimationFrame(moveOrbits);
+}
 function renderRooms() {
   const v = roomsStore(), grid = $("#roomGrid");
   const visible = roomsState.list.filter((r) => !v.hidden.includes(r.id));
   const hidden = roomsState.list.filter((r) => v.hidden.includes(r.id));
+  const firstRun = !v.seen;                       // first visit: nothing "arrives", everything just appears
+  const seen = new Set(v.seen || []);
   grid.innerHTML = "";
-  visible.forEach((r, i) => grid.appendChild(roomCard(r, i)));
+  grid.classList.add("orbit-map");
+  initOrbitPan(grid);
+  const sun = document.createElement("button"); sun.type = "button"; sun.className = "orbit-sun";
+  sun.setAttribute("aria-label", "Re-centre the map"); sun.onclick = () => setPan(0, 0);
+  grid.appendChild(sun);
+  const layout = orbitLayout(visible);
+  for (const r of visible) {
+    const o = layout(r), ring = document.createElement("span");
+    ring.className = "orbit-ring" + (!firstRun && !seen.has(r.id) ? " arrive" : "");
+    ring.setAttribute("aria-hidden", "true");
+    ring.style.width = `${o.a * 2}px`; ring.style.height = `${o.b * 2 * ORBIT_SQUASH}px`;
+    ring.style.left = `calc(50% + var(--px, 0px) + ${(-o.a * o.e).toFixed(1)}px)`;   // centre of the ellipse sits off the sun
+    grid.appendChild(ring);
+  }
+  visible.forEach((r, i) => {
+    const card = roomCard(r, i);
+    card._orbit = layout(r);
+    if (!firstRun && !seen.has(r.id)) card.classList.add("arrive");
+    grid.appendChild(card);
+  });
+  setPan(panX, panY);
+  placeOrbits(performance.now());
+  roomsSave({ ...v, seen: roomsState.list.map((r) => r.id) });
   $("#menuHint").textContent = roomsState.edit
-    ? "Tap × to hide a room. Nothing is deleted."
-    : visible.length ? "Tap a room to jump straight in." : "Every room is hidden. Show one below.";
+    ? "Tap × to hide a board. Nothing is deleted."
+    : visible.length ? "Drag to look around. Tap a planet to jump in." : "Every board is hidden. Show one below.";
   $("#hiddenTray").hidden = !hidden.length;
   const list = $("#hiddenList"); list.innerHTML = "";
   for (const r of hidden) {
@@ -1477,6 +1566,7 @@ function renderRooms() {
   }
   $("#menuEdit").setAttribute("aria-pressed", String(roomsState.edit));
   $("#menu").classList.toggle("editing", roomsState.edit);
+  startOrbits();
 }
 function roomTitle(r) {
   if (r.name) return r.name;
@@ -1485,7 +1575,7 @@ function roomTitle(r) {
 }
 function roomCard(r, i) {
   const c = document.createElement("button");
-  c.type = "button"; c.className = "room";
+  c.type = "button"; c.className = "room" + (r.locked ? " locked" : "");
   c.style.animationDelay = `${(-(i * 0.7) % 6.5).toFixed(2)}s`;
   const color = BRIGHT[(r.people || [])[0]?.color] || BRIGHT[["c1", "c2", "c3", "c4", "c5", "c6"][i % 6]];
   c.style.setProperty("--planet", color);
@@ -1497,6 +1587,7 @@ function roomCard(r, i) {
   const pUrl = r.photo_path && state.urls[r.photo_path];
   if (pUrl) { planet.classList.add("has-photo"); planet.style.backgroundImage = `url("${pUrl.replace(/"/g, "%22")}")`; }
   sys.append(orbit, planet);
+  if (r.locked) { const lk = document.createElement("span"); lk.className = "room-lock"; lk.textContent = "🔒"; lk.setAttribute("aria-label", "Locked"); sys.appendChild(lk); }
   const name = document.createElement("span"); name.className = "room-name"; name.textContent = roomTitle(r);
   const code = document.createElement("span"); code.className = "room-code"; code.textContent = fmtCode(r.code) + (r.locked ? "  · 🔒 locked" : "");
   c.append(sys, name, code);
