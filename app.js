@@ -1,6 +1,7 @@
 import { haversine, bearing, compassOf, fmtDist, fmtAcc, buildMapModel } from "./map.js";
 // Pinned: shared sticky-note board for two
 import { CONFIG } from "./config.js";
+import { openChurch } from "./church.js";
 
 // ---------------------------------------------------------------- constants
 const BOARD_W = 420;                 // virtual board width (same on every phone)
@@ -60,7 +61,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v63";
+const APP_VERSION = "soy-v64";
 
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
@@ -388,6 +389,21 @@ function createSupabaseApi() {
         track: (p) => { presence = { ...presence, ...p }; liveCh.track(presence); },
       };
     },
+    church(me, h) {
+      // one shared channel for the church: presence only (name, colour, seat)
+      let presence = { name: me.name, color: me.color, seat: null };
+      const chCh = sb.channel("church", { config: { presence: { key: me.id } } });
+      chCh.on("presence", { event: "sync" }, () => {
+        const out = {};
+        for (const [k, metas] of Object.entries(chCh.presenceState())) out[k] = metas[metas.length - 1];
+        h.onPresence(out);
+      });
+      chCh.subscribe((status) => { if (status === "SUBSCRIBED") chCh.track(presence); });
+      return {
+        track: (p) => { presence = { ...presence, ...p }; chCh.track(presence); },
+        close: () => sb.removeChannel(chCh),
+      };
+    },
     async savePushSub(sub) {
       must(await sb.from("push_subs").upsert({ endpoint: sub.endpoint, p256dh: sub.keys.p256dh, auth: sub.keys.auth, user_id: myId() }));
     },
@@ -677,6 +693,26 @@ function createDemoApi() {
       addEventListener("pagehide", () => post({ k: "bye" }));
       pub();
       return { send: (p) => post({ k: "m", p }), track: (p) => { presence = { ...presence, ...p }; post({ k: "pres", p: presence }); pub(); } };
+    },
+    church(me, h) {
+      // demo mode: the same presence idea over BroadcastChannel
+      const ch = "BroadcastChannel" in window ? new BroadcastChannel("soy-church") : null;
+      const peers = {}; let presence = { name: me.name, color: me.color, seat: null };
+      const pub = () => h.onPresence({ ...peers, [me.id]: presence });
+      const post = (m) => ch && ch.postMessage({ ...m, from: me.id });
+      if (ch) ch.onmessage = (e) => {
+        const m = e.data; if (m.from === me.id) return;
+        if (m.k === "pres") { peers[m.from] = m.p; pub(); if (m.ask) post({ k: "pres", p: presence }); }
+        if (m.k === "bye") { delete peers[m.from]; pub(); }
+      };
+      post({ k: "pres", p: presence, ask: true });
+      const bye = () => post({ k: "bye" });
+      addEventListener("pagehide", bye);
+      pub();
+      return {
+        track: (p) => { presence = { ...presence, ...p }; post({ k: "pres", p: presence }); pub(); },
+        close: () => { bye(); if (ch) ch.close(); },
+      };
     },
     async savePushSub() {},
     async notify() { return { sent: 1, devices: 1, failures: [] }; },
@@ -1211,6 +1247,7 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v64", date: "2026-10-23", title: "Church", items: ["Church button in the board sidebar (right-hand side). Rooms you make or join are the way in", "A shared Orthodox church: everyone in it can see each other, sitting in pews or standing at the back", "Door sounds when you enter and leave, and quiet ones when others do. The 🔊 button mutes them", "Back to my room returns you to the board you came from", "Bible at the lectern: search by reference or word, browse books and chapters, change text size", "Translations: English (King James, American Standard, World English, Darby, Young's Literal) and Russian Synodal (64 of 66 books)"] },
   { v: "soy-v59", date: "2026-10-22", title: "Parry Brawl: items and fists", items: ["Items fall every 18 to 28 seconds: swords in three sizes, bombs and gloves", "Throw (middle click or V) picks items up, and throws them when you hold one", "Hold Down and throw to drop an item at your feet", "Dropped and thrown items burn up 4 seconds later unless picked up", "Fighters start with fists and show their own detail"] },
   { v: "soy-v58", date: "2026-10-22", title: "Parry Brawl: controls and roster", items: ["Fighter select: ten fighters, each with their own look, weapon, taunts and quirk", "Two control schemes in Settings > Controls: Keyboard & Mouse, or Keyboard A", "Dodge (Left Shift or Z), four taunts (1 2 3 4) with speech bubbles, hold Tab or B to show names", "Pause with Esc or Enter; Q quits to the menu"] },
   { v: "soy-v57", date: "2026-10-22", title: "Parry Brawl fixes", items: ["Menu buttons shrink long labels so Multiplayer (coming soon) fits", "Menu background is darker so the fighters no longer show through"] },
@@ -6080,6 +6117,7 @@ function wireStatic() {
   window.addEventListener("resize", () => { if (state.board) layoutBoard(); });
   wireCanvas();
   $("#toolHome").onclick = () => goHome();
+  $("#toolChurch").onclick = () => { if (state.me && state.board) openChurch({ me: state.me, api, boardEl: $("#boardScreen") }); };
   $("#toolFind").onclick = () => (others().filter((m) => state.views[m.id]).length > 1 ? openPeople() : findSomeone());
   $("#toolDraw").onclick = () => setInkMode(!inkMode);
   $("#bDone").onclick = () => setInkMode(false);

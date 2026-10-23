@@ -1155,3 +1155,87 @@ html.no-deco .room-system, html.no-deco #starCanvas { display: none !important; 
 .fun-btn:active { transform: scale(.94); }
 .fun-btn[aria-pressed="true"] { background: rgba(255, 209, 102, .28); border-color: #ffd166; transform: scale(1.06); }
 .fun-mute { font-size: 18px; }
+
+/* ---------------------------------------------------------------- Church (church.js) */
+#churchScreen { z-index: 30; background: #120c1a; color: #f4eee0; font-family: inherit; overflow: hidden; }
+#churchScreen[hidden], #chSheet[hidden] { display: none; }
+#churchScreen.opening .ch-door-art { animation: chDoorOpen 1.3s ease-out both; }
+#churchScreen.closing .ch-door-art { animation: chDoorClose 1.3s ease-in both; }
+@keyframes chDoorOpen { from { transform: scaleX(1); } to { transform: scaleX(0.35); transform-origin: left center; } }
+@keyframes chDoorClose { from { transform: scaleX(0.35); transform-origin: left center; } to { transform: scaleX(1); } }
+.ch-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: calc(env(safe-area-inset-top) + 8px) 16px 8px; }
+.ch-back { min-height: 44px; padding: 0 14px; border-radius: 22px; border: 1px solid #d9a63a; background: #2a1d10; color: #f6d77a; font: inherit; font-weight: 600; cursor: pointer; }
+.ch-count { font-size: 13px; color: #d9c9a0; text-align: right; }
+.ch-stage { position: relative; width: min(100%, calc((100dvh - 190px) * 0.5714)); aspect-ratio: 400 / 700; margin: 0 auto; }
+.ch-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.ch-pews, .ch-people { position: absolute; inset: 0; }
+.ch-people { pointer-events: none; }
+.ch-pew { position: absolute; background: transparent; border: 0; border-radius: 6px; cursor: pointer; padding: 0; }
+.ch-pew:focus-visible, .ch-lectern:focus-visible, .ch-door-tap:focus-visible, .ch-back:focus-visible { outline: 3px solid #f6d77a; outline-offset: 2px; }
+.ch-pew.mine { box-shadow: 0 0 0 2px #f6d77a inset; background: rgba(246, 215, 122, 0.12); }
+.ch-pew.ch-back-row { background: transparent; }
+.ch-lectern { position: absolute; background: transparent; border: 0; cursor: pointer; display: flex; align-items: flex-end; justify-content: center; border-radius: 8px; }
+.ch-lbl { font-size: 12px; font-weight: 700; color: #f6d77a; text-shadow: 0 1px 3px #000; padding-bottom: 2px; }
+.ch-door-tap { position: absolute; background: transparent; border: 0; cursor: pointer; }
+.ch-person { position: absolute; transform: translate(-50%, -50%); width: 52px; text-align: center; transition: left 0.6s ease, top 0.6s ease; }
+.ch-fig { display: block; width: 14px; height: 30px; margin: 0 auto; border-radius: 7px 7px 4px 4px; background: var(--pc); box-shadow: 0 0 10px 3px var(--pc); opacity: 0.95; }
+.ch-person.me .ch-fig { outline: 2px solid #f6d77a; outline-offset: 1px; }
+.ch-person.away { opacity: 0.45; }
+.ch-name { display: block; font-size: 11px; line-height: 1.1; color: #fff7e0; text-shadow: 0 1px 3px #000, 0 0 2px #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-flame { transform-box: fill-box; transform-origin: center bottom; animation: chFlicker 1.6s ease-in-out infinite alternate; }
+.ch-glow { animation: chGlowPulse 3.2s ease-in-out infinite alternate; }
+@keyframes chFlicker { 0% { transform: scale(1, 1); opacity: 1; } 50% { transform: scale(0.92, 1.06); opacity: 0.85; } 100% { transform: scale(1.04, 0.96); opacity: 1; } }
+@keyframes chGlowPulse { from { opacity: 0.75; } to { opacity: 1; } }
+.ch-hint { margin: 6px 16px 0; font-size: 13px; color: #d9c9a0; text-align: center; }
+.ch-tools { padding: 6px 16px calc(env(safe-area-inset-bottom) + 12px); text-align: center; }
+.ch-toggle { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; font-size: 14px; color: #f4eee0; }
+.ch-toggle input { width: 20px; height: 20px; }
+@media (prefers-reduced-motion: reduce) {
+  .ch-flame, .ch-glow, .ch-person { animation: none !important; transition: none !important; }
+  #churchScreen.opening .ch-door-art, #churchScreen.closing .ch-door-art { animation: none !important; }
+}
+
+/* Bible sheet */
+.ch-sheet { position: fixed; inset: 0; z-index: 70; display: flex; flex-direction: column; background: #f7f0de; color: #2a1d10; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+.ch-sheet[hidden] { display: none; }
+.ch-sheet-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px; background: #2a1d10; color: #f6d77a; }
+.ch-sheet-title { margin: 0; font-size: 17px; line-height: 1.2; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch-sheet-close { min-height: 44px; min-width: 44px; padding: 0 12px; border-radius: 22px; border: 1px solid #d9a63a; background: transparent; color: #f6d77a; font: inherit; font-weight: 600; cursor: pointer; }
+.ch-sheet-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; padding: 10px 16px; border-bottom: 1px solid #d9c49a; }
+.ch-field { display: grid; gap: 2px; font-size: 12px; color: #6b5030; min-width: 0; flex: 1 1 140px; width: 0; }
+.ch-field select { width: 100%; min-height: 44px; font: inherit; font-size: 16px; padding: 6px; border-radius: 8px; border: 1px solid #b8a06a; background: #fffaf0; color: #2a1d10; max-width: 100%; }
+.ch-size { display: flex; gap: 4px; }
+.ch-size button { min-width: 44px; min-height: 44px; border-radius: 8px; border: 1px solid #b8a06a; background: #fffaf0; color: #2a1d10; font: inherit; font-weight: 700; cursor: pointer; }
+.ch-size button.on, .ch-size button[aria-pressed="true"] { background: #2a1d10; color: #f6d77a; }
+.ch-size button small { font-size: 11px; }
+.ch-search { display: flex; gap: 8px; padding: 10px 16px; }
+.ch-search input { flex: 1; min-width: 0; min-height: 44px; font: inherit; font-size: 16px; padding: 8px 12px; border-radius: 8px; border: 1px solid #b8a06a; background: #fffaf0; color: #2a1d10; }
+.ch-go { min-height: 44px; padding: 0 16px; border-radius: 8px; border: 0; background: #9c2a2a; color: #fff7e0; font: inherit; font-weight: 700; cursor: pointer; }
+.ch-crumbs { padding: 0 16px 6px; font-size: 13px; color: #6b5030; min-height: 24px; }
+.ch-crumbs button { background: none; border: 0; padding: 4px 0; min-height: 36px; color: #9c2a2a; font: inherit; text-decoration: underline; cursor: pointer; }
+.ch-body { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 16px 24px; }
+.ch-body:focus { outline: none; }
+.ch-h { font-size: 15px; margin: 14px 0 8px; color: #2a1d10; }
+.ch-grid { display: grid; gap: 8px; }
+.ch-grid.books { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.ch-grid.chaps { grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); }
+.ch-grid button { min-height: 44px; padding: 8px 10px; border-radius: 8px; border: 1px solid #c9b47c; background: #fffaf0; color: #2a1d10; font: inherit; text-align: left; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.ch-grid.chaps button { justify-content: center; }
+.ch-grid small { color: #8a6f3e; font-size: 12px; }
+.ch-readhead { margin-bottom: 6px; }
+.ch-verses { font-size: 17px; line-height: 1.6; }
+.ch-sheet.sz-s .ch-verses { font-size: 15px; }
+.ch-sheet.sz-l .ch-verses { font-size: 21px; }
+.ch-v { cursor: pointer; border-radius: 4px; }
+.ch-v sup { font-size: 0.66em; color: #9c2a2a; font-weight: 700; margin-right: 1px; }
+.ch-v.sel, .ch-v.hit { background: rgba(246, 215, 122, 0.55); }
+.ch-selbar { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 10px 0; padding: 10px; border-radius: 10px; background: #2a1d10; color: #f6d77a; }
+.ch-selbar button { min-height: 44px; padding: 0 12px; border-radius: 8px; border: 0; background: #f6d77a; color: #2a1d10; font: inherit; font-weight: 700; cursor: pointer; }
+.ch-pager { display: flex; justify-content: space-between; gap: 8px; margin-top: 16px; }
+.ch-pager button { min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid #c9b47c; background: #fffaf0; color: #2a1d10; font: inherit; cursor: pointer; }
+.ch-pager button:disabled { opacity: 0.4; cursor: default; }
+.ch-msg { font-size: 15px; color: #6b5030; }
+.ch-hit { display: block; width: 100%; text-align: left; padding: 10px; margin-bottom: 8px; border-radius: 8px; border: 1px solid #d9c49a; background: #fffaf0; color: #2a1d10; font: inherit; font-size: 15px; line-height: 1.5; cursor: pointer; min-height: 44px; }
+.ch-hit-ref { display: block; font-size: 12px; font-weight: 700; color: #9c2a2a; margin-bottom: 2px; }
+.ch-hit b { background: #f6d77a; font-weight: 700; }
+.ch-foot { margin: 0; padding: 8px 16px; font-size: 12px; color: #6b5030; border-top: 1px solid #d9c49a; }

@@ -1,5 +1,6 @@
 // Pinned service worker: offline shell + push notifications
-const CACHE = "soy-v63";
+const CACHE = "soy-v64";
+const BIBLE = "soy-bible-v1";
 const SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./map.js", "./config.js", "./manifest.webmanifest", "./icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {
@@ -9,7 +10,7 @@ self.addEventListener("install", (e) => {
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE && k !== BIBLE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -18,6 +19,14 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== self.location.origin) return;
+  // Bible files: cache the first time they load, then serve from cache (they never change)
+  if (url.pathname.includes("/bible/") && !url.pathname.endsWith("manifest.json")) {
+    e.respondWith(caches.open(BIBLE).then((c) => c.match(e.request).then((hit) => hit || fetch(e.request).then((res) => {
+      if (res.ok) c.put(e.request, res.clone());
+      return res;
+    }))));
+    return;
+  }
   e.respondWith(
     fetch(e.request)
       .then((res) => {
