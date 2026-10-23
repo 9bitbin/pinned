@@ -1817,6 +1817,7 @@ function openPeek(r) {
 }
 async function joinPeek() {
   if (!peekRoom) return;
+  setError($("#peekError"));
   const btn = $("#peekJoin"); busy(btn, true, "Joining…");
   try {
     const b = await api.joinRoomById(peekRoom.id);
@@ -1825,7 +1826,7 @@ async function joinPeek() {
     markRoomOpened(b.id);
     toast("Joined 🎉");
     await openRoom(b);
-  } catch (e) { toast(e.message || "Couldn't join that room", 4000); }
+  } catch (e) { console.error("join room failed", e); setError($("#peekError"), e.message || "Couldn't join that room"); toast(e.message || "Couldn't join that room", 4000); }
   busy(btn, false);
 }
 function showPair() {
