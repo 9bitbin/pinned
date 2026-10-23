@@ -1825,7 +1825,8 @@ async function joinPeek() {
     closeSheet("roomPeek");
     markRoomOpened(b.id);
     toast("Joined 🎉");
-    await openRoom(b);
+    // open it the same way a room from your list opens (those carry my_bg and joined_at)
+    await openRoom({ ...b, my_bg: null, joined_at: new Date().toISOString(), member: true });
   } catch (e) { console.error("join room failed", e); setError($("#peekError"), e.message || "Couldn't join that room"); toast(e.message || "Couldn't join that room", 4000); }
   busy(btn, false);
 }
