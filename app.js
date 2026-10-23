@@ -1210,7 +1210,7 @@ const UPDATE_LOG = [
   { v: "soy-v52", date: "2026-10-22", title: "Shapes and brush size", items: ["Shapes gallery on the board: line, arrow, rectangle, rounded rectangle, oval, triangle, right triangle, diamond, pentagon, hexagon, star and heart", "Drag out a shape; it saves like a pen line, so undo and erase work", "Brush size is now a slider on the board (1 to 24)"] },
   { v: "soy-v51", date: "2026-10-22", title: "Moderation and the Pinned name", items: ["Moderators (set in the database) can review reported feedback, hide or restore posts, and dismiss reports", "Hidden posts show a notice instead of their text, and are left out of exports", "One report per person per post", "App renamed to Pinned in the setup guide and notifications"] },
   { v: "soy-v50", date: "2026-10-22", title: "Feedback cycle, replies and email change", items: ["Feedback cycle in Messages: one shared space for everyone across all rooms, with threads and replies", "Post feedback as yourself or anonymously. Anonymous hides your name from other users", "Reply to chat messages, with the original quoted", "Report a post, or delete your own", "Export feedback as a CSV from the Feedback cycle screen", "Change your sign-in email from Account"] },
-  { v: "soy-v60", date: "2026-10-23", title: "Every room is on the map", items: ["Your first screen is the room map, even before you have a room", "The room owner can hide a room from the map. People inside still see it", "Anyone in a room can take admin from room settings. Admin moves to whoever presses it", "Joining with a code now allows up to 10 people, the same as the map", "Rooms you are not in are shown too. Tap an open room to join it straight away", "Locked rooms show a lock and can't be joined", "The room count shows on each room you can look at"] },
+  { v: "soy-v60", date: "2026-10-23", title: "Every room is on the map", items: ["Your first screen is the room map, even before you have a room", "The app admin can delete any room from the map or from inside it", "The room owner can hide a room from the map. People inside still see it", "Anyone in a room can take admin from room settings. Admin moves to whoever presses it", "Joining with a code now allows up to 10 people, the same as the map", "Rooms you are not in are shown too. Tap an open room to join it straight away", "Locked rooms show a lock and can't be joined", "The room count shows on each room you can look at"] },
   { v: "soy-v49", date: "2026-10-22", title: "Rooms get names, photos and locks", items: ["Rename your room and add a room photo. Both show on the room list and at the top of the board, and update live", "Lock a room to stop new people joining with the code. Existing members are never locked out", "Room cards show the lock and the room code"] },
   { v: "soy-v48", date: "2026-10-22", title: "Scores tab", items: ["Scores tab in Games: each game's best run per person, with a podium for the top three", "Game scores are saved to the board and update every 15 seconds", "Quick Draw now reports its score too"] },
   { v: "soy-v47", date: "2026-10-22", title: "Games are back", items: ["Games button in the bottom bar, with 11 single-player games", "Bottom bar is centred; the + button moved into the right-hand tools column"] },
@@ -1810,10 +1810,23 @@ function openPeek(r) {
   $("#peekCount").textContent = `${n} ${n === 1 ? "person" : "people"} in this room`;
   $("#peekLock").hidden = !r.locked;
   $("#peekJoin").hidden = !!r.locked || full;
+  $("#peekDelete").hidden = !r.can_delete;
   $("#peekNote").textContent = r.locked ? "This room is locked, so nobody new can join right now."
     : full ? "This room is full (10 people max)."
     : "It's open. Join and you'll be in the room straight away.";
   openSheet("roomPeek");
+}
+async function deletePeek() {
+  const r = peekRoom; if (!r) return;
+  if (!confirm(`Delete ${roomTitle(r)} for everyone? Its notes, photos and messages will be erased. This can't be undone.`)) return;
+  const btn = $("#peekDelete"); busy(btn, true, "Deleting…");
+  try {
+    await api.deleteBoard(r.id);
+    peekRoom = null; closeSheet("roomPeek");
+    roomsState.list = roomsState.list.filter((x) => x.id !== r.id);
+    renderRooms(); toast("Room deleted");
+  } catch (e) { setError($("#peekError"), e.message || "Couldn't delete that room"); }
+  busy(btn, false);
 }
 async function joinPeek() {
   if (!peekRoom) return;
@@ -4453,7 +4466,7 @@ function resetBoardState() {
 }
 
 function canDeleteBoard() {
-  return state.board && (state.board.created_by === state.me?.id || state.members.length <= 1);
+  return state.board && (state.board.created_by === state.me?.id || state.members.length <= 1 || state.board.can_delete === true);
 }
 
 function renderBoardActions() {
@@ -5010,6 +5023,7 @@ function onBoardEvent(row) {
   if (!state.board || row.id !== state.board.id) return;
   const modeChanged = row.bg_mode !== state.board.bg_mode;
   Object.assign(state.board, { bg_mode: row.bg_mode, bg: row.bg, created_by: row.created_by, name: row.name ?? null, photo_path: row.photo_path ?? null, locked: !!row.locked, listed: row.listed !== false });
+  if (row.can_delete !== undefined) state.board.can_delete = !!row.can_delete;
   applyBackground();
   if (modeChanged && !isOwner()) toast(row.bg_mode === "personal" ? "You can now pick your own background in Settings" : "The board has a shared background again");
   if (!$("#settings").hidden) renderBgSettings();
@@ -5820,7 +5834,7 @@ function wireStatic() {
     roomChange(async () => { await api.setRoomListed(state.board.id, want); state.board.listed = want; renderRoomSheet(); }, want ? "Shown on the room map" : "Hidden from the room map. People inside still see it.");
   };
   $("#roomSheetBackdrop").onclick = () => closeSheet("roomSheet");
-  $("#peekJoin").onclick = joinPeek; $("#peekClose").onclick = () => closeSheet("roomPeek"); $("#roomPeekBackdrop").onclick = () => closeSheet("roomPeek");
+  $("#peekJoin").onclick = joinPeek; $("#peekDelete").onclick = deletePeek; $("#peekClose").onclick = () => closeSheet("roomPeek"); $("#roomPeekBackdrop").onclick = () => closeSheet("roomPeek");
   $("#rsSaveName").onclick = () => {
     const name = $("#rsName").value.trim().slice(0, ROOM_NAME_MAX);
     if (!name) return toast("Type a room name first");
