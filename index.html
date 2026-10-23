@@ -107,6 +107,19 @@
       <div class="hidden-list" id="hiddenList"></div>
     </div>
   </section>
+    <div class="sheet-backdrop" id="roomPeekBackdrop" hidden></div>
+    <section class="sheet more room-sheet" id="roomPeek" hidden aria-label="Room">
+      <h2 id="peekName">Room</h2>
+      <p class="muted" id="peekCount"></p>
+      <p class="peek-lock" id="peekLock" hidden>🔒 Locked</p>
+      <p class="muted" id="peekNote"></p>
+      <p class="error" id="peekError" hidden></p>
+      <div class="sheet-actions">
+        <button class="btn primary" id="peekJoin">Join room</button>
+        <button class="btn danger" id="peekDelete" hidden>Delete room</button>
+        <button class="btn" id="peekClose">Close</button>
+      </div>
+    </section>
   <section id="boardScreen" class="screen" hidden>
     <header class="topbar">
       <button class="who" id="memberChips" aria-label="Who's on the board"></button>
@@ -204,19 +217,6 @@
       </div>
       <input type="file" id="roomPhotoInput" accept="image/*" hidden>
       <div class="sheet-actions"><button class="btn" id="roomSheetClose">Close</button></div>
-    </section>
-    <div class="sheet-backdrop" id="roomPeekBackdrop" hidden></div>
-    <section class="sheet more room-sheet" id="roomPeek" hidden aria-label="Room">
-      <h2 id="peekName">Room</h2>
-      <p class="muted" id="peekCount"></p>
-      <p class="peek-lock" id="peekLock" hidden>🔒 Locked</p>
-      <p class="muted" id="peekNote"></p>
-      <p class="error" id="peekError" hidden></p>
-      <div class="sheet-actions">
-        <button class="btn primary" id="peekJoin">Join room</button>
-        <button class="btn danger" id="peekDelete" hidden>Delete room</button>
-        <button class="btn" id="peekClose">Close</button>
-      </div>
     </section>
     <div class="histbar" id="histBar" hidden>
       <button id="histUndo" aria-label="Undo" title="Undo">↶</button>
