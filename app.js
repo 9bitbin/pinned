@@ -61,7 +61,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v82";
+const APP_VERSION = "soy-v83";
 
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
@@ -1253,6 +1253,7 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v83", date: "2026-10-30", title: "Home brings you back", items: ["Home button returns to a readable size, centred on your newest notes, even after zooming far out"] },
   { v: "soy-v82", date: "2026-10-30", title: "Discord link is live", items: ["Settings → About now has a Join the Pinned Discord link"] },
   { v: "soy-v81", date: "2026-10-30", title: "Zoom anywhere, away status, Discord link", items: ["Zoom out and in with no fixed limit on phone and desktop", "Church pauses the board while you sit there; leaving catches up", "People show as Away after five minutes with no touch", "Settings → About has a Join the Discord link once the invite is added", "iPhone users get a one-time tip about Add to Home Screen"] },
   { v: "soy-v80", date: "2026-10-30", title: "Drawings stay on the board", items: ["Lines no longer vanish when the board refreshes; deletes still arrive live"] },
@@ -2549,8 +2550,13 @@ function goHome(animate = true) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const n of notes) { const b = noteBox(n); x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y); x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h); }
   const pad = 40;
-  const s = Math.min(1.2, Math.max(MIN_S, Math.min(r.width / (x1 - x0 + pad * 2), (r.height - 140) / (y1 - y0 + pad * 2))));
-  centerOn((x0 + x1) / 2, (y0 + y1) / 2 + 30 / s, s, animate);
+  const fit = Math.min(r.width / (x1 - x0 + pad * 2), (r.height - 140) / (y1 - y0 + pad * 2));
+  // Home never leaves you zoomed out too far: at least 60% size, and if the newest notes are spread
+  // too far apart to fit at that size, centre on the newest note instead.
+  const s = Math.min(1.2, Math.max(0.6, fit));
+  if (fit >= 0.6) return centerOn((x0 + x1) / 2, (y0 + y1) / 2 + 30 / s, s, animate);
+  const b = noteBox(notes[0]);
+  centerOn(b.x + b.w / 2, b.y + b.h / 2 + 30 / s, s, animate);
 }
 
 function initView() {
