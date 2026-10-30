@@ -465,6 +465,9 @@ function chLampsArt() {
 
 // ---------------------------------------------------------------- the church screen
 let chBoardId = "room";
+let chLastAct = 0, chIsAway = false, chIdleT = 0;
+const CH_IDLE_MS = 5 * 60 * 1000;   // five minutes with no touch or key = away
+function chTouch() { chLastAct = Date.now(); if (chIsAway && chLive) { chIsAway = false; chLive.track({ away: false }); } }
 let chMsgs = [], chLastSent = 0, chUnread = 0, chPanel = null;
 let chRoot = null, chOpen = false, chLive = null, chMe = null, chApi = null, chPushed = false, chSeat = null;
 let chPeople = {}, chSynced = false, chOnLeave = () => {}, chBoardEl = null;
@@ -564,7 +567,7 @@ function chPaintFoot(entries) {
   chRoot.querySelector("#chRosterList").innerHTML = ordered.map(([id, p]) => {
     const me = id === chMe.id;
     const name = me ? "You" : (p.name || "Visitor");
-    return `<li class="ch-row${me ? " me" : ""}"><span class="ch-face" style="--pc:${chEsc(p.color || "#c2410c")}"></span><span class="ch-row-main"><span class="ch-row-name">${chEsc(name)}</span><span class="ch-row-where">${CH_SEAT_NAME(p.seat)}</span></span><span class="ch-row-online"><i class="ch-live-dot" aria-hidden="true"></i>Online</span></li>`;
+    return `<li class="ch-row${me ? " me" : ""}"><span class="ch-face" style="--pc:${chEsc(p.color || "#c2410c")}"></span><span class="ch-row-main"><span class="ch-row-name">${chEsc(name)}</span><span class="ch-row-where">${CH_SEAT_NAME(p.seat)}</span></span><span class="ch-row-online${p.away ? " away" : ""}"><i class="ch-live-dot" aria-hidden="true"></i>${p.away ? "Away" : "Online"}</span></li>`;
   }).join("") || `<li class="ch-row-empty">Only you are here.</li>`;
 }
 const CH_SHEET = () => window.matchMedia("(max-width: 600px)").matches;
@@ -658,7 +661,7 @@ function chOnPresence(map) {
   chPeople = {};
   for (const [id, p] of Object.entries(map || {})) {
     if (!p) continue;
-    chPeople[id] = { name: p.name, color: p.color, seat: p.seat || null, away: false };
+    chPeople[id] = { name: p.name, color: p.color, seat: p.seat || null, away: !!p.away };
   }
   // Door sounds for others coming and going (quiet). Skip the first sync so opening the church is silent.
   if (chSynced) {
@@ -736,7 +739,13 @@ function openChurch({ me, api, boardEl, onLeave, boardId }) {
   chRoot.classList.remove("closing"); chRoot.classList.add("opening");
   setTimeout(() => chRoot && chRoot.classList.remove("opening"), 1400);
   chLive = chApi.church(chMe, { onPresence: chOnPresence, onChat: chOnChat }, chBoardId);
-  chLive.track({ name: chMe.name, color: chMe.color, seat: null });
+  chLive.track({ name: chMe.name, color: chMe.color, seat: null, away: false });
+  chLastAct = Date.now(); chIsAway = false;
+  ["pointerdown", "pointermove", "keydown"].forEach((t) => chRoot.addEventListener(t, chTouch, { passive: true }));
+  clearInterval(chIdleT);
+  chIdleT = setInterval(() => {
+    if (!chIsAway && chLive && Date.now() - chLastAct > CH_IDLE_MS) { chIsAway = true; chLive.track({ away: true }); }
+  }, 15000);
   if (chGet(CH_KEY.ambient, false) === true) chAmbientOn();
   if (chGet(CH_KEY.music, true) === true) chMusicStart(); else chMusicUi();
   chRoot.querySelector("#chBack").focus({ preventScroll: true });
@@ -756,6 +765,7 @@ function chLeave(fromUi) {
   try { if (chLive && chLive.close) chLive.close(); } catch { /* channel already closed */ }
   chLive = null; chPeople = {}; chSeat = null;
   chShowPanel(null); chMsgs = [];
+  clearInterval(chIdleT); chIdleT = 0; chIsAway = false;
   chRoot.hidden = true;
   if (chBoardEl) chBoardEl.hidden = false;
   chOnLeave();

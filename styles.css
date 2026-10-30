@@ -1351,3 +1351,7 @@ body.drawmode .fun-toggle, body.drawmode #boardScreen .fun-tray { display: none;
 @keyframes chSheetUp { from { transform: translateY(100%); } to { transform: none; } }
 @keyframes chSheetDown { from { transform: none; } to { transform: translateY(100%); } }
 @media (prefers-reduced-motion: reduce) { .ch-panel, .ch-panel.sheet-out { animation: none !important; } }
+
+/* Away status (soy-v81) */
+.ch-row-online.away { color: #f6d77a; }
+.ch-row-online.away .ch-live-dot { background: #f6c44a; box-shadow: 0 0 0 2px #1d1410, 0 0 8px 1px rgba(246, 196, 74, 0.6); animation: none; }
