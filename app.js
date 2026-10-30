@@ -61,7 +61,7 @@ const QUESTIONS = [
 
 const $ = (s) => document.querySelector(s);
 // ---- Batch A: small platform helpers ----
-const APP_VERSION = "soy-v79";
+const APP_VERSION = "soy-v80";
 
 const prefersReducedMotion = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 const canVibrate = typeof navigator !== "undefined" && "vibrate" in navigator;
@@ -1251,6 +1251,7 @@ function renderFeelSwitches() {
 // ---- Update log and credits (Settings, About) ----
 // RULE: every release adds one entry at the TOP of UPDATE_LOG. Its `v` must match APP_VERSION and the sw.js CACHE name.
 const UPDATE_LOG = [
+  { v: "soy-v80", date: "2026-10-30", title: "Drawings stay on the board", items: ["Lines no longer vanish when the board refreshes; deletes still arrive live"] },
   { v: "soy-v79", date: "2026-10-23", title: "One church for everyone", items: ["The church is one shared room for all users again, whichever room you joined from"] },
   { v: "soy-v78", date: "2026-10-23", title: "Phone: roster and chat as a sheet", items: ["On phones the roster and chat slide up from the bottom and slide back down; tap the handle, swipe down, or press the button again"] },
   { v: "soy-v77", date: "2026-10-23", title: "Roster and chat on the left", items: ["Roster and chat panels sit on the left so the aisle and floor stay visible"] },
@@ -2202,8 +2203,7 @@ async function resync() {
 async function loadExtras() {
   try {
     const strokes = await api.listStrokes(state.board.id);
-    const ids = new Set(strokes.map((s) => s.id));
-    for (const id of [...state.strokes.keys()]) if (!ids.has(id)) removeInk(id);
+    // add-only: never remove lines on a timer. Real deletes arrive as realtime DELETE events.
     for (const s of strokes) addInk(s);
   } catch { /* strokes arrive with the v4 upgrade */ }
   try {
